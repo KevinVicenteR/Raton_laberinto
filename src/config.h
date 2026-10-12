@@ -61,7 +61,10 @@ const int SIDE_WALL_MM = 110;        // lateral por debajo de esto = hay pared
 const int FRONT_WALL_MM = 140;       // frontal por debajo de esto = hay pared
 const int SIDE_CENTER_MM = 50;       // lectura lateral con el raton centrado en la celda
 const int FRONT_STOP_MM = 45;        // lectura frontal con el raton en el centro de la celda
-const int HAND_START_MM = 60;        // mano delante del laser frontal para arrancar
+
+// ---------- Arranque automatico (sin arrancador) ----------
+const uint32_t START_DELAY_MS = 3000;   // espera tras encender antes de explorar (soltar el raton)
+const uint32_t RUN_PAUSE_MS = 2000;     // pausa en la salida entre carreras rapidas
 
 // ---------- Control ----------
 const uint32_t CONTROL_PERIOD_US = 5000;  // 200 Hz

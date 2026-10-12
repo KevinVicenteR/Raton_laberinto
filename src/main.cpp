@@ -1,10 +1,10 @@
 // Firmware del raton de laberinto.
 //
-// Uso:
+// Uso (sin arrancador):
 //   1. Pon el raton centrado en la celda de salida (esquina inferior izquierda) mirando al norte.
-//   2. Pasa la mano delante del laser frontal y retirala: explora hasta probar el camino optimo
+//   2. Enciendelo y no lo toques: tras START_DELAY_MS explora hasta probar el camino optimo
 //      y vuelve a la salida.
-//   3. Vuelve a pasar la mano: carrera rapida a la meta y regreso explorando.
+//   3. Despues encadena carreras rapidas a la meta y regreso, con RUN_PAUSE_MS entre cada una.
 // 'x' por el Monitor Serie (115200) detiene el raton.
 
 #include <Arduino.h>
@@ -39,25 +39,34 @@ void fail(const char* msg) {
   }
 }
 
-// Espera a que pasen la mano delante del laser frontal y la retiren.
-void waitHandStart(const char* title) {
-  display.show(title, "", "Mano delante del", "laser frontal");
+void showStats(const char* title);
+
+// Cuenta atras con el raton quieto y calibra el giroscopio antes de moverse.
+void waitAutoStart(const char* title, uint32_t ms) {
   Serial.print(title);
-  Serial.println(": pasa la mano delante del laser frontal");
-  bool handSeen = false;
-  while (true) {
-    lasers.update();
-    const int f = lasers.mm(Lasers::FRONT);
-    if (f >= 0 && f < cfg::HAND_START_MM) handSeen = true;
-    if (handSeen && (f < 0 || f > 2 * cfg::HAND_START_MM)) break;
-    digitalWrite(LED_BUILTIN, (millis() / 500) % 2);
-    delay(5);
+  Serial.println(": arranque automatico");
+  const uint32_t t0 = millis();
+  while (millis() - t0 < ms) {
+    char l2[22];
+    snprintf(l2, sizeof(l2), "Arranca en %lu s", (unsigned long)((ms - (millis() - t0) + 999) / 1000));
+    display.show(title, "", l2, "No tocar");
+    digitalWrite(LED_BUILTIN, (millis() / 250) % 2);
+    delay(100);
   }
   digitalWrite(LED_BUILTIN, HIGH);
-  display.show(title, "", "Arrancando...");
-  delay(700);       // tiempo para retirar la mano
+  display.show(title, "", "Calibrando...");
   gyro.calibrate();  // el raton tiene que estar quieto
   digitalWrite(LED_BUILTIN, LOW);
+}
+
+// Sin nadie que lo recoloque, tras un fallo el raton se queda parado.
+void halt(const char* title) {
+  motors.coast();
+  showStats(title);
+  while (true) {
+    digitalWrite(LED_BUILTIN, !digitalRead(LED_BUILTIN));
+    delay(500);
+  }
 }
 
 void showStats(const char* title) {
@@ -100,29 +109,16 @@ void setup() {
 void loop() {
   robot.clearAbort();
   solver.reset();
-  waitHandStart("EXPLORAR");
-  if (!solver.explore(cfg::MAX_SEARCH_RUNS)) {
-    motors.coast();
-    showStats("EXPLORACION FALLO");
-    delay(3000);
-    return;  // vuelve a empezar con el mapa vacio
-  }
-  // Mirar al norte: si mira a la pared de atras, el laser frontal confundiria la pared con la mano.
+  waitAutoStart("EXPLORAR", cfg::START_DELAY_MS);
+  if (!solver.explore(cfg::MAX_SEARCH_RUNS)) halt("EXPLORACION FALLO");
   solver.face(raton::NORTH);
   showStats("MAPA LISTO");
-  delay(1500);
 
-  // Mientras haya mapa, cada pase de mano hace otra carrera rapida.
+  // Con el mapa listo, carreras rapidas sin parar mientras no falle ninguna.
   while (true) {
-    waitHandStart("CARRERA");
-    if (!solver.speedRun() || !solver.returnToStart()) {
-      motors.coast();
-      showStats("CARRERA FALLO");
-      delay(3000);
-      return;
-    }
+    waitAutoStart("CARRERA", cfg::RUN_PAUSE_MS);
+    if (!solver.speedRun() || !solver.returnToStart()) halt("CARRERA FALLO");
     solver.face(raton::NORTH);
     showStats("CARRERA OK");
-    delay(1500);
   }
 }
