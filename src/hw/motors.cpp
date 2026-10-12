@@ -34,6 +34,11 @@ void Motors::drive(mbed::PwmOut* in1, mbed::PwmOut* in2, float duty) {
 
 void Motors::set(float left, float right) {
   if (!ain1_) return;
+  if (swapped_) {
+    const float t = left;
+    left = right;
+    right = t;
+  }
   drive(ain1_, ain2_, cfg::INVERT_MOTOR_IZQ ? -left : left);
   drive(bin1_, bin2_, cfg::INVERT_MOTOR_DER ? -right : right);
 }

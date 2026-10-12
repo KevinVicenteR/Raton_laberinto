@@ -56,6 +56,36 @@ void setup() {
     Serial.println("IMU NO responde");
   }
   Serial.println("w/s/a/d mover, espacio parar, +/- PWM, r reset, c calibrar giroscopio");
+
+  // Prueba automatica para hacerla solo con bateria (sin USB): avanza 1 s y gira a la izquierda
+  // 0.5 s. En pantalla: los dos encoders deben ser positivos y el yaw positivo.
+  delay(2000);
+  encoders.reset();
+  motors.set(pwm, pwm);
+  delay(1000);
+  motors.coast();
+  const long fwdL = encoders.left();
+  const long fwdR = encoders.right();
+  delay(500);
+  gyro.resetYaw();
+  const uint32_t t0turn = millis();
+  motors.set(-pwm, pwm);
+  while (millis() - t0turn < 500) gyro.update();
+  motors.coast();
+  const uint32_t t0stop = millis();
+  while (millis() - t0stop < 300) gyro.update();
+  const int turnYaw = static_cast<int>(gyro.yaw());
+
+  char l[4][22];
+  snprintf(l[0], sizeof(l[0]), "Adel. I %ld", fwdL);
+  snprintf(l[1], sizeof(l[1]), "Adel. D %ld", fwdR);
+  snprintf(l[2], sizeof(l[2]), "Giro izq yaw %d", turnYaw);
+  snprintf(l[3], sizeof(l[3]), "Todo debe ser +");
+  display.show("AUTO TEST", l[0], l[1], l[2], l[3]);
+  Serial.println(l[0]);
+  Serial.println(l[1]);
+  Serial.println(l[2]);
+  delay(15000);  // tiempo para leer la pantalla
 }
 
 void loop() {

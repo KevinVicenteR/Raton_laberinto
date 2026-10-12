@@ -1,10 +1,8 @@
 // Firmware del raton de laberinto.
 //
-// Uso (sin arrancador):
-//   1. Pon el raton centrado en la celda de salida (esquina inferior izquierda) mirando al norte.
-//   2. Enciendelo y no lo toques: explora al instante hasta probar el camino optimo
-//      y vuelve a la salida.
-//   3. Despues encadena carreras rapidas a la meta y regreso, con RUN_PAUSE_MS entre cada una.
+// Uso (sin arrancador): pon el raton en un pasillo de la pista y enciendelo. Sigue la pared con la
+// regla de la mano derecha (o izquierda, FOLLOW_RIGHT en config.h) usando solo los laseres, asi que
+// no depende del tamano de las celdas ni de la pista.
 // 'x' por el Monitor Serie (115200) detiene el raton.
 
 #include <Arduino.h>
@@ -17,7 +15,6 @@
 #include "hw/lasers.h"
 #include "hw/motors.h"
 #include "robot_hw.h"
-#include "solver.h"
 
 namespace {
 
@@ -27,7 +24,6 @@ Lasers lasers;
 Gyro gyro;
 Display display;
 RobotHW robot(motors, encoders, lasers, gyro, display);
-raton::Solver solver(robot, cfg::MAZE_WIDTH, cfg::MAZE_HEIGHT);
 
 void fail(const char* msg) {
   motors.coast();
@@ -38,8 +34,6 @@ void fail(const char* msg) {
     delay(150);
   }
 }
-
-void showStats(const char* title);
 
 // Cuenta atras con el raton quieto y calibra el giroscopio antes de moverse.
 void waitAutoStart(const char* title, uint32_t ms) {
@@ -57,34 +51,6 @@ void waitAutoStart(const char* title, uint32_t ms) {
   display.show(title, "", "Calibrando...");
   gyro.calibrate();  // el raton tiene que estar quieto
   digitalWrite(LED_BUILTIN, LOW);
-}
-
-// Sin nadie que lo recoloque, tras un fallo el raton se queda parado.
-void halt(const char* title) {
-  motors.coast();
-  showStats(title);
-  while (true) {
-    digitalWrite(LED_BUILTIN, !digitalRead(LED_BUILTIN));
-    delay(500);
-  }
-}
-
-void showStats(const char* title) {
-  const raton::SolverStats& s = solver.stats();
-  char l1[22];
-  char l2[22];
-  char l3[22];
-  snprintf(l1, sizeof(l1), "Viajes: %d", s.searchRuns);
-  snprintf(l2, sizeof(l2), "Celdas: %d", s.searchCells);
-  snprintf(l3, sizeof(l3), "Optimo: %s", s.pathProven ? "probado" : "no");
-  display.show(title, l1, l2, l3);
-  Serial.print(title);
-  Serial.print(" | viajes ");
-  Serial.print(s.searchRuns);
-  Serial.print(" | celdas ");
-  Serial.print(s.searchCells);
-  Serial.print(" | optimo ");
-  Serial.println(s.pathProven ? "probado" : "no probado");
 }
 
 }  // namespace
@@ -117,17 +83,45 @@ void setup() {
 
 void loop() {
   robot.clearAbort();
-  solver.reset();
-  waitAutoStart("EXPLORAR", cfg::START_DELAY_MS);
-  if (!solver.explore(cfg::MAX_SEARCH_RUNS)) halt("EXPLORACION FALLO");
-  solver.face(raton::NORTH);
-  showStats("MAPA LISTO");
+  waitAutoStart("SEGUIR PARED", cfg::START_DELAY_MS);
+  // Signo de giro hacia la pared que se sigue: +1 izquierda, -1 derecha.
+  const int side = cfg::FOLLOW_RIGHT ? -1 : 1;
+  char check[22];
+  robot.selfCheck(check);
+  Serial.println(check);
+  display.show("SEGUIR PARED", cfg::FOLLOW_RIGHT ? "Mano derecha" : "Mano izquierda", check);
 
-  // Con el mapa listo, carreras rapidas sin parar mientras no falle ninguna.
+  while (!robot.aborted()) {
+    const RobotHW::DriveEvent ev = robot.drive(1e6f, side);
+    if (ev == RobotHW::DriveEvent::SideOpen) {
+      // Hueco en la pared que se sigue: llevar el eje de las ruedas al centro del hueco, girar y entrar.
+      // El laser lateral va SIDE_SENSOR_AHEAD_MM por delante del eje y el hueco mide como el pasillo.
+      const float half = 0.5f * robot.corridorMm();
+      robot.drive(fmaxf(cfg::SIDE_SENSOR_AHEAD_MM + half - cfg::OPEN_CONFIRM_MM, 0.0f), 0);
+      robot.turnDegrees(90.0f * side);
+      // Entrar hasta que el laser lateral quede dentro del pasillo nuevo.
+      robot.drive(fmaxf(half - cfg::SIDE_SENSOR_AHEAD_MM + 15.0f, 15.0f), 0);
+    } else if (ev == RobotHW::DriveEvent::CrashLeft || ev == RobotHW::DriveEvent::CrashRight) {
+      // Pegado a un lateral: un poco atras y enderezarse hacia el otro lado.
+      robot.backUp(cfg::NUDGE_BACK_MM);
+      robot.turnDegrees(ev == RobotHW::DriveEvent::CrashLeft ? -cfg::NUDGE_DEG : cfg::NUDGE_DEG);
+    } else if (ev == RobotHW::DriveEvent::FrontWall) {
+      const raton::Walls w = robot.readWalls();
+      const bool followOpen = cfg::FOLLOW_RIGHT ? !w.right : !w.left;
+      const bool otherOpen = cfg::FOLLOW_RIGHT ? !w.left : !w.right;
+      robot.backUp(cfg::BACKUP_MM);
+      if (followOpen) {
+        robot.turnDegrees(90.0f * side);
+      } else if (otherOpen) {
+        robot.turnDegrees(-90.0f * side);
+      } else {
+        robot.turnDegrees(180.0f);  // callejon sin salida
+      }
+    }
+  }
+  motors.coast();
+  display.show("PARADO");
   while (true) {
-    waitAutoStart("CARRERA", cfg::RUN_PAUSE_MS);
-    if (!solver.speedRun() || !solver.returnToStart()) halt("CARRERA FALLO");
-    solver.face(raton::NORTH);
-    showStats("CARRERA OK");
+    delay(100);
   }
 }
