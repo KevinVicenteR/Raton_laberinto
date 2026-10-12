@@ -2,7 +2,7 @@
 //
 // Uso (sin arrancador):
 //   1. Pon el raton centrado en la celda de salida (esquina inferior izquierda) mirando al norte.
-//   2. Enciendelo y no lo toques: tras START_DELAY_MS explora hasta probar el camino optimo
+//   2. Enciendelo y no lo toques: explora al instante hasta probar el camino optimo
 //      y vuelve a la salida.
 //   3. Despues encadena carreras rapidas a la meta y regreso, con RUN_PAUSE_MS entre cada una.
 // 'x' por el Monitor Serie (115200) detiene el raton.
@@ -91,19 +91,28 @@ void showStats(const char* title) {
 
 void setup() {
   pinMode(LED_BUILTIN, OUTPUT);
-  Serial.begin(115200);
-  const uint32_t t0 = millis();
-  while (!Serial && millis() - t0 < 2000) {
-  }
+  Serial.begin(115200);  // sin esperar al USB: arranca al encender
 
   motors.begin();
+  motors.coast();
   encoders.begin();
+  delay(cfg::POWER_SETTLE_MS);  // al encender con bateria los sensores tardan en estar listos
   Wire.begin();
   Wire.setClock(400000);
 
   if (!display.begin()) Serial.println("Aviso: OLED no encontrada");
-  if (!lasers.begin()) fail("Falla un laser");
-  if (!gyro.begin()) fail("Falla el IMU");
+  bool ok = false;
+  for (int i = 0; i < cfg::SENSOR_INIT_TRIES && !ok; ++i) {
+    ok = lasers.begin();
+    if (!ok) delay(100);
+  }
+  if (!ok) fail("Falla un laser");
+  ok = false;
+  for (int i = 0; i < cfg::SENSOR_INIT_TRIES && !ok; ++i) {
+    ok = gyro.begin();
+    if (!ok) delay(100);
+  }
+  if (!ok) fail("Falla el IMU");
 }
 
 void loop() {

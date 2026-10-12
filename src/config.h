@@ -1,4 +1,4 @@
-// Pines y calibracion del raton. Los valores marcados CALIBRAR se ajustan con el env prueba_hardware.
+
 #pragma once
 
 #include <Arduino.h>
@@ -63,7 +63,9 @@ const int SIDE_CENTER_MM = 50;       // lectura lateral con el raton centrado en
 const int FRONT_STOP_MM = 45;        // lectura frontal con el raton en el centro de la celda
 
 // ---------- Arranque automatico (sin arrancador) ----------
-const uint32_t START_DELAY_MS = 3000;   // espera tras encender antes de explorar (soltar el raton)
+const uint32_t POWER_SETTLE_MS = 500;   // margen para que laseres, IMU y OLED se enciendan
+const int SENSOR_INIT_TRIES = 5;        // reintentos de arranque de cada sensor
+const uint32_t START_DELAY_MS = 0;      // espera tras encender antes de explorar (0 = al instante)
 const uint32_t RUN_PAUSE_MS = 2000;     // pausa en la salida entre carreras rapidas
 
 // ---------- Control ----------
