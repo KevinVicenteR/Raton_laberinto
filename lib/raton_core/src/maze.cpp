@@ -71,6 +71,10 @@ void Maze::markVisited(Cell c) {
 bool Maze::visited(Cell c) const { return inside(c) && visited_[c.x][c.y]; }
 
 int Maze::goalCells(Cell out[4]) const {
+  if (hasGoal_ && inside(goal_)) {
+    out[0] = goal_;
+    return 1;
+  }
   int xs[2];
   int ys[2];
   int nx = 0;

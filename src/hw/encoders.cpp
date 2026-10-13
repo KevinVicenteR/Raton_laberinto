@@ -8,6 +8,8 @@ volatile long countLeft = 0;
 volatile long countRight = 0;
 volatile uint8_t prevLeft = 0;
 volatile uint8_t prevRight = 0;
+long baseLeft = 0;   // cuentas en el ultimo reset()
+long baseRight = 0;
 
 // Indice: (estado anterior << 2) | estado actual, con estado = (A << 1) | B
 const int8_t kQuadrature[16] = {0, -1, 1, 0, 1, 0, 0, -1, -1, 0, 0, 1, 0, 1, -1, 0};
@@ -46,19 +48,21 @@ void Encoders::begin() {
   attachInterrupt(digitalPinToInterrupt(cfg::PIN_ENC_DER_B), isrRight, CHANGE);
 }
 
-long Encoders::left() {
+long Encoders::leftTotal() {
   const long v = readAtomic(countLeft);
   return cfg::INVERT_ENC_IZQ ? -v : v;
 }
 
-long Encoders::right() {
+long Encoders::rightTotal() {
   const long v = readAtomic(countRight);
   return cfg::INVERT_ENC_DER ? -v : v;
 }
 
+long Encoders::left() { return leftTotal() - baseLeft; }
+
+long Encoders::right() { return rightTotal() - baseRight; }
+
 void Encoders::reset() {
-  noInterrupts();
-  countLeft = 0;
-  countRight = 0;
-  interrupts();
+  baseLeft = leftTotal();
+  baseRight = rightTotal();
 }

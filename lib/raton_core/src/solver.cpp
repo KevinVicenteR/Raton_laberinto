@@ -3,7 +3,6 @@
 namespace raton {
 
 namespace {
-const Cell kStart = {0, 0};
 const int kMaxSteps = 4 * MAX_MAZE_SIZE * MAX_MAZE_SIZE;
 }  // namespace
 
@@ -13,7 +12,7 @@ Solver::Solver(Robot& robot, int width, int height) : robot_(robot), maze_(width
 
 void Solver::reset(int width, int height) {
   maze_.reset(width, height);
-  pos_ = kStart;
+  pos_ = start_;
   heading_ = NORTH;
   stats_ = SolverStats();
 }
@@ -69,20 +68,20 @@ bool Solver::searchToGoal() {
   return searchTo(goals, n);
 }
 
-bool Solver::returnToStart() { return searchTo(&kStart, 1); }
+bool Solver::returnToStart() { return searchTo(&start_, 1); }
 
 uint16_t Solver::knownPathLength() {
   Cell goals[4];
   const int n = maze_.goalCells(goals);
   check_.compute(maze_, goals, n, true);
-  return check_.distance(kStart);
+  return check_.distance(start_);
 }
 
 bool Solver::pathProven() {
   Cell goals[4];
   const int n = maze_.goalCells(goals);
   check_.compute(maze_, goals, n, false);
-  const uint16_t optimistic = check_.distance(kStart);
+  const uint16_t optimistic = check_.distance(start_);
   const uint16_t known = knownPathLength();
   return known != INF_DIST && known == optimistic;
 }

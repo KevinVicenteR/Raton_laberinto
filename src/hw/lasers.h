@@ -5,6 +5,8 @@
 #include <Arduino.h>
 #include <VL53L0X.h>
 
+#include "../config.h"
+
 class Lasers {
  public:
   enum Id { LEFT = 0, FRONT = 1, RIGHT = 2 };
@@ -28,6 +30,12 @@ class Lasers {
 
   bool ok(Id id) const { return ok_[id]; }
 
+  // Ajustes en marcha: alcance maximo (mm; mas lejos = -1) y eco minimo aceptado (MCPS).
+  void setMaxMm(int mm) { maxMm_ = mm; }
+  int maxMm() const { return maxMm_; }
+  void setSignalLimit(float mcps);
+  float signalLimit() const { return signalLimit_; }
+
  private:
   VL53L0X sensors_[3];
   // Filtro de Kalman por sensor con estado [distancia, velocidad]: sigue la tendencia al acercarse
@@ -46,6 +54,8 @@ class Lasers {
   bool ok_[3] = {false, false, false};
   uint32_t samples_[3] = {0, 0, 0};
   bool swapped_ = false;
+  int maxMm_ = cfg::LASER_MAX_MM;
+  float signalLimit_ = cfg::LASER_SIGNAL_LIMIT_MCPS;
 
   int map(Id id) const { return (swapped_ && id != FRONT) ? 2 - id : id; }
 };

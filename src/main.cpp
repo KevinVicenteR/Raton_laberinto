@@ -1,9 +1,13 @@
 // Firmware del raton de laberinto.
 //
-// Uso (sin arrancador): pon el raton en un pasillo de la pista y enciendelo. Sigue la pared con la
-// regla de la mano derecha (o izquierda, FOLLOW_RIGHT en config.h) usando solo los laseres, asi que
-// no depende del tamano de las celdas ni de la pista.
-// 'x' por el Monitor Serie (115200) detiene el raton.
+// Uso (sin arrancador): pon el raton en un pasillo de la pista y enciendelo. En los primeros
+// MODE_SELECT_MS, cada pasada de la mano delante del laser frontal cambia de modo:
+//   1 = seguir pared derecha (por defecto), 2 = seguir pared izquierda, 3 = resolver laberinto,
+//   4 = ruta mas corta del laberinto de la competencia (competition_maze.h),
+//   5 = espacio libre (va hacia donde los laseres no ven pared).
+// Seguir la pared usa solo los laseres: no depende del tamano de las celdas ni de la pista.
+// Telemetria, mapa y ordenes por Bluetooth (tools/telemetria.html) o Monitor Serie:
+//   x = parar, s = arrancar, m1..m5 = modo. Parado, una pasada de la mano tambien lo arranca.
 
 #include <Arduino.h>
 #include <Wire.h>
@@ -15,6 +19,9 @@
 #include "hw/lasers.h"
 #include "hw/motors.h"
 #include "robot_hw.h"
+#include "competition_maze.h"
+#include "solver.h"
+#include "telemetry.h"
 
 namespace {
 
@@ -24,6 +31,11 @@ Lasers lasers;
 Gyro gyro;
 Display display;
 RobotHW robot(motors, encoders, lasers, gyro, display);
+raton::Solver solver(robot, cfg::MAZE_WIDTH, cfg::MAZE_HEIGHT);
+
+const int kModes = 5;
+const char* const kModeNames[] = {"", "Pared derecha", "Pared izquierda", "Laberinto", "Ruta competencia",
+                                  "Espacio libre"};
 
 void fail(const char* msg) {
   motors.coast();
@@ -53,6 +65,231 @@ void waitAutoStart(const char* title, uint32_t ms) {
   digitalWrite(LED_BUILTIN, LOW);
 }
 
+// Cuenta pasadas de la mano delante del laser frontal durante MODE_SELECT_MS (cada pasada alarga
+// el plazo). Una pared fija delante no cuenta: hace falta acercar y retirar la mano.
+int selectMode() {
+  int mode = 1;
+  if (cfg::MODE_SELECT_MS == 0) return mode;
+  uint32_t deadline = millis() + cfg::MODE_SELECT_MS;
+  bool far = false;
+  bool near = false;
+  while (static_cast<int32_t>(millis() - deadline) < 0) {
+    robot.idle(20);
+    const int f = lasers.rawMm(Lasers::FRONT);
+    if (f < 0 || f > cfg::HAND_FAR_MM) {
+      if (near) {
+        mode = mode % kModes + 1;
+        deadline = millis() + cfg::MODE_SELECT_MS;
+      }
+      far = true;
+      near = false;
+    } else if (far && f < cfg::HAND_NEAR_MM) {
+      near = true;
+    }
+    char l2[22];
+    snprintf(l2, sizeof(l2), "Modo %d", mode);
+    display.show("ELEGIR MODO", l2, kModeNames[mode], "Pasa la mano");
+    digitalWrite(LED_BUILTIN, (millis() / 250) % 2);
+  }
+  return mode;
+}
+
+// Parado: espera la orden de arrancar ('s' por Bluetooth o Serie) o, si WAIT_FOR_WEB_START es false,
+// una pasada de la mano. 'm1'..'m3' cambia el modo mientras espera.
+int waitForStart(int mode) {
+  bool far = false;
+  bool near = false;
+  robot.setState("PARADO");
+  while (true) {
+    robot.idle(20);
+    const int m = robot.takeMode();
+    if (m) mode = m;
+    if (robot.takeStart()) return mode;
+    if (cfg::WAIT_FOR_WEB_START) {
+      char l1[22];
+      snprintf(l1, sizeof(l1), "Modo %d", mode);
+      display.show("ESPERANDO", l1, kModeNames[mode], "Pulsa ARRANCAR en web");
+      digitalWrite(LED_BUILTIN, (millis() / 1000) % 2);
+      continue;
+    }
+    const int f = lasers.rawMm(Lasers::FRONT);
+    if (f < 0 || f > cfg::HAND_FAR_MM) {
+      if (near) return mode;
+      far = true;
+    } else if (far && f < cfg::HAND_NEAR_MM) {
+      near = true;
+    }
+    char l1[22];
+    snprintf(l1, sizeof(l1), "Modo %d", mode);
+    display.show("PARADO", l1, kModeNames[mode], "Mano o web = arrancar");
+  }
+}
+
+// side: +1 sigue la pared izquierda, -1 la derecha.
+void followWall(int side) {
+  const bool right = side < 0;
+  while (!robot.aborted()) {
+    const RobotHW::DriveEvent ev = robot.drive(1e6f, side);
+    if (ev == RobotHW::DriveEvent::SideOpen) {
+      // Hueco en la pared que se sigue: llevar el eje de las ruedas al centro del hueco, girar y entrar.
+      // El laser lateral va SIDE_SENSOR_AHEAD_MM por delante del eje y el hueco mide como el pasillo.
+      const float half = 0.5f * robot.corridorMm();
+      robot.drive(fmaxf(cfg::SIDE_SENSOR_AHEAD_MM + half - cfg::OPEN_CONFIRM_MM, 0.0f), 0);
+      robot.turnDegrees(90.0f * side);
+      // Entrar hasta que el laser lateral quede dentro del pasillo nuevo.
+      robot.drive(fmaxf(half - cfg::SIDE_SENSOR_AHEAD_MM + 15.0f, 15.0f), 0);
+      robot.ignoreSidesFor(half + cfg::SIDE_SENSOR_AHEAD_MM);
+    } else if (ev == RobotHW::DriveEvent::CrashLeft || ev == RobotHW::DriveEvent::CrashRight) {
+      // Pegado a un lateral: un poco atras y enderezarse hacia el otro lado.
+      robot.backUp(cfg::NUDGE_BACK_MM);
+      robot.turnDegrees(ev == RobotHW::DriveEvent::CrashLeft ? -cfg::NUDGE_DEG : cfg::NUDGE_DEG);
+    } else if (ev == RobotHW::DriveEvent::FrontWall) {
+      const raton::Walls w = robot.readWalls();
+      const bool followOpen = right ? !w.right : !w.left;
+      const bool otherOpen = right ? !w.left : !w.right;
+      // Retroceder lo justo para que las esquinas del raton no toquen la pared al girar.
+      const int front = robot.frontMm();
+      const float clearance = front >= 0 ? static_cast<float>(robot.frontTurnMm() - front) : 0.0f;
+      robot.backUp(fmaxf(cfg::BACKUP_MM, clearance));
+      if (followOpen) {
+        robot.turnDegrees(90.0f * side);
+      } else if (otherOpen) {
+        robot.turnDegrees(-90.0f * side);
+      } else {
+        robot.turnDegrees(180.0f);  // callejon sin salida
+      }
+      robot.ignoreSidesFor(0.5f * robot.corridorMm() + cfg::SIDE_SENSOR_AHEAD_MM);
+    }
+  }
+}
+
+// Espacio libre: avanza recto vigilando los dos lados. Al ver terminar una pared lateral (hueco) o al
+// llegar a una pared delante, lleva el eje de ruedas al centro del cruce, se para, mira los tres
+// laseres quieto y va hacia donde haya mas espacio libre (sin lectura = libre). Tecnica de micromouse:
+// detectar el borde de la pared, avanzar una distancia medida y decidir parado.
+void freeSpace() {
+  auto space = [](int mm) { return mm < 0 ? 10000 : mm; };  // sin lectura = muy lejos
+  while (!robot.aborted()) {
+    const RobotHW::DriveEvent ev = robot.drive(1e6f, RobotHW::kWatchBoth);
+    if (ev == RobotHW::DriveEvent::CrashLeft || ev == RobotHW::DriveEvent::CrashRight) {
+      robot.backUp(cfg::NUDGE_BACK_MM);
+      robot.turnDegrees(ev == RobotHW::DriveEvent::CrashLeft ? -cfg::NUDGE_DEG : cfg::NUDGE_DEG);
+      continue;
+    }
+    if (ev != RobotHW::DriveEvent::SideOpen && ev != RobotHW::DriveEvent::FrontWall) continue;
+
+    const float half = 0.5f * robot.corridorMm();
+    if (ev == RobotHW::DriveEvent::SideOpen) {
+      // El laser lateral va por delante del eje: avanzar hasta que el eje quede en el centro del hueco.
+      robot.drive(fmaxf(cfg::SIDE_SENSOR_AHEAD_MM + half - cfg::OPEN_CONFIRM_MM, 0.0f), 0);
+    }
+
+    // Parado en el cruce: leer los tres laseres con medidas nuevas.
+    robot.setState("CRUCE");
+    lasers.waitFresh(3);
+    const int left = space(lasers.mm(Lasers::LEFT));
+    const int right = space(lasers.mm(Lasers::RIGHT));
+    const int frontRaw = robot.frontMm();
+    const int front = space(frontRaw);
+    const bool leftOpen = left > cfg::SIDE_OPEN_MM;
+    const bool rightOpen = right > cfg::SIDE_OPEN_MM;
+    const bool frontOpen = front > cfg::FRONT_WALL_MM;
+    char line[48];
+    snprintf(line, sizeof(line), "CRUCE izq%d del%d der%d", left, front, right);
+    telemetry::println(line);
+
+    // Elegir la direccion con mas espacio. Si delante tambien esta libre, se prefiere el hueco lateral
+    // que se acaba de encontrar solo si tiene mas espacio.
+    int turn = 0;  // grados: +90 izquierda, -90 derecha, 0 recto, 180 media vuelta
+    int best = frontOpen ? front : -1;
+    if (leftOpen && left > best) {
+      best = left;
+      turn = 90;
+    }
+    if (rightOpen && right > best) {
+      best = right;
+      turn = -90;
+    }
+    if (best < 0) turn = 180;  // los tres cerrados: callejon sin salida
+
+    if (turn == 0) {
+      // Recto: pasar el hueco sin volver a detectarlo.
+      robot.drive(half + cfg::SIDE_SENSOR_AHEAD_MM, 0);
+      robot.ignoreSidesFor(half);
+      continue;
+    }
+    if (frontRaw >= 0) {
+      const float clearance = static_cast<float>(robot.frontTurnMm() - frontRaw);
+      if (clearance > 0) robot.backUp(clearance);
+    }
+    robot.turnDegrees(static_cast<float>(turn));
+    if (turn != 180) {
+      // Entrar en el pasillo nuevo hasta que los laterales vean sus paredes.
+      robot.drive(fmaxf(half - cfg::SIDE_SENSOR_AHEAD_MM + 15.0f, 15.0f), 0);
+    }
+    robot.ignoreSidesFor(half + cfg::SIDE_SENSOR_AHEAD_MM);
+  }
+}
+
+// Flood fill: explora hasta probar el camino optimo y luego hace carreras rapidas. Necesita
+// MAZE_WIDTH, MAZE_HEIGHT y CELL_MM de la pista; sale de (START_X, START_Y) mirando al norte.
+void solveMaze() {
+  solver.setStart(raton::Cell{static_cast<int8_t>(cfg::START_X), static_cast<int8_t>(cfg::START_Y)});
+  if (robot.goalX() >= 0) {
+    solver.setGoal(raton::Cell{static_cast<int8_t>(robot.goalX()), static_cast<int8_t>(robot.goalY())});
+  }
+  solver.reset();
+  if (!solver.explore(cfg::MAX_SEARCH_RUNS)) {
+    robot.setState("FALLO");
+    display.show("LABERINTO", "Exploracion fallo");
+    return;
+  }
+  solver.face(raton::NORTH);
+  while (!robot.aborted()) {
+    robot.setState("ESPERA");
+    display.show("LABERINTO", "Mapa listo", "Carrera rapida...");
+    robot.idle(cfg::RUN_PAUSE_MS);
+    if (!solver.speedRun() || !solver.returnToStart()) {
+      robot.setState("FALLO");
+      display.show("LABERINTO", "Carrera fallo");
+      return;
+    }
+    solver.face(raton::NORTH);
+  }
+}
+
+// Ruta de la competencia: carga el laberinto del reglamento (competition_maze.h) y va por el camino
+// mas corto. En cada celda sigue mirando las paredes: si alguna no coincide con el dibujo, corrige
+// el mapa y recalcula, asi llega aunque el laberinto real cambie un poco.
+void competitionRun() {
+  using namespace competition;
+  solver.setStart(raton::Cell{START_X, START_Y});
+  solver.setGoal(raton::Cell{GOAL_X, GOAL_Y});
+  solver.reset(WIDTH, HEIGHT);
+  for (int r = 0; r < HEIGHT; ++r) {
+    const int y = HEIGHT - 1 - r;  // el dibujo empieza por la fila de arriba
+    const char* north = MAP[2 * r];
+    const char* cells = MAP[2 * r + 1];
+    const char* south = MAP[2 * r + 2];
+    for (int x = 0; x < WIDTH; ++x) {
+      const raton::Cell c{static_cast<int8_t>(x), static_cast<int8_t>(y)};
+      solver.setKnownWall(c, raton::NORTH, north[4 * x + 2] == '-');
+      solver.setKnownWall(c, raton::SOUTH, south[4 * x + 2] == '-');
+      solver.setKnownWall(c, raton::WEST, cells[4 * x] == '|');
+      solver.setKnownWall(c, raton::EAST, cells[4 * x + 4] == '|');
+    }
+  }
+  display.show("RUTA COMPETENCIA", "Camino conocido", "a la meta 4,2");
+  if (solver.searchToGoal()) {
+    robot.setState("META");
+    display.show("META!", kModeNames[4]);
+    telemetry::println("META");
+  } else {
+    robot.setState("FALLO");
+    display.show("RUTA COMPETENCIA", "No pudo llegar");
+  }
+}
+
 }  // namespace
 
 void setup() {
@@ -79,49 +316,42 @@ void setup() {
     if (!ok) delay(100);
   }
   if (!ok) fail("Falla el IMU");
+  if (!telemetry::begin()) Serial.println("Aviso: Bluetooth no disponible");
 }
 
 void loop() {
+  static bool firstRun = true;
+  static int mode = 1;
+  if (firstRun && !cfg::WAIT_FOR_WEB_START) {
+    mode = selectMode();
+  } else {
+    mode = waitForStart(mode);
+  }
   robot.clearAbort();
-  waitAutoStart("SEGUIR PARED", cfg::START_DELAY_MS);
-  // Signo de giro hacia la pared que se sigue: +1 izquierda, -1 derecha.
-  const int side = cfg::FOLLOW_RIGHT ? -1 : 1;
-  char check[22];
-  robot.selfCheck(check);
-  Serial.println(check);
-  display.show("SEGUIR PARED", cfg::FOLLOW_RIGHT ? "Mano derecha" : "Mano izquierda", check);
+  robot.takeStart();  // descarta un 's' repetido
+  waitAutoStart(kModeNames[mode], cfg::START_DELAY_MS);
+  if (firstRun) {
+    // La revision (motores/laseres cruzados, distancia entre ruedas) solo al encender.
+    char check[22];
+    robot.selfCheck(check);
+    Serial.println(check);
+    telemetry::println(check);
+    char eje[22];
+    snprintf(eje, sizeof(eje), "Eje %d mm", static_cast<int>(robot.trackWidthMm()));
+    display.show(kModeNames[mode], check, eje);
+    firstRun = false;
+  }
+  robot.resetOdometry();  // el mapa empieza donde arranca
+  telemetry::println("INICIO_MAPA");
 
-  while (!robot.aborted()) {
-    const RobotHW::DriveEvent ev = robot.drive(1e6f, side);
-    if (ev == RobotHW::DriveEvent::SideOpen) {
-      // Hueco en la pared que se sigue: llevar el eje de las ruedas al centro del hueco, girar y entrar.
-      // El laser lateral va SIDE_SENSOR_AHEAD_MM por delante del eje y el hueco mide como el pasillo.
-      const float half = 0.5f * robot.corridorMm();
-      robot.drive(fmaxf(cfg::SIDE_SENSOR_AHEAD_MM + half - cfg::OPEN_CONFIRM_MM, 0.0f), 0);
-      robot.turnDegrees(90.0f * side);
-      // Entrar hasta que el laser lateral quede dentro del pasillo nuevo.
-      robot.drive(fmaxf(half - cfg::SIDE_SENSOR_AHEAD_MM + 15.0f, 15.0f), 0);
-    } else if (ev == RobotHW::DriveEvent::CrashLeft || ev == RobotHW::DriveEvent::CrashRight) {
-      // Pegado a un lateral: un poco atras y enderezarse hacia el otro lado.
-      robot.backUp(cfg::NUDGE_BACK_MM);
-      robot.turnDegrees(ev == RobotHW::DriveEvent::CrashLeft ? -cfg::NUDGE_DEG : cfg::NUDGE_DEG);
-    } else if (ev == RobotHW::DriveEvent::FrontWall) {
-      const raton::Walls w = robot.readWalls();
-      const bool followOpen = cfg::FOLLOW_RIGHT ? !w.right : !w.left;
-      const bool otherOpen = cfg::FOLLOW_RIGHT ? !w.left : !w.right;
-      robot.backUp(cfg::BACKUP_MM);
-      if (followOpen) {
-        robot.turnDegrees(90.0f * side);
-      } else if (otherOpen) {
-        robot.turnDegrees(-90.0f * side);
-      } else {
-        robot.turnDegrees(180.0f);  // callejon sin salida
-      }
-    }
+  if (mode == 5) {
+    freeSpace();
+  } else if (mode == 4) {
+    competitionRun();
+  } else if (mode == 3) {
+    solveMaze();
+  } else {
+    followWall(mode == 1 ? -1 : 1);
   }
   motors.coast();
-  display.show("PARADO");
-  while (true) {
-    delay(100);
-  }
 }

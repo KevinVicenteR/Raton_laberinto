@@ -5,6 +5,7 @@
 namespace {
 const uint8_t kXshut[3] = {cfg::PIN_XSHUT_IZQ, cfg::PIN_XSHUT_FRO, cfg::PIN_XSHUT_DER};
 const uint8_t kAddress[3] = {cfg::I2C_LASER_IZQ, cfg::I2C_LASER_FRO, cfg::I2C_LASER_DER};
+const int kOffset[3] = {cfg::LASER_OFFSET_IZQ, cfg::LASER_OFFSET_FRO, cfg::LASER_OFFSET_DER};
 }  // namespace
 
 bool Lasers::begin() {
@@ -27,6 +28,8 @@ bool Lasers::begin() {
       continue;
     }
     s.setAddress(kAddress[i]);
+    // Rechaza ecos debiles (suelo de reojo, reflejos lejanos): solo cuenta una pared de frente.
+    s.setSignalRateLimit(signalLimit_);
     s.setMeasurementTimingBudget(20000);
     s.startContinuous();
     ok_[i] = true;
@@ -41,7 +44,8 @@ void Lasers::update() {
     // Solo lee si ya hay medida lista; asi readRangeContinuousMillimeters no bloquea.
     if ((s.readReg(VL53L0X::RESULT_INTERRUPT_STATUS) & 0x07) == 0) continue;
     const uint16_t v = s.readRangeContinuousMillimeters();
-    raw_[i] = (s.timeoutOccurred() || v >= 2000) ? -1 : static_cast<int>(v);
+    const int mm = static_cast<int>(v) + kOffset[i];
+    raw_[i] = (s.timeoutOccurred() || mm > maxMm_ || mm < 0) ? -1 : mm;
     filter(i, raw_[i]);
     samples_[i]++;
   }
@@ -109,6 +113,13 @@ void Lasers::filter(int i, int z) {
   }
   kt_[i] = now;
   mm_[i] = kd_[i] < 0 ? 0 : static_cast<int>(kd_[i] + 0.5f);
+}
+
+void Lasers::setSignalLimit(float mcps) {
+  signalLimit_ = mcps;
+  for (int i = 0; i < 3; ++i) {
+    if (ok_[i]) sensors_[i].setSignalRateLimit(mcps);
+  }
 }
 
 void Lasers::waitFresh(int n) {

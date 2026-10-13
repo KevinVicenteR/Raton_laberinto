@@ -1,0 +1,523 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Telemetría del ratón</title>
+<!--
+  Telemetria en tiempo real del raton por Bluetooth (Web Bluetooth, servicio UART de Nordic).
+  Abrir en Chrome o Edge (no Safari): python3 -m http.server 8000 en esta carpeta y entrar en
+  http://localhost:8000/telemetria.html, o abrir el archivo directamente.
+-->
+<style>
+  :root {
+    --bg: #f6f7f9; --panel: #ffffff; --text: #1d2330; --muted: #6b7280; --border: #e3e6eb;
+    --left: #2f6fdf; --front: #d9480f; --right: #2b9a66; --accent: #1d2330; --danger: #c92a2a;
+    --grid: #eceef2;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #12151b; --panel: #1b2029; --text: #e7eaf0; --muted: #9aa3b2; --border: #2b3240;
+      --left: #6d9cf0; --front: #f08c4b; --right: #5cc391; --accent: #e7eaf0; --danger: #ff6b6b;
+      --grid: #252b36;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #12151b; --panel: #1b2029; --text: #e7eaf0; --muted: #9aa3b2; --border: #2b3240;
+    --left: #6d9cf0; --front: #f08c4b; --right: #5cc391; --accent: #e7eaf0; --danger: #ff6b6b;
+    --grid: #252b36;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 15px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { max-width: 1100px; margin: 0 auto; padding: 20px 16px 40px; }
+  header { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-bottom: 16px; }
+  h1 { font-size: 20px; margin: 0; flex: 1; }
+  .status { font-size: 13px; color: var(--muted); }
+  .status b { color: var(--text); }
+  button { font: inherit; padding: 8px 14px; border-radius: 8px; border: 1px solid var(--border);
+           background: var(--panel); color: var(--text); cursor: pointer; }
+  button.primary { background: var(--accent); color: var(--bg); border-color: var(--accent); }
+  button.stop { background: var(--danger); color: #fff; border-color: var(--danger); font-weight: 600; }
+  button:disabled { opacity: .45; cursor: default; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 16px; min-width: 0; }
+  .panel h2 { font-size: 13px; font-weight: 600; color: var(--muted); text-transform: uppercase;
+              letter-spacing: .04em; margin: 0 0 12px; }
+  .wide { grid-column: 1 / -1; }
+  .tiles { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+  .tile { border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; }
+  .tile .label { font-size: 12px; color: var(--muted); }
+  .tile .value { font-size: 26px; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .tile .unit { font-size: 13px; color: var(--muted); font-weight: 400; }
+  .state { font-size: 28px; font-weight: 700; letter-spacing: .02em; }
+  canvas { width: 100%; display: block; }
+  #robot { height: 260px; }
+  #chart { height: 240px; }
+  .legend { display: flex; gap: 14px; font-size: 13px; color: var(--muted); margin-top: 8px; }
+  .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 5px; vertical-align: -1px; }
+  .controls { display: grid; gap: 14px; }
+  .row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .row label { min-width: 150px; }
+  input[type=range] { flex: 1; min-width: 140px; }
+  .num { font-variant-numeric: tabular-nums; min-width: 70px; text-align: right; }
+  #log { height: 160px; overflow: auto; font: 12px/1.5 ui-monospace, Menlo, monospace;
+         background: var(--bg); border-radius: 8px; padding: 8px 10px; white-space: pre-wrap; }
+  .warn { background: var(--panel); border: 1px solid var(--danger); color: var(--text);
+          border-radius: 10px; padding: 10px 14px; margin-bottom: 16px; display: none; }
+  @media (max-width: 760px) { .grid { grid-template-columns: 1fr; } .tiles { grid-template-columns: repeat(2, 1fr); } }
+  #map3d { height: 440px; border-radius: 8px; overflow: hidden; background: var(--bg); position: relative; }
+  #map3d .hint { position: absolute; left: 10px; bottom: 8px; font-size: 12px; color: var(--muted); pointer-events: none; }
+  select { font: inherit; padding: 7px 10px; border-radius: 8px; border: 1px solid var(--border); background: var(--panel); color: var(--text); }
+  button.go { background: var(--right); color: #fff; border-color: var(--right); font-weight: 600; }
+  .modes { display: grid; grid-template-columns: repeat(5, 1fr); gap: 10px; }
+  .mode { text-align: left; padding: 12px 14px; border-radius: 10px; border: 2px solid var(--border); background: var(--panel); }
+  .mode b { display: block; font-size: 16px; margin-bottom: 2px; }
+  .mode span { font-size: 13px; color: var(--muted); }
+  .mode.sel { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+  @media (max-width: 1000px) { .modes { grid-template-columns: 1fr 1fr; } }
+  @media (max-width: 560px) { .modes { grid-template-columns: 1fr; } }
+</style>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+</head>
+<body>
+<main>
+  <header>
+    <h1>Telemetría del ratón</h1>
+    <span class="status" id="status">Desconectado</span>
+    <button class="primary" id="connect">Conectar</button>
+    <button class="go" id="start" disabled>ARRANCAR</button>
+    <button class="stop" id="stop" disabled>PARAR</button>
+  </header>
+
+  <div class="warn" id="nobt">Este navegador no admite Web Bluetooth. Abre la página en <b>Chrome</b> o <b>Edge</b> (en Mac, Windows o Android; en iPhone no funciona).</div>
+
+  <div class="grid">
+    <section class="panel wide">
+      <h2>Modo</h2>
+      <div class="modes" id="modes">
+        <button class="mode sel" data-mode="1"><b>1 · Pared derecha</b><span>Sigue la pared de la derecha. No necesita saber el tamaño de la pista.</span></button>
+        <button class="mode" data-mode="2"><b>2 · Pared izquierda</b><span>Sigue la pared de la izquierda. No necesita saber el tamaño de la pista.</span></button>
+        <button class="mode" data-mode="3"><b>3 · Laberinto</b><span>Busca el camino más corto a la meta (flood fill). Indica la celda meta en Ajustes.</span></button>
+        <button class="mode" data-mode="4"><b>4 · Ruta competencia</b><span>Va directo por el camino más corto del laberinto del reglamento (32 celdas). Si una pared no coincide, recalcula.</span></button>
+        <button class="mode" data-mode="5"><b>5 · Espacio libre</b><span>En cada cruce o pared se para, mira los tres láseres y va hacia donde hay más espacio libre.</span></button>
+      </div>
+      <p class="status" id="modeNote" style="margin:10px 0 0">El modo se aplica al pulsar ARRANCAR. Si el ratón está en marcha, se para y arranca en el modo nuevo.</p>
+    </section>
+
+    <section class="panel">
+      <h2>Estado</h2>
+      <div class="state" id="state">—</div>
+      <div class="tiles" style="margin-top:12px">
+        <div class="tile"><div class="label">Izquierdo</div><div class="value" id="vI" style="color:var(--left)">—</div></div>
+        <div class="tile"><div class="label">Frontal</div><div class="value" id="vF" style="color:var(--front)">—</div></div>
+        <div class="tile"><div class="label">Derecho</div><div class="value" id="vD" style="color:var(--right)">—</div></div>
+        <div class="tile"><div class="label">Velocidad</div><div class="value"><span id="vV">—</span> <span class="unit">mm/s</span></div></div>
+        <div class="tile"><div class="label">Rumbo</div><div class="value"><span id="vR">—</span> <span class="unit">°</span></div></div>
+        <div class="tile"><div class="label">Pasillo</div><div class="value"><span id="vP">—</span> <span class="unit">mm</span></div></div>
+        <div class="tile"><div class="label">Ciclo más lento</div><div class="value"><span id="vT">—</span> <span class="unit">ms</span></div></div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2>Lo que ve el ratón</h2>
+      <canvas id="robot"></canvas>
+    </section>
+
+    <section class="panel wide">
+      <h2>Mapa 3D de lo recorrido <button id="clearMap" style="float:right;padding:3px 10px;font-size:12px">Borrar mapa</button><button id="topView" style="float:right;padding:3px 10px;font-size:12px;margin-right:6px">Vista desde arriba</button></h2>
+      <div id="map3d"><span class="hint">Arrastra para girar · rueda para acercar · clic derecho para mover</span></div>
+    </section>
+
+    <section class="panel wide">
+      <h2>Láseres (últimos 20 s, mm)</h2>
+      <canvas id="chart"></canvas>
+      <div class="legend"><span><i style="background:var(--left)"></i>Izquierdo</span><span><i style="background:var(--front)"></i>Frontal</span><span><i style="background:var(--right)"></i>Derecho</span></div>
+    </section>
+
+    <section class="panel">
+      <h2>Ajustes en marcha</h2>
+      <div class="controls">
+        <div class="row"><label for="speed">Velocidad</label><input type="range" id="speed" min="30" max="400" step="10" value="100"><span class="num" id="speedV">100 mm/s</span></div>
+        <div class="row"><label for="kp">Centrado (KP_WALL)</label><input type="range" id="kp" min="0" max="0.3" step="0.01" value="0.08"><span class="num" id="kpV">0.08</span></div>
+        <div class="row"><label for="range">Alcance láseres</label><input type="range" id="range" min="60" max="400" step="10" value="160"><span class="num" id="rangeV">160 mm</span></div>
+        <div class="row"><label for="sig">Eco mínimo (ve menos →)</label><input type="range" id="sig" min="0.1" max="3" step="0.1" value="0.6"><span class="num" id="sigV">0.6</span></div>
+        <div class="row"><label for="goal">Meta (modo laberinto)</label><input id="goal" placeholder="x,y  (ej. 4,2)" style="font:inherit;padding:7px 10px;border-radius:8px;border:1px solid var(--border);background:var(--panel);color:var(--text);width:140px"><span class="status">celda contando desde abajo a la izquierda</span></div>
+        <div class="row"><button id="send" disabled>Enviar ajustes</button><button id="ask" disabled>Ver valores</button></div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2>Mensajes <button id="download" style="float:right;padding:3px 10px;font-size:12px">Descargar registro</button></h2>
+      <div id="log"></div>
+    </section>
+  </div>
+</main>
+
+<script>
+const NUS = '6e400001-b5a3-f393-e0a9-e50e24dcca9e';
+const RX = '6e400002-b5a3-f393-e0a9-e50e24dcca9e';  // escribimos aqui
+const TX = '6e400003-b5a3-f393-e0a9-e50e24dcca9e';  // el raton notifica aqui
+const HISTORY_MS = 20000;
+const MAX_MM = 400;  // escala de las graficas
+
+let device = null, rxChar = null, buffer = '';
+// Registro de todo lo recibido, para descargarlo y revisar una prueba.
+const record = [];
+let recordStart = performance.now();
+const samples = [];  // {t, I, F, D}
+let last = null;
+
+const $ = id => document.getElementById(id);
+const css = name => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+
+if (!navigator.bluetooth) { $('nobt').style.display = 'block'; $('connect').disabled = true; }
+
+function log(text) {
+  const el = $('log');
+  const time = new Date().toLocaleTimeString();
+  el.textContent += `${time}  ${text}\n`;
+  el.scrollTop = el.scrollHeight;
+}
+
+function setConnected(on) {
+  $('status').innerHTML = on ? `Conectado a <b>${device.name || 'Raton'}</b>` : 'Desconectado';
+  $('connect').textContent = on ? 'Desconectar' : 'Conectar';
+  for (const id of ['stop', 'start', 'send', 'ask']) $(id).disabled = !on;
+}
+
+async function connect() {
+  if (device && device.gatt.connected) { device.gatt.disconnect(); return; }
+  try {
+    device = await navigator.bluetooth.requestDevice({ filters: [{ services: [NUS] }] });
+    device.addEventListener('gattserverdisconnected', () => { setConnected(false); log('Desconectado'); });
+    const server = await device.gatt.connect();
+    const service = await server.getPrimaryService(NUS);
+    rxChar = await service.getCharacteristic(RX);
+    const tx = await service.getCharacteristic(TX);
+    await tx.startNotifications();
+    tx.addEventListener('characteristicvaluechanged', e => onData(new TextDecoder().decode(e.target.value)));
+    setConnected(true);
+    log('Conectado');
+  } catch (err) {
+    log('No se pudo conectar: ' + err.message);
+  }
+}
+
+async function send(text) {
+  if (!rxChar) return;
+  try { await rxChar.writeValue(new TextEncoder().encode(text)); }
+  catch (err) { log('Error al enviar: ' + err.message); }
+}
+
+// Las notificaciones llegan en trozos de 20 bytes: se juntan hasta el salto de linea.
+function onData(chunk) {
+  buffer += chunk;
+  let i;
+  while ((i = buffer.indexOf('\n')) >= 0) {
+    const line = buffer.slice(0, i).trim();
+    buffer = buffer.slice(i + 1);
+    if (line) onLine(line);
+  }
+}
+
+// Formato: ESTADO I<izq> F<frontal> D<der> v<mm/s> r<rumbo> p<pasillo> x<mm> y<mm> a<grados>
+function onLine(line) {
+  if (line === 'INICIO_MAPA') { clearMap(); log('Arranca: mapa nuevo'); return; }
+  record.push(`${((performance.now() - recordStart) / 1000).toFixed(2)}\t${line}`);
+  const m = line.match(/^(\S+) I(-?\d+) F(-?\d+) D(-?\d+) v(-?\d+) r(-?\d+) p(-?\d+)(?: x(-?\d+) y(-?\d+) a(-?\d+))?(?: t(\d+))?(?: q(-?\d+),(-?\d+),(-?\d+))?$/);
+  if (!m) { log(line); return; }
+  last = { state: m[1], I: +m[2], F: +m[3], D: +m[4], v: +m[5], r: +m[6], p: +m[7] };
+  if (m[12] !== undefined) { last.qI = +m[12]; last.qF = +m[13]; last.qD = +m[14]; }
+  if (m[8] !== undefined) addToMap(+m[8], +m[9], +m[10], last);
+  samples.push({ t: performance.now(), I: last.I, F: last.F, D: last.D });
+  while (samples.length && performance.now() - samples[0].t > HISTORY_MS) samples.shift();
+  $('state').textContent = last.state;
+  const mm = v => v < 0 ? 'libre' : v;
+  $('vI').textContent = mm(last.I); $('vF').textContent = mm(last.F); $('vD').textContent = mm(last.D);
+  $('vV').textContent = last.v; $('vR').textContent = last.r; $('vP').textContent = last.p;
+  if (m[11] !== undefined) { $('vT').textContent = m[11]; $('vT').style.color = +m[11] > 20 ? 'var(--danger)' : ''; }
+}
+
+function fitCanvas(c) {
+  const dpr = window.devicePixelRatio || 1;
+  const w = c.clientWidth, h = c.clientHeight;
+  if (c.width !== w * dpr || c.height !== h * dpr) { c.width = w * dpr; c.height = h * dpr; }
+  const ctx = c.getContext('2d');
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  return [ctx, w, h];
+}
+
+function drawRobot() {
+  const [ctx, w, h] = fitCanvas($('robot'));
+  ctx.clearRect(0, 0, w, h);
+  const cx = w / 2, cy = h * 0.68, scale = Math.min(w / 2 - 20, h * 0.62) / MAX_MM;
+  const rays = [
+    { v: last?.I, dx: -1, dy: 0, color: css('--left') },
+    { v: last?.F, dx: 0, dy: -1, color: css('--front') },
+    { v: last?.D, dx: 1, dy: 0, color: css('--right') },
+  ];
+  const bodyW = 90 * scale, bodyH = 100 * scale;
+  for (const ray of rays) {
+    const free = ray.v == null || ray.v < 0;
+    const len = (free ? MAX_MM : Math.min(ray.v, MAX_MM)) * scale;
+    const sx = cx + ray.dx * bodyW / 2, sy = cy - (ray.dy ? bodyH / 2 : bodyH * 0.25);
+    ctx.strokeStyle = ray.color; ctx.lineWidth = 2;
+    ctx.setLineDash(free ? [5, 5] : []);
+    ctx.beginPath(); ctx.moveTo(sx, sy); ctx.lineTo(sx + ray.dx * len, sy + ray.dy * len); ctx.stroke();
+    ctx.setLineDash([]);
+    if (!free) {  // pared detectada
+      ctx.lineWidth = 5;
+      ctx.beginPath();
+      const ex = sx + ray.dx * len, ey = sy + ray.dy * len;
+      if (ray.dy) { ctx.moveTo(ex - 40, ey); ctx.lineTo(ex + 40, ey); }
+      else { ctx.moveTo(ex, ey - 40); ctx.lineTo(ex, ey + 40); }
+      ctx.stroke();
+    }
+  }
+  ctx.fillStyle = css('--accent');
+  ctx.beginPath(); ctx.roundRect(cx - bodyW / 2, cy - bodyH / 2, bodyW, bodyH, 8); ctx.fill();
+  ctx.fillStyle = css('--panel');
+  ctx.beginPath(); ctx.moveTo(cx, cy - bodyH / 2 + 6); ctx.lineTo(cx - 8, cy - bodyH / 2 + 18); ctx.lineTo(cx + 8, cy - bodyH / 2 + 18); ctx.fill();
+}
+
+function drawChart() {
+  const [ctx, w, h] = fitCanvas($('chart'));
+  ctx.clearRect(0, 0, w, h);
+  const padL = 40, padB = 18, plotW = w - padL - 8, plotH = h - padB - 6;
+  ctx.font = '11px system-ui'; ctx.fillStyle = css('--muted'); ctx.strokeStyle = css('--grid'); ctx.lineWidth = 1;
+  for (let mm = 0; mm <= MAX_MM; mm += 100) {
+    const y = 6 + plotH - mm / MAX_MM * plotH;
+    ctx.beginPath(); ctx.moveTo(padL, y); ctx.lineTo(padL + plotW, y); ctx.stroke();
+    ctx.fillText(mm, 6, y + 4);
+  }
+  ctx.fillText('-20 s', padL, h - 4); ctx.fillText('ahora', padL + plotW - 30, h - 4);
+  const now = performance.now();
+  for (const [key, color] of [['I', '--left'], ['F', '--front'], ['D', '--right']]) {
+    ctx.strokeStyle = css(color); ctx.lineWidth = 2; ctx.beginPath();
+    let drawing = false;
+    for (const s of samples) {
+      const x = padL + plotW * (1 - (now - s.t) / HISTORY_MS);
+      if (s[key] < 0) { drawing = false; continue; }  // sin lectura: hueco en la linea
+      const y = 6 + plotH - Math.min(s[key], MAX_MM) / MAX_MM * plotH;
+      if (drawing) ctx.lineTo(x, y); else ctx.moveTo(x, y);
+      drawing = true;
+    }
+    ctx.stroke();
+  }
+}
+
+// ---------- Mapa 3D (rejilla de ocupacion probabilistica, como un LIDAR) ----------
+// Geometria del raton (mm), igual que en config.h: laseres laterales por delante del eje.
+const ROBOT_WIDTH = 90, SIDE_AHEAD = 45, FRONT_AHEAD = 50;
+const CELL = 10;          // casilla del mapa (mm)
+let MAP_RANGE = 160;      // alcance de los laseres (sigue al deslizador de alcance)
+const WALL_H = 50;        // altura de las paredes dibujadas (mm)
+const S = 0.1;            // mm -> unidades de la escena
+// Log-odds: cada rebote suma en la casilla de la pared y cada haz resta en las casillas que atraviesa
+// (estan libres). Una lectura falsa se borra en cuanto otro haz pasa por ahi.
+const L_HIT = 1.0, L_FREE = -0.4, L_MIN = -2, L_MAX = 4, L_WALL = 0.9;
+const grid = new Map();   // "cx,cy" -> log-odds
+let gridDirty = false, lastRebuild = 0;
+let scene, camera, renderer, controls, wallMesh, pathLine, pathPts = [], robotObj;
+const MAX_WALLS = 30000;
+
+function initMap() {
+  if (!window.THREE) { $('map3d').insertAdjacentHTML('beforeend', '<p style="padding:16px">No se pudo cargar Three.js (hace falta internet la primera vez).</p>'); return; }
+  const el = $('map3d');
+  renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+  renderer.setPixelRatio(window.devicePixelRatio || 1);
+  el.appendChild(renderer.domElement);
+  scene = new THREE.Scene();
+  camera = new THREE.PerspectiveCamera(50, 1, 1, 5000);
+  camera.position.set(0, 90, 90);
+  controls = new THREE.OrbitControls(camera, renderer.domElement);
+  controls.enableDamping = true;
+  scene.add(new THREE.AmbientLight(0xffffff, 0.65));
+  const sun = new THREE.DirectionalLight(0xffffff, 0.6);
+  sun.position.set(40, 100, 60);
+  scene.add(sun);
+  const floor = new THREE.GridHelper(400, 40, 0x888888, 0x888888);  // cuadros de 10 cm
+  floor.material.opacity = 0.18; floor.material.transparent = true;
+  scene.add(floor);
+
+  wallMesh = new THREE.InstancedMesh(new THREE.BoxGeometry(CELL * S, WALL_H * S, CELL * S),
+    new THREE.MeshLambertMaterial({ color: 0xc8a06a }), MAX_WALLS);
+  wallMesh.count = 0;
+  scene.add(wallMesh);
+
+  pathLine = new THREE.Line(new THREE.BufferGeometry(), new THREE.LineBasicMaterial({ color: 0x2f6fdf }));
+  scene.add(pathLine);
+
+  robotObj = new THREE.Group();
+  const body = new THREE.Mesh(new THREE.BoxGeometry(ROBOT_WIDTH * S, 30 * S, 100 * S), new THREE.MeshLambertMaterial({ color: 0x1d2330 }));
+  body.position.y = 15 * S;
+  const nose = new THREE.Mesh(new THREE.ConeGeometry(2.2, 4, 12), new THREE.MeshLambertMaterial({ color: 0xd9480f }));
+  nose.rotation.x = -Math.PI / 2; nose.position.set(0, 32 * S, -6.5);
+  robotObj.add(body, nose);
+  scene.add(robotObj);
+
+  new ResizeObserver(resizeMap).observe(el);
+  resizeMap();
+}
+
+function resizeMap() {
+  if (!renderer) return;
+  const el = $('map3d');
+  renderer.setSize(el.clientWidth, el.clientHeight);
+  camera.aspect = el.clientWidth / el.clientHeight;
+  camera.updateProjectionMatrix();
+}
+
+// Pista (x a la derecha, y hacia delante al arrancar) -> escena (x, altura, -y)
+const toScene = (x, y, h = 0) => new THREE.Vector3(x * S, h, -y * S);
+
+function bump(cx, cy, delta) {
+  const key = cx + ',' + cy;
+  const old = grid.get(key) || 0;
+  const v = Math.max(L_MIN, Math.min(L_MAX, old + delta));
+  grid.set(key, v);
+  if ((old > L_WALL) !== (v > L_WALL)) gridDirty = true;
+}
+
+// Un haz desde (ox,oy) en direccion (dx,dy): libres las casillas recorridas y, si hubo rebote, pared al final.
+function castRay(ox, oy, dx, dy, dist) {
+  const hit = dist >= 0 && dist < MAP_RANGE;
+  const len = hit ? dist : MAP_RANGE;
+  const steps = Math.floor(len / (CELL * 0.7));
+  let last = '';
+  for (let k = 0; k < steps; k++) {
+    const t = k * CELL * 0.7;
+    if (hit && t > len - CELL) break;  // no borrar la propia pared
+    const cx = Math.round((ox + dx * t) / CELL), cy = Math.round((oy + dy * t) / CELL), key = cx + ',' + cy;
+    if (key !== last) { bump(cx, cy, L_FREE); last = key; }
+  }
+  if (hit) bump(Math.round((ox + dx * len) / CELL), Math.round((oy + dy * len) / CELL), L_HIT);
+}
+
+function rebuildWalls() {
+  let n = 0;
+  const m = new THREE.Matrix4();
+  for (const [key, v] of grid) {
+    if (v <= L_WALL || n >= MAX_WALLS) continue;
+    const [cx, cy] = key.split(',').map(Number);
+    m.makeTranslation(cx * CELL * S, WALL_H * S / 2, -cy * CELL * S);
+    wallMesh.setMatrixAt(n++, m);
+  }
+  wallMesh.count = n;
+  wallMesh.instanceMatrix.needsUpdate = true;
+  gridDirty = false;
+}
+
+let lastPose = null;  // ultima posicion desde la que se apunto al mapa
+function addToMap(x, y, aDeg, d) {
+  if (!scene) return;
+  const a = aDeg * Math.PI / 180;
+  robotObj.position.copy(toScene(x, y));
+  robotObj.rotation.y = a;
+  // Parado se repite la misma lectura: solo se apunta tras moverse 5 mm o girar 4 grados.
+  if (lastPose && Math.hypot(lastPose[0] - x, lastPose[1] - y) < 5 && Math.abs(lastPose[2] - aDeg) < 4) return;
+  lastPose = [x, y, aDeg];
+  const fx = -Math.sin(a), fy = Math.cos(a);      // hacia delante
+  const lx = -Math.cos(a), ly = -Math.sin(a);     // hacia la izquierda
+  const half = ROBOT_WIDTH / 2;
+  // Lecturas sin filtrar si llegan (q...), si no las filtradas.
+  const L = d.qI !== undefined ? d.qI : d.I, F = d.qF !== undefined ? d.qF : d.F, R = d.qD !== undefined ? d.qD : d.D;
+  castRay(x + fx * FRONT_AHEAD, y + fy * FRONT_AHEAD, fx, fy, F);
+  castRay(x + fx * SIDE_AHEAD + lx * half, y + fy * SIDE_AHEAD + ly * half, lx, ly, L);
+  castRay(x + fx * SIDE_AHEAD - lx * half, y + fy * SIDE_AHEAD - ly * half, -lx, -ly, R);
+
+  const p = pathPts[pathPts.length - 1];
+  if (!p || Math.hypot(p[0] - x, p[1] - y) > 5) {
+    pathPts.push([x, y]);
+    pathLine.geometry.setFromPoints(pathPts.map(([px, py]) => toScene(px, py, 0.3)));
+  }
+}
+
+// La camara sigue al raton sin dejar de poder girarla con el raton del ordenador.
+function followRobot() {
+  const delta = robotObj.position.clone().sub(controls.target).multiplyScalar(0.05);
+  controls.target.add(delta);
+  camera.position.add(delta);
+}
+
+function topView() {
+  if (!scene) return;
+  camera.position.set(controls.target.x, 160, controls.target.z + 0.01);
+  controls.update();
+}
+
+function clearMap() {
+  grid.clear(); pathPts = []; lastPose = null; gridDirty = false;
+  if (!scene) return;
+  wallMesh.count = 0;
+  pathLine.geometry.setFromPoints([]);
+  robotObj.position.set(0, 0, 0); robotObj.rotation.y = 0;
+}
+
+initMap();
+
+function frame() {
+  drawRobot(); drawChart();
+  if (renderer) {
+    if (gridDirty && performance.now() - lastRebuild > 150) { rebuildWalls(); lastRebuild = performance.now(); }
+    followRobot(); controls.update(); renderer.render(scene, camera);
+  }
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+
+$('connect').onclick = connect;
+$('stop').onclick = () => { send('x'); log('Orden: parar'); };
+let mode = 1;
+const modeName = m => document.querySelector(`.mode[data-mode="${m}"] b`).textContent;
+try { mode = +localStorage.getItem('raton-mode') || 1; } catch (e) {}
+function selectMode(m) {
+  mode = m;
+  document.querySelectorAll('.mode').forEach(b => b.classList.toggle('sel', +b.dataset.mode === m));
+  try { localStorage.setItem('raton-mode', m); } catch (e) {}
+}
+selectMode(mode);
+document.querySelectorAll('.mode').forEach(b => b.onclick = async () => {
+  selectMode(+b.dataset.mode);
+  if (!rxChar) return;
+  // En marcha: parar, cambiar de modo y volver a arrancar. Parado: solo se elige.
+  const running = last && last.state !== 'PARADO';
+  if (running) { await send('x'); await new Promise(r => setTimeout(r, 400)); }
+  await send(`m${mode}\n`);
+  if (running) await send('s\n');
+  log(`Modo ${modeName(mode)}${running ? ' (rearrancando)' : ''}`);
+});
+$('start').onclick = async () => {
+  await send(`m${mode}\n`);
+  await send('s\n');
+  log('Orden: arrancar en ' + modeName(mode));
+};
+$('clearMap').onclick = clearMap;
+$('topView').onclick = topView;
+$('download').onclick = () => {
+  const blob = new Blob(['segundos\tlinea\n' + record.join('\n')], { type: 'text/plain' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `raton-registro-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')}.txt`;
+  a.click();
+  log(`Registro descargado (${record.length} lineas)`);
+};
+$('speed').oninput = e => $('speedV').textContent = e.target.value + ' mm/s';
+$('kp').oninput = e => $('kpV').textContent = (+e.target.value).toFixed(2);
+$('range').oninput = e => { $('rangeV').textContent = e.target.value + ' mm'; MAP_RANGE = +e.target.value; };
+$('sig').oninput = e => $('sigV').textContent = (+e.target.value).toFixed(1);
+$('send').onclick = async () => {
+  await send(`v${$('speed').value}\n`);
+  await send(`k${$('kp').value}\n`);
+  await send(`r${$('range').value}\n`);
+  await send(`g${$('sig').value}\n`);
+  const goal = $('goal').value.replace(/\s/g, '');
+  if (/^\d+,\d+$/.test(goal)) await send(`G${goal}\n`);
+  log(`Ajustes enviados: velocidad ${$('speed').value} mm/s, KP_WALL ${$('kp').value}, alcance ${$('range').value} mm, eco ${$('sig').value}`);
+};
+$('ask').onclick = () => send('?\n');
+</script>
+</body>
+</html>

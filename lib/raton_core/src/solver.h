@@ -20,7 +20,14 @@ class Solver {
  public:
   Solver(Robot& robot, int width = MAX_MAZE_SIZE, int height = MAX_MAZE_SIZE);
 
-  // Olvida el mapa y vuelve a la salida (0,0) mirando al norte.
+  // Celda de salida (por defecto (0,0)); se sale mirando al norte. Y la meta (por defecto el centro).
+  void setStart(Cell c) { start_ = c; }
+  Cell start() const { return start_; }
+  void setGoal(Cell c) { maze_.setGoal(c); }
+  // Carga una pared ya conocida (laberinto sabido de antemano). Llamar despues de reset().
+  void setKnownWall(Cell c, Dir d, bool present) { maze_.setWall(c, d, present); }
+
+  // Olvida el mapa y vuelve a la salida mirando al norte.
   void reset(int width, int height);
   void reset() { reset(maze_.width(), maze_.height()); }
 
@@ -58,6 +65,7 @@ class Solver {
   FloodFill check_;
   Cell pos_;
   Dir heading_;
+  Cell start_ = {0, 0};
   SolverStats stats_;
 };
 

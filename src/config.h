@@ -30,9 +30,16 @@ const uint8_t I2C_LASER_DER = 0x32;
 const uint8_t I2C_OLED = 0x3C;
 
 // ---------- Laberinto ----------
-const int MAZE_WIDTH = 16;
-const int MAZE_HEIGHT = 16;
-const float CELL_MM = 180.0f;
+// Reglamento: pista de ~1.5 x 3 m, pasillos de ~14 cm (celda ~15.5 cm con la pared). CALIBRAR con la pista real.
+const int MAZE_WIDTH = 19;           // celdas a lo ancho (3 m)
+const int MAZE_HEIGHT = 10;          // celdas a lo alto (1.5 m)
+const float CELL_MM = 155.0f;        // de centro a centro de celda
+// Salida: en el ejemplo del reglamento, "Inicio" esta abajo a la derecha, saliendo hacia arriba (norte).
+const int START_X = MAZE_WIDTH - 1;
+const int START_Y = 0;
+// Meta: celda (x, y) contando desde abajo a la izquierda; -1 = el centro. Se puede cambiar desde la web.
+const int GOAL_X = -1;
+const int GOAL_Y = -1;
 const int MAX_SEARCH_RUNS = 4;  // viajes ida/vuelta maximos explorando
 
 // ---------- Mecanica (CALIBRAR) ----------
@@ -53,8 +60,48 @@ const float GYRO_SIGN = 1.0f;
 // ---------- Motores ----------
 // Motores de 6 V con bateria 2S (8.4 V): limitar a ~70 % del PWM
 const float PWM_MAX = 0.70f;      // 0..1
-const float PWM_MIN_MOVE = 0.25f; // minimo para que el N20 arranque
+const float PWM_MIN_MOVE = 0.25f; // minimo para que el N20 arranque (parado)
+const float PWM_MIN_RUN = 0.18f;  // minimo para que siga en marcha sin pararse
 const uint32_t PWM_PERIOD_US = 2000; // 500 Hz como analogWrite: a 20 kHz los N20 1:100 no tienen fuerza
+
+// ---------- Bluetooth ----------
+const char* const BLE_NAME = "Raton";          // nombre que se ve desde el movil
+const uint32_t TELEMETRY_PERIOD_MS = 50;       // una linea de datos cada 50 ms (20 por segundo)
+
+// ---------- Arranque ----------
+// true: al encender (y tras parar) espera la orden ARRANCAR de la web ('s' por Bluetooth o Serie).
+// false: arranca solo al encender y la mano tambien sirve para arrancar.
+const bool WAIT_FOR_WEB_START = true;
+
+// ---------- Eleccion de modo con la mano ----------
+// Al encender, cada pasada de la mano delante del laser frontal cambia de modo:
+// 1 = seguir pared derecha, 2 = seguir pared izquierda, 3 = resolver laberinto (flood fill),
+// 4 = ruta de la competencia (laberinto del reglamento en competition_maze.h), 5 = espacio libre.
+// Sin pasadas en MODE_SELECT_MS arranca en el modo 1. 0 = sin eleccion, arranca al instante.
+const uint32_t MODE_SELECT_MS = 2000;
+const int HAND_NEAR_MM = 60;     // mano delante
+const int HAND_FAR_MM = 150;     // mano retirada
+
+// ---------- Giroscopio ----------
+const float GYRO_BIAS_TRACK_DPS = 2.0f;    // parado y girando menos que esto: se corrige el sesgo
+const float GYRO_BIAS_TRACK_GAIN = 0.01f;  // velocidad de esa correccion por muestra
+const uint32_t SETTLE_MS = 40;             // pausa tras cada maniobra (corrige sesgo y estabiliza)
+
+// ---------- Rumbo con encoders ----------
+const float TRACK_WIDTH_MM = 75.0f;        // distancia entre ruedas; al arrancar se mide sola
+const float ENC_YAW_WEIGHT = 0.0f;         // peso de los encoders en el rumbo (0 = solo giroscopio; si las
+                                           // ruedas patinan, los encoders desvian el rumbo)
+
+// ---------- Alcance de los laseres ----------
+// Ajustables en marcha desde la web (r<mm>, g<MCPS>). El raton solo necesita ver hasta ~15 cm.
+const int LASER_MAX_MM = 160;                 // mas lejos que esto = no hay nada (-1)
+const float LASER_SIGNAL_LIMIT_MCPS = 0.6f;   // eco minimo aceptado (de fabrica 0.25): mas alto = ve menos
+
+// Error fijo de cada laser (mm que se SUMAN a su lectura). CALIBRAR: con el raton a una distancia
+// conocida de una pared (p. ej. 100 mm medidos con regla), offset = real - lectura de la web.
+const int LASER_OFFSET_IZQ = 0;
+const int LASER_OFFSET_FRO = 0;
+const int LASER_OFFSET_DER = 0;
 
 // ---------- Filtro de Kalman de los laseres ----------
 const float LASER_KF_R = 64.0f;        // ruido de medida (mm^2, ~8 mm): mas alto = suaviza mas pero tarda mas
@@ -64,9 +111,15 @@ const uint8_t LASER_JUMP_CONFIRM = 2;  // lecturas seguidas para aceptar un salt
 const uint8_t LASER_MAX_MISS = 2;      // lecturas invalidas seguidas para dar el lado por libre (-1)
 
 // ---------- Paredes (CALIBRAR, en mm medidos por cada laser) ----------
-const int SIDE_WALL_MM = 110;        // lateral por debajo de esto = hay pared
+// Un solo umbral lateral (con LASER_MAX_MM = 160): lectura por debajo = pared; sin lectura o por
+// encima = libre. Con dos umbrales distintos la zona intermedia confundia paredes con huecos.
+const int SIDE_WALL_MM = 150;        // lateral por debajo de esto = hay pared
 const int FRONT_WALL_MM = 140;       // frontal por debajo de esto = hay pared
-const int FRONT_STOP_MM = 45;        // lectura frontal con el raton en el centro de la celda
+// Punto muerto: lo que marca el laser frontal con el morro del raton TOCANDO la pared (la pieza de
+// delante sobresale del sensor). CALIBRAR: pegar el raton a una pared y leer "Frontal" en la web.
+const int FRONT_DEADZONE_MM = 50;
+const int FRONT_MARGIN_MM = 15;      // margen de seguridad sobre el punto muerto
+const int FRONT_STOP_MM = FRONT_DEADZONE_MM + FRONT_MARGIN_MM;  // parada ante una pared en los modos de celdas
 
 // ---------- Arranque automatico (sin arrancador) ----------
 const uint32_t POWER_SETTLE_MS = 500;   // margen para que laseres, IMU y OLED se enciendan
@@ -82,23 +135,32 @@ const float ACCEL = 800.0f;               // mm/s^2
 const float MIN_SPEED = 40.0f;            // mm/s al final de la frenada
 
 // ---------- Seguidor de paredes (CALIBRAR en la pista) ----------
-const bool FOLLOW_RIGHT = true;             // true = regla de la mano derecha, false = izquierda
 const float WALL_FOLLOW_SPEED = SEARCH_SPEED;
-const int FRONT_TURN_MM = 50;               // se para y gira con la pared delante a esta distancia
-const uint32_t STALL_MS = 500;              // atascado este tiempo = pared delante (retrocede y gira)
-const float BACKUP_MM = 20.0f;              // marcha atras al encontrar pared delante, antes de girar
+const int FRONT_TURN_MIN_MM = FRONT_DEADZONE_MM + FRONT_MARGIN_MM;           // la parada ante una pared se calcula para girar en el centro
+                                            // del cruce (pasillo/2 - FRONT_SENSOR_AHEAD_MM), nunca menos que esto
+const int FRONT_MEMORY_MM = 100;            // con la pared a menos de esto, si el laser deja de medir se
+                                            // estima la distancia con los encoders (no la da por desaparecida)
+const uint32_t STALL_MS = 600;              // atascado este tiempo = pared delante (retrocede y gira)
+const float BUMP_G = 0.45f;
+const float BUMP_MIN_SPEED = 50.0f;         // solo es choque si iba al menos a esto y frena de golpe                 // pico de aceleracion horizontal (g) que se toma como choque
+const uint32_t BUMP_IGNORE_MS = 250;        // al arrancar un movimiento el tiron no cuenta como choque
+const float SLOW_NEAR_WALL_SPEED = 60.0f;   // con pared delante a menos de FRONT_WALL_MM, como mucho esto
+const float BACKUP_MM = 10.0f;              // marcha atras al encontrar pared delante, antes de girar
 const float BACKUP_PWM = 0.40f;
-const int SIDE_CRASH_MM = 30;               // lateral por debajo de esto = rozando la pared
+const int SIDE_CRASH_MM = 8;                // lateral por debajo de esto = rozando la pared
+const int SIDE_CRASH_MARGIN_MM = 10;        // con los dos laterales cerca y parecidos = pasillo estrecho, no roce
 const float NUDGE_BACK_MM = 15.0f;          // al rozar un lateral: marcha atras...
 const float NUDGE_DEG = 15.0f;              // ...y enderezarse estos grados hacia el otro lado
-const int SIDE_OPEN_MM = 130;               // lateral por encima de esto (o sin lectura) = hueco
+const int SIDE_OPEN_MM = SIDE_WALL_MM;               // lateral por encima de esto (o sin lectura) = hueco
 const float OPEN_CONFIRM_MM = 5.0f;         // el hueco tiene que seguir abierto este recorrido
 // Geometria del raton (CALIBRAR con una regla)
 const float ROBOT_WIDTH_MM = 90.0f;         // entre las caras de los dos laseres laterales
 const float SIDE_SENSOR_AHEAD_MM = 45.0f;   // cuanto van los laseres laterales por delante del eje de ruedas
-const float DEFAULT_CORRIDOR_MM = 160.0f;   // ancho de pasillo inicial; luego lo mide solo
+const float FRONT_SENSOR_AHEAD_MM = 50.0f;  // cuanto va el laser frontal por delante del eje de ruedas
+const float DEFAULT_CORRIDOR_MM = 140.0f;   // ancho de pasillo inicial; luego lo mide solo
 
-const float KFF_SPEED = PWM_MAX / 800.0f; // PWM por mm/s (prealimentacion)
+const float KFF_SPEED = (PWM_MAX - PWM_MIN_RUN) / 500.0f; // PWM por mm/s, sumado a PWM_MIN_RUN
+const float SPEED_FILTER = 0.85f;         // suavizado de la velocidad medida (0..1, mas = mas suave)
 const float KP_SPEED = 0.0008f;
 const float KI_SPEED = 0.004f;
 const float KP_YAW = 0.006f;              // PWM por grado de error

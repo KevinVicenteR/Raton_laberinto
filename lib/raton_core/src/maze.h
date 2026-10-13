@@ -6,9 +6,10 @@
 
 namespace raton {
 
-constexpr int MAX_MAZE_SIZE = 16;
+constexpr int MAX_MAZE_SIZE = 32;  // la pista de 1.5 x 3 m con celdas de ~15.5 cm son ~10 x 19
 
-// Coordenadas: (0,0) es la celda de salida, abajo a la izquierda. NORTH es +y.
+// Coordenadas: (0,0) es la celda de abajo a la izquierda. NORTH es +y. La salida y la meta se
+// eligen con Solver::setStart y Maze::setGoal (por defecto: salida (0,0), meta en el centro).
 enum Dir : uint8_t { NORTH = 0, EAST = 1, SOUTH = 2, WEST = 3 };
 
 inline Dir rightOf(Dir d) { return static_cast<Dir>((d + 1) & 3); }
@@ -51,8 +52,14 @@ class Maze {
   void markVisited(Cell c);
   bool visited(Cell c) const;
 
-  // Celdas meta: el centro (2x2 si el lado es par, 1 si es impar). Devuelve cuantas.
+  // Celdas meta: la elegida con setGoal o, si no hay, el centro (2x2 si el lado es par, 1 si es
+  // impar). Devuelve cuantas.
   int goalCells(Cell out[4]) const;
+  void setGoal(Cell c) {
+    goal_ = c;
+    hasGoal_ = true;
+  }
+  void clearGoal() { hasGoal_ = false; }
   bool isGoal(Cell c) const;
 
  private:
@@ -60,6 +67,8 @@ class Maze {
   int8_t height_;
   uint8_t walls_[MAX_MAZE_SIZE][MAX_MAZE_SIZE];  // bits 0-3: pared, bits 4-7: conocida
   uint8_t visited_[MAX_MAZE_SIZE][MAX_MAZE_SIZE];
+  Cell goal_ = {0, 0};
+  bool hasGoal_ = false;
 };
 
 }  // namespace raton
