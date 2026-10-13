@@ -43,12 +43,30 @@ void Lasers::update() {
     VL53L0X& s = sensors_[i];
     // Solo lee si ya hay medida lista; asi readRangeContinuousMillimeters no bloquea.
     if ((s.readReg(VL53L0X::RESULT_INTERRUPT_STATUS) & 0x07) == 0) continue;
+    // Estado de la medida (bits 6..3): 11 = valida. El resto (senal debil, sigma alta, fase, por debajo
+    // del minimo...) son las lecturas fantasma: se descartan.
+    const uint8_t status = (s.readReg(VL53L0X::RESULT_RANGE_STATUS) >> 3) & 0x0F;
     const uint16_t v = s.readRangeContinuousMillimeters();
     const int mm = static_cast<int>(v) + kOffset[i];
-    raw_[i] = (s.timeoutOccurred() || mm > maxMm_ || mm < 0) ? -1 : mm;
+    const bool valid = !s.timeoutOccurred() && (!cfg::LASER_CHECK_STATUS || status == 11) && mm >= 0 && mm <= maxMm_;
+    raw_[i] = median3(i, valid ? mm : -1);
     filter(i, raw_[i]);
     samples_[i]++;
   }
+}
+
+int Lasers::median3(int i, int z) {
+  // Mediana de las 3 ultimas lecturas: un pico suelto (reflejo en un canto, el suelo) desaparece.
+  // Sin lectura cuenta como "muy lejos".
+  int* h = hist3_[i];
+  h[0] = h[1];
+  h[1] = h[2];
+  h[2] = z < 0 ? 100000 : z;
+  int a = h[0], b = h[1], c = h[2];
+  if (a > b) { const int t = a; a = b; b = t; }
+  if (b > c) { const int t = b; b = c; c = t; }
+  if (a > b) { const int t = a; a = b; b = t; }
+  return b >= 100000 ? -1 : b;
 }
 
 void Lasers::filter(int i, int z) {

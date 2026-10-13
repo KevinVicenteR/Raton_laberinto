@@ -99,6 +99,8 @@ const float LASER_SIGNAL_LIMIT_MCPS = 0.6f;   // eco minimo aceptado (de fabrica
 
 // Error fijo de cada laser (mm que se SUMAN a su lectura). CALIBRAR: con el raton a una distancia
 // conocida de una pared (p. ej. 100 mm medidos con regla), offset = real - lectura de la web.
+// Descartar las medidas que el propio VL53L0X marca como no validas (senal debil, sigma alta...).
+const bool LASER_CHECK_STATUS = true;
 const int LASER_OFFSET_IZQ = 0;
 const int LASER_OFFSET_FRO = 0;
 const int LASER_OFFSET_DER = 0;
@@ -140,12 +142,24 @@ const int FRONT_TURN_MIN_MM = FRONT_DEADZONE_MM + FRONT_MARGIN_MM;           // 
                                             // del cruce (pasillo/2 - FRONT_SENSOR_AHEAD_MM), nunca menos que esto
 const int FRONT_MEMORY_MM = 100;            // con la pared a menos de esto, si el laser deja de medir se
                                             // estima la distancia con los encoders (no la da por desaparecida)
+const int LOOP_TURNS = 3;                   // modo 5: giros seguidos sin avanzar = atrapado en un cruce
+const float LOOP_MIN_TRAVEL_MM = 60.0f;     // avance minimo entre giros para no contar como bucle
+const float LOOP_ESCAPE_MM = 400.0f;        // tramo siguiendo la pared derecha para salir del bucle
+// Giro en dos tiempos (simulado en tools/sim_extremos.py): con el eje de ruedas atras, girar 90 de
+// golpe en un pasillo de 14 cm hace barrer la pared con el morro. Girando 70, avanzando y girando 20 cabe.
+const bool TURN_TWO_STAGE = true;
+const float TURN_SPLIT_DEG = 70.0f;
+const float TURN_SPLIT_ADVANCE_MM = 75.0f;
+const int SIDE_CLOSE_MM = 60;               // lateral sin lectura tras una lectura menor que esto = demasiado
+                                            // cerca (por debajo del minimo del laser), no un hueco
+const float UNSTICK_BACK_MM = 25.0f;        // atascado con el frente libre: atras...
+const float UNSTICK_DEG = 10.0f;            // ...y enderezarse hacia el lado con mas espacio
 const uint32_t STALL_MS = 600;              // atascado este tiempo = pared delante (retrocede y gira)
 const float BUMP_G = 0.45f;
 const float BUMP_MIN_SPEED = 50.0f;         // solo es choque si iba al menos a esto y frena de golpe                 // pico de aceleracion horizontal (g) que se toma como choque
 const uint32_t BUMP_IGNORE_MS = 250;        // al arrancar un movimiento el tiron no cuenta como choque
 const float SLOW_NEAR_WALL_SPEED = 60.0f;   // con pared delante a menos de FRONT_WALL_MM, como mucho esto
-const float BACKUP_MM = 10.0f;              // marcha atras al encontrar pared delante, antes de girar
+const float BACKUP_MM = 5.0f;               // marcha atras al encontrar pared delante, antes de girar
 const float BACKUP_PWM = 0.40f;
 const int SIDE_CRASH_MM = 8;                // lateral por debajo de esto = rozando la pared
 const int SIDE_CRASH_MARGIN_MM = 10;        // con los dos laterales cerca y parecidos = pasillo estrecho, no roce
@@ -155,8 +169,8 @@ const int SIDE_OPEN_MM = SIDE_WALL_MM;               // lateral por encima de es
 const float OPEN_CONFIRM_MM = 5.0f;         // el hueco tiene que seguir abierto este recorrido
 // Geometria del raton (CALIBRAR con una regla)
 const float ROBOT_WIDTH_MM = 90.0f;         // entre las caras de los dos laseres laterales
-const float SIDE_SENSOR_AHEAD_MM = 45.0f;   // cuanto van los laseres laterales por delante del eje de ruedas
-const float FRONT_SENSOR_AHEAD_MM = 50.0f;  // cuanto va el laser frontal por delante del eje de ruedas
+const float SIDE_SENSOR_AHEAD_MM = 56.0f;   // cuanto van los laseres laterales por delante del eje de ruedas
+const float FRONT_SENSOR_AHEAD_MM = 33.0f;  // cuanto va el laser frontal por delante del eje de ruedas
 const float DEFAULT_CORRIDOR_MM = 140.0f;   // ancho de pasillo inicial; luego lo mide solo
 
 const float KFF_SPEED = (PWM_MAX - PWM_MIN_RUN) / 500.0f; // PWM por mm/s, sumado a PWM_MIN_RUN

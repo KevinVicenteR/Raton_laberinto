@@ -41,6 +41,8 @@ class Lasers {
   // Filtro de Kalman por sensor con estado [distancia, velocidad]: sigue la tendencia al acercarse
   // o alejarse de una pared, asi suaviza el ruido casi sin retraso.
   void filter(int i, int z);
+  int median3(int i, int z);
+  int hist3_[3][3] = {{100000, 100000, 100000}, {100000, 100000, 100000}, {100000, 100000, 100000}};
 
   int mm_[3] = {-1, -1, -1};
   int raw_[3] = {-1, -1, -1};

@@ -137,6 +137,12 @@ void RobotHW::runCommand(const char* cmd) {
       }
       break;
     }
+    case 'w':
+      sideWall_ = static_cast<int>(clampf(value, 40.0f, 400.0f));
+      break;
+    case 'z':
+      deadzone_ = static_cast<int>(clampf(value, 0.0f, 150.0f));
+      break;
     case 'r':
       lasers_.setMaxMm(static_cast<int>(clampf(value, 50.0f, 2000.0f)));
       break;
@@ -149,14 +155,14 @@ void RobotHW::runCommand(const char* cmd) {
     case '?':
       break;
     default:
-      snprintf(reply, sizeof(reply), "? s x m<1-5> v k r g G<x>,<y> ?");
+      snprintf(reply, sizeof(reply), "? s x m<1-5> v k r g w z G<x>,<y> ?");
       telemetry::println(reply);
       Serial.println(reply);
       return;
   }
-  snprintf(reply, sizeof(reply), "v=%d k=%d/1000 eje=%dmm r=%dmm g=%d/100 meta=%d,%d", static_cast<int>(speed_),
-           static_cast<int>(kpWall_ * 1000), static_cast<int>(trackWidth_), lasers_.maxMm(),
-           static_cast<int>(lasers_.signalLimit() * 100), goalX_, goalY_);
+  snprintf(reply, sizeof(reply), "v=%d k=%d/1000 r=%d g=%d/100 w=%d z=%d meta=%d,%d", static_cast<int>(speed_),
+           static_cast<int>(kpWall_ * 1000), lasers_.maxMm(), static_cast<int>(lasers_.signalLimit() * 100),
+           sideWall_, deadzone_, goalX_, goalY_);
   telemetry::println(reply);
   Serial.println(reply);
 }
@@ -194,16 +200,16 @@ int RobotHW::frontMm() {
 raton::Walls RobotHW::readWalls() {
   lasers_.waitFresh(2);
   auto wall = [](int mm, int threshold) { return mm >= 0 && mm < threshold; };
-  return raton::Walls{wall(lasers_.mm(Lasers::LEFT), cfg::SIDE_WALL_MM),
+  return raton::Walls{wall(lasers_.mm(Lasers::LEFT), sideWall_),
                       wall(frontMm(), cfg::FRONT_WALL_MM),
-                      wall(lasers_.mm(Lasers::RIGHT), cfg::SIDE_WALL_MM)};
+                      wall(lasers_.mm(Lasers::RIGHT), sideWall_)};
 }
 
 bool RobotHW::lateralOffset(float& offset) const {
   const int l = lasers_.mm(Lasers::LEFT);
   const int r = lasers_.mm(Lasers::RIGHT);
-  const bool hasL = l >= 0 && l < cfg::SIDE_WALL_MM;
-  const bool hasR = r >= 0 && r < cfg::SIDE_WALL_MM;
+  const bool hasL = l >= 0 && l < sideWall_;
+  const bool hasR = r >= 0 && r < sideWall_;
   // Con una sola pared: centrado = la mitad del hueco que deja el raton en el pasillo medido.
   const float center = 0.5f * (corridorMm_ - cfg::ROBOT_WIDTH_MM);
   if (hasL && hasR) {
@@ -254,7 +260,7 @@ void RobotHW::moveForward(int cells) {
     // En la ultima celda, si hay pared delante, frena por el laser: corrige el error acumulado.
     const int front = frontMm();
     if (remaining < cfg::CELL_MM && front >= 0 && front < cfg::FRONT_WALL_MM + cfg::CELL_MM / 2) {
-      remaining = static_cast<float>(front - cfg::FRONT_STOP_MM);
+      remaining = static_cast<float>(front - (deadzone_ + cfg::FRONT_MARGIN_MM));
     }
     if (remaining <= 1.0f) break;
 
@@ -308,6 +314,8 @@ RobotHW::DriveEvent RobotHW::drive(float maxMm, int watchSide) {
   float openSince = -1;  // posicion donde se vio abierto el lado vigilado
   float openSinceL = -1;  // con kWatchBoth, uno por lado
   float openSinceR = -1;
+  int lastOkL = 100;  // ultima lectura valida de cada lateral
+  int lastOkR = 100;
   float ignoreSide = 0;
   if (watchSide != 0) {
     ignoreSide = ignoreSideMm_;
@@ -381,7 +389,7 @@ RobotHW::DriveEvent RobotHW::drive(float maxMm, int watchSide) {
     }
 
     // Con pared a los dos lados se va midiendo el ancho del pasillo (adapta el raton a la pista).
-    if (!frontNear && left >= 0 && right >= 0 && left <= cfg::SIDE_OPEN_MM && right <= cfg::SIDE_OPEN_MM) {
+    if (!frontNear && left >= 0 && right >= 0 && left <= sideWall_ && right <= sideWall_) {
       const float width = left + right + cfg::ROBOT_WIDTH_MM;
       corridorMm_ = clampf(0.98f * corridorMm_ + 0.02f * width, 80.0f, 400.0f);
     }
@@ -389,25 +397,30 @@ RobotHW::DriveEvent RobotHW::drive(float maxMm, int watchSide) {
     // Hueco en el lado vigilado: se confirma tras OPEN_CONFIRM_MM para ignorar lecturas sueltas.
     // Con kWatchBoth: hueco a cualquiera de los dos lados (borde de la pared que termina).
     const bool sidesReady = pos >= ignoreSide;
+    if (left >= 0) lastOkL = left;
+    if (right >= 0) lastOkR = right;
+    // Sin lectura justo despues de una lectura muy corta: demasiado cerca para el laser, no un hueco.
+    const int seenL = (left < 0 && lastOkL < cfg::SIDE_CLOSE_MM) ? lastOkL : left;
+    const int seenR = (right < 0 && lastOkR < cfg::SIDE_CLOSE_MM) ? lastOkR : right;
     if (watchSide == kWatchBoth && !frontNear && sidesReady) {
       auto check = [&](int mm, float& since) {
-        if (mm >= 0 && mm <= cfg::SIDE_OPEN_MM) {
+        if (mm >= 0 && mm <= sideWall_) {
           since = -1;
           return false;
         }
         if (since < 0) since = pos;
         return pos - since >= cfg::OPEN_CONFIRM_MM;
       };
-      const bool l = check(left, openSinceL);
-      const bool r = check(right, openSinceR);
+      const bool l = check(seenL, openSinceL);
+      const bool r = check(seenR, openSinceR);
       if (l || r) {
         openSide_ = l ? 1 : -1;
         ev = DriveEvent::SideOpen;
         break;
       }
     } else if (watchSide != 0 && watchSide != kWatchBoth && !frontNear && sidesReady) {
-      const int side = watchSide > 0 ? left : right;
-      if (side >= 0 && side <= cfg::SIDE_OPEN_MM) {
+      const int side = watchSide > 0 ? seenL : seenR;
+      if (side >= 0 && side <= sideWall_) {
         openSince = -1;
       } else if (openSince < 0) {
         openSince = pos;
@@ -468,6 +481,54 @@ void RobotHW::selfCheck(char* msg) {
     }
   }
   snprintf(msg, 22, "Mot %s Las %s", motorsSwapped ? "CRUZ" : "ok", lasersSwapped ? "CRUZ" : "ok");
+}
+
+void RobotHW::turnCorner(float degrees) {
+  if (!cfg::TURN_TWO_STAGE || fabsf(fabsf(degrees) - 90.0f) > 1.0f) {
+    rotate(degrees);
+    return;
+  }
+  const float sign = degrees > 0 ? 1.0f : -1.0f;
+  rotate(sign * cfg::TURN_SPLIT_DEG);
+  drive(cfg::TURN_SPLIT_ADVANCE_MM, 0);
+  rotate(sign * (90.0f - cfg::TURN_SPLIT_DEG));
+}
+
+int RobotHW::backOut(float maxMm) {
+  setState("SALIDA");
+  encoders_.reset();
+  resetHeading();
+  const uint32_t t0 = millis();
+  uint32_t next = micros();
+  float sinceL = -1;
+  float sinceR = -1;
+  int found = 0;
+  float foundAt = 0;
+  while (!aborted_ && millis() - t0 < 5000) {
+    waitPeriod(next);
+    const float back = -0.5f * (encoders_.left() + encoders_.right()) * cfg::MM_PER_COUNT;
+    if (back >= maxMm) break;
+    if (found == 0) {
+      auto check = [&](int mm, float& since) {
+        if (mm >= 0 && mm <= sideWall_) {
+          since = -1;
+          return false;
+        }
+        if (since < 0) since = back;
+        return back - since >= cfg::OPEN_CONFIRM_MM;
+      };
+      if (check(lasers_.mm(Lasers::LEFT), sinceL)) found = 1;
+      else if (check(lasers_.mm(Lasers::RIGHT), sinceR)) found = -1;
+      if (found) foundAt = back;
+    } else if (back - foundAt >= 0.5f * corridorMm_) {
+      break;  // el laser lateral ya esta en el centro del hueco
+    }
+    updateHeading();
+    const float steer = cfg::KP_YAW * -heading_ - cfg::KD_YAW * gyro_.rate();
+    motors_.set(-cfg::BACKUP_PWM - steer, -cfg::BACKUP_PWM + steer);
+  }
+  stopMotors();
+  return found;
 }
 
 void RobotHW::backUp(float mm) {

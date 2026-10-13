@@ -116,6 +116,7 @@
         <div class="tile"><div class="label">Velocidad</div><div class="value"><span id="vV">—</span> <span class="unit">mm/s</span></div></div>
         <div class="tile"><div class="label">Rumbo</div><div class="value"><span id="vR">—</span> <span class="unit">°</span></div></div>
         <div class="tile"><div class="label">Pasillo</div><div class="value"><span id="vP">—</span> <span class="unit">mm</span></div></div>
+        <div class="tile" style="grid-column:1/-1"><div class="label">Última decisión</div><div class="value" style="font-size:15px;font-weight:500" id="vDec">—</div></div>
         <div class="tile"><div class="label">Ciclo más lento</div><div class="value"><span id="vT">—</span> <span class="unit">ms</span></div></div>
       </div>
     </section>
@@ -146,6 +147,20 @@
         <div class="row"><label for="goal">Meta (modo laberinto)</label><input id="goal" placeholder="x,y  (ej. 4,2)" style="font:inherit;padding:7px 10px;border-radius:8px;border:1px solid var(--border);background:var(--panel);color:var(--text);width:140px"><span class="status">celda contando desde abajo a la izquierda</span></div>
         <div class="row"><button id="send" disabled>Enviar ajustes</button><button id="ask" disabled>Ver valores</button></div>
       </div>
+    </section>
+
+    <section class="panel wide">
+      <h2>Supervisor y aprendizaje</h2>
+      <div class="row" style="margin-bottom:10px">
+        <label><input type="checkbox" id="supOn" checked> Supervisor: corrige bucles, choques y atascos</label>
+        <label><input type="checkbox" id="learnOn" checked> Aprender umbrales de la pista y enviarlos</label>
+      </div>
+      <div class="tiles">
+        <div class="tile"><div class="label">Estado del supervisor</div><div class="value" style="font-size:17px" id="supState">—</div></div>
+        <div class="tile"><div class="label">Umbral lateral aprendido</div><div class="value"><span id="lWall">—</span> <span class="unit">mm</span></div></div>
+        <div class="tile"><div class="label">Punto muerto aprendido</div><div class="value"><span id="lDead">—</span> <span class="unit">mm</span></div></div>
+      </div>
+      <p class="status" style="margin:10px 0 0">El supervisor corre en esta página: no gasta nada del ratón. Si el ratón da vueltas en el mismo sitio lo pasa a seguir la pared; si choca a menudo baja la velocidad y la recupera cuando va bien. El aprendizaje mide el ancho real de los pasillos y la distancia a la que choca de frente, y ajusta el umbral lateral (w) y el punto muerto (z).</p>
     </section>
 
     <section class="panel">
@@ -225,11 +240,18 @@ function onData(chunk) {
 // Formato: ESTADO I<izq> F<frontal> D<der> v<mm/s> r<rumbo> p<pasillo> x<mm> y<mm> a<grados>
 function onLine(line) {
   if (line === 'INICIO_MAPA') { clearMap(); log('Arranca: mapa nuevo'); return; }
+  if (line.startsWith('DECIDE: ')) {
+    record.push(`${((performance.now() - recordStart) / 1000).toFixed(2)}\t${line}`);
+    $('vDec').textContent = line.slice(8);
+    log(line.slice(8));
+    return;
+  }
   record.push(`${((performance.now() - recordStart) / 1000).toFixed(2)}\t${line}`);
   const m = line.match(/^(\S+) I(-?\d+) F(-?\d+) D(-?\d+) v(-?\d+) r(-?\d+) p(-?\d+)(?: x(-?\d+) y(-?\d+) a(-?\d+))?(?: t(\d+))?(?: q(-?\d+),(-?\d+),(-?\d+))?$/);
   if (!m) { log(line); return; }
   last = { state: m[1], I: +m[2], F: +m[3], D: +m[4], v: +m[5], r: +m[6], p: +m[7] };
   if (m[12] !== undefined) { last.qI = +m[12]; last.qF = +m[13]; last.qD = +m[14]; }
+  if (m[8] !== undefined) supervise({ t: performance.now(), ...last, x: +m[8], y: +m[9] });
   if (m[8] !== undefined) addToMap(+m[8], +m[9], +m[10], last);
   samples.push({ t: performance.now(), I: last.I, F: last.F, D: last.D });
   while (samples.length && performance.now() - samples[0].t > HISTORY_MS) samples.shift();
@@ -306,6 +328,77 @@ function drawChart() {
     }
     ctx.stroke();
   }
+}
+
+// ---------- Supervisor y aprendizaje (corre en la pagina, el raton no gasta nada) ----------
+const hist = [];                 // ultimas muestras (30 s)
+const learn = { sides: [], contacts: [], sentWall: null, sentDead: null };
+let userSpeed = 100, curSpeed = 100, lastAction = 0, lastCalm = performance.now(), lastSpeedChange = 0;
+const median = a => { const b = [...a].sort((p, q) => p - q); return b[Math.floor(b.length / 2)]; };
+function supAction(text) { $('supState').textContent = text; log('Supervisor: ' + text); lastAction = performance.now(); }
+
+function supervise(smp) {
+  hist.push(smp);
+  while (hist.length && smp.t - hist[0].t > 30000) hist.shift();
+  const moving = !['PARADO', 'ESPERA', 'META', 'FALLO'].includes(smp.state);
+
+  // Aprendizaje 1: ancho libre del pasillo (suma de los dos laterales yendo recto con pared a ambos lados).
+  if (smp.state === 'RECTA' && smp.v > 20 && smp.I >= 0 && smp.D >= 0 && smp.I + smp.D < 400) learn.sides.push(smp.I + smp.D);
+  if (learn.sides.length > 400) learn.sides.shift();
+  // Aprendizaje 2: lectura frontal al chocar o atascarse de frente (punto muerto real).
+  const prev = hist[hist.length - 2];
+  if (prev && prev.state !== smp.state && ['CHOQUE', 'ATASCO'].includes(smp.state) && smp.F >= 0 && smp.F < 120) learn.contacts.push(smp.F);
+  if (learn.contacts.length > 20) learn.contacts.shift();
+  if (learn.sides.length >= 60) {
+    // Un lateral que mide mas que todo el hueco libre del pasillo (+2 cm) ya no tiene pared.
+    const wall = Math.max(60, Math.min(155, Math.round(median(learn.sides) + 20)));
+    $('lWall').textContent = wall;
+    if ($('learnOn').checked && rxChar && (learn.sentWall === null || Math.abs(wall - learn.sentWall) >= 10)) {
+      send(`w${wall}\n`); learn.sentWall = wall; log(`Aprendido: umbral lateral ${wall} mm`);
+    }
+  }
+  if (learn.contacts.length >= 3) {
+    const dead = Math.max(20, Math.min(120, Math.round(median(learn.contacts))));
+    $('lDead').textContent = dead;
+    if ($('learnOn').checked && rxChar && (learn.sentDead === null || Math.abs(dead - learn.sentDead) >= 5)) {
+      send(`z${dead}\n`); learn.sentDead = dead; log(`Aprendido: punto muerto ${dead} mm`);
+    }
+  }
+
+  if (!$('supOn').checked || !rxChar || !moving || smp.t - lastAction < 4000) return;
+  const recent = hist.filter(h => smp.t - h.t < 12000);
+  if (recent.length < 20) return;
+
+  // Regla 1: bucle. Lleva 12 s sin salir de un circulo de 15 cm y girando: pasar a seguir la pared.
+  const cx = recent.reduce((a, h) => a + h.x, 0) / recent.length, cy = recent.reduce((a, h) => a + h.y, 0) / recent.length;
+  const spread = Math.max(...recent.map(h => Math.hypot(h.x - cx, h.y - cy)));
+  const turning = recent.filter((h, i) => i && h.state === 'GIRO' && recent[i - 1].state !== 'GIRO').length;
+  if (spread < 150 && turning >= 3) {
+    supAction('bucle detectado: pasa a seguir la pared derecha');
+    send('x'); setTimeout(() => { send('m1\n'); send('s\n'); selectMode(1); }, 500);
+    return;
+  }
+  // Regla 2: choques frecuentes. Mas de 3 en 15 s: bajar la velocidad un 20 %.
+  // Solo cuentan los choques posteriores al ultimo cambio de velocidad.
+  const hits = hist.filter((h, i) => i && smp.t - h.t < 15000 && h.t > lastSpeedChange && ['CHOQUE', 'ROCE', 'ATASCO', 'DESATASCO'].includes(h.state)
+    && hist[i - 1].state !== h.state).length;
+  if (hits >= 3 && curSpeed > 50) {
+    curSpeed = Math.max(50, Math.round(curSpeed * 0.8));
+    supAction(`${hits} choques en 15 s: velocidad a ${curSpeed} mm/s`);
+    send(`v${curSpeed}\n`); lastCalm = smp.t; lastSpeedChange = smp.t;
+    return;
+  }
+  if (hits === 0 && curSpeed < userSpeed && smp.t - lastCalm > 20000) {
+    curSpeed = Math.min(userSpeed, curSpeed + 10);
+    supAction(`va bien: velocidad a ${curSpeed} mm/s`);
+    send(`v${curSpeed}\n`); lastCalm = smp.t; lastSpeedChange = smp.t;
+    return;
+  }
+  // Regla 3: control lento o laser mudo (solo avisa).
+  for (const [k, name] of [['I', 'izquierdo'], ['F', 'frontal'], ['D', 'derecho']]) {
+    if (recent.every(h => h[k] < 0) && recent.some(h => h.v > 20)) { supAction(`el laser ${name} no mide nada en 12 s: revisalo`); return; }
+  }
+  $('supState').textContent = 'vigilando';
 }
 
 // ---------- Mapa 3D (rejilla de ocupacion probabilistica, como un LIDAR) ----------
@@ -510,6 +603,7 @@ $('range').oninput = e => { $('rangeV').textContent = e.target.value + ' mm'; MA
 $('sig').oninput = e => $('sigV').textContent = (+e.target.value).toFixed(1);
 $('send').onclick = async () => {
   await send(`v${$('speed').value}\n`);
+  userSpeed = curSpeed = +$('speed').value;
   await send(`k${$('kp').value}\n`);
   await send(`r${$('range').value}\n`);
   await send(`g${$('sig').value}\n`);

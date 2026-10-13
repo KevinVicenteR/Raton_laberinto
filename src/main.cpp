@@ -125,22 +125,69 @@ int waitForStart(int mode) {
   }
 }
 
-// side: +1 sigue la pared izquierda, -1 la derecha.
-void followWall(int side) {
+// Cuenta en la telemetria que decide y con que lecturas, para entender los movimientos raros.
+void decide(const char* why) {
+  char line[96];
+  snprintf(line, sizeof(line), "DECIDE: %s | I%d F%d D%d", why, lasers.mm(Lasers::LEFT), robot.frontMm(),
+           lasers.mm(Lasers::RIGHT));
+  telemetry::println(line);
+  Serial.println(line);
+}
+
+// Hay pared delante de verdad (no un atasco con el frente libre).
+bool frontBlocked() {
+  const int f = robot.frontMm();
+  return f >= 0 && f < cfg::FRONT_WALL_MM;
+}
+
+// Atascado con el frente libre (el morro roza una esquina): atras y enderezarse hacia el lado libre.
+void unstick() {
+  auto space = [](int mm) { return mm < 0 ? 10000 : mm; };
+  const int left = space(lasers.mm(Lasers::LEFT));
+  const int right = space(lasers.mm(Lasers::RIGHT));
+  robot.setState("DESATASCO");
+  decide(left > right ? "atascado con el frente libre -> atras y endereza a la izquierda"
+                      : "atascado con el frente libre -> atras y endereza a la derecha");
+  robot.backUp(cfg::UNSTICK_BACK_MM);
+  robot.turnDegrees(left > right ? cfg::UNSTICK_DEG : -cfg::UNSTICK_DEG);
+}
+
+// Callejon sin salida: en 14 cm no cabe media vuelta. Sale marcha atras hasta el primer hueco y entra
+// en el con el giro en dos tiempos; si no encuentra hueco, intenta la media vuelta.
+void deadEnd() {
+  decide("callejon -> sale marcha atras buscando un hueco");
+  const int side = robot.backOut(3.0f * robot.corridorMm());
+  if (side != 0) {
+    decide(side > 0 ? "hueco a la izquierda al salir -> entra" : "hueco a la derecha al salir -> entra");
+    robot.turnCorner(90.0f * side);
+  } else {
+    decide("sin hueco al salir -> media vuelta");
+    robot.turnDegrees(180.0f);
+  }
+}
+
+// side: +1 sigue la pared izquierda, -1 la derecha. Con maxMm > 0 para tras recorrer esa distancia.
+void followWall(int side, float maxMm) {
   const bool right = side < 0;
-  while (!robot.aborted()) {
+  const float start = robot.travelledMm();
+  while (!robot.aborted() && (maxMm <= 0 || robot.travelledMm() - start < maxMm)) {
     const RobotHW::DriveEvent ev = robot.drive(1e6f, side);
     if (ev == RobotHW::DriveEvent::SideOpen) {
       // Hueco en la pared que se sigue: llevar el eje de las ruedas al centro del hueco, girar y entrar.
       // El laser lateral va SIDE_SENSOR_AHEAD_MM por delante del eje y el hueco mide como el pasillo.
       const float half = 0.5f * robot.corridorMm();
       robot.drive(fmaxf(cfg::SIDE_SENSOR_AHEAD_MM + half - cfg::OPEN_CONFIRM_MM, 0.0f), 0);
-      robot.turnDegrees(90.0f * side);
+      decide(side < 0 ? "hueco en la pared derecha -> entra" : "hueco en la pared izquierda -> entra");
+      robot.turnCorner(90.0f * side);
       // Entrar hasta que el laser lateral quede dentro del pasillo nuevo.
       robot.drive(fmaxf(half - cfg::SIDE_SENSOR_AHEAD_MM + 15.0f, 15.0f), 0);
       robot.ignoreSidesFor(half + cfg::SIDE_SENSOR_AHEAD_MM);
+    } else if (ev == RobotHW::DriveEvent::FrontWall && !frontBlocked()) {
+      unstick();
     } else if (ev == RobotHW::DriveEvent::CrashLeft || ev == RobotHW::DriveEvent::CrashRight) {
       // Pegado a un lateral: un poco atras y enderezarse hacia el otro lado.
+      decide(ev == RobotHW::DriveEvent::CrashLeft ? "roza la pared izquierda -> endereza a la derecha"
+                                                  : "roza la pared derecha -> endereza a la izquierda");
       robot.backUp(cfg::NUDGE_BACK_MM);
       robot.turnDegrees(ev == RobotHW::DriveEvent::CrashLeft ? -cfg::NUDGE_DEG : cfg::NUDGE_DEG);
     } else if (ev == RobotHW::DriveEvent::FrontWall) {
@@ -152,11 +199,13 @@ void followWall(int side) {
       const float clearance = front >= 0 ? static_cast<float>(robot.frontTurnMm() - front) : 0.0f;
       robot.backUp(fmaxf(cfg::BACKUP_MM, clearance));
       if (followOpen) {
-        robot.turnDegrees(90.0f * side);
+        decide(right ? "pared delante, derecha libre -> gira derecha" : "pared delante, izquierda libre -> gira izquierda");
+        robot.turnCorner(90.0f * side);
       } else if (otherOpen) {
-        robot.turnDegrees(-90.0f * side);
+        decide(right ? "pared delante y a la derecha -> gira izquierda" : "pared delante y a la izquierda -> gira derecha");
+        robot.turnCorner(-90.0f * side);
       } else {
-        robot.turnDegrees(180.0f);  // callejon sin salida
+        deadEnd();
       }
       robot.ignoreSidesFor(0.5f * robot.corridorMm() + cfg::SIDE_SENSOR_AHEAD_MM);
     }
@@ -167,16 +216,42 @@ void followWall(int side) {
 // llegar a una pared delante, lleva el eje de ruedas al centro del cruce, se para, mira los tres
 // laseres quieto y va hacia donde haya mas espacio libre (sin lectura = libre). Tecnica de micromouse:
 // detectar el borde de la pared, avanzar una distancia medida y decidir parado.
+void followWall(int side, float maxMm);
+
 void freeSpace() {
   auto space = [](int mm) { return mm < 0 ? 10000 : mm; };  // sin lectura = muy lejos
+  float lastTurnAt = robot.travelledMm();
+  int turnsInPlace = 0;  // giros seguidos sin avanzar: esta dando vueltas en el mismo sitio
+  int stuck = 0;         // atascos seguidos con el frente libre
   while (!robot.aborted()) {
+    if (turnsInPlace >= cfg::LOOP_TURNS) {
+      // Atrapado girando en un cruce: seguir la pared derecha un tramo para salir de ahi.
+      telemetry::println("BUCLE: sigue la pared un tramo");
+      followWall(-1, cfg::LOOP_ESCAPE_MM);
+      turnsInPlace = 0;
+      lastTurnAt = robot.travelledMm();
+      continue;
+    }
     const RobotHW::DriveEvent ev = robot.drive(1e6f, RobotHW::kWatchBoth);
     if (ev == RobotHW::DriveEvent::CrashLeft || ev == RobotHW::DriveEvent::CrashRight) {
+      decide(ev == RobotHW::DriveEvent::CrashLeft ? "roza la pared izquierda -> endereza a la derecha"
+                                                  : "roza la pared derecha -> endereza a la izquierda");
       robot.backUp(cfg::NUDGE_BACK_MM);
       robot.turnDegrees(ev == RobotHW::DriveEvent::CrashLeft ? -cfg::NUDGE_DEG : cfg::NUDGE_DEG);
       continue;
     }
     if (ev != RobotHW::DriveEvent::SideOpen && ev != RobotHW::DriveEvent::FrontWall) continue;
+    if (ev == RobotHW::DriveEvent::FrontWall && !frontBlocked()) {
+      // Atasco con el frente libre: desatascar; a la tercera seguida, salir marcha atras.
+      if (++stuck < 3) {
+        unstick();
+      } else {
+        stuck = 0;
+        deadEnd();
+      }
+      continue;
+    }
+    stuck = 0;
 
     const float half = 0.5f * robot.corridorMm();
     if (ev == RobotHW::DriveEvent::SideOpen) {
@@ -191,8 +266,8 @@ void freeSpace() {
     const int right = space(lasers.mm(Lasers::RIGHT));
     const int frontRaw = robot.frontMm();
     const int front = space(frontRaw);
-    const bool leftOpen = left > cfg::SIDE_OPEN_MM;
-    const bool rightOpen = right > cfg::SIDE_OPEN_MM;
+    const bool leftOpen = left > robot.sideWall();
+    const bool rightOpen = right > robot.sideWall();
     const bool frontOpen = front > cfg::FRONT_WALL_MM;
     char line[48];
     snprintf(line, sizeof(line), "CRUCE izq%d del%d der%d", left, front, right);
@@ -213,6 +288,7 @@ void freeSpace() {
     if (best < 0) turn = 180;  // los tres cerrados: callejon sin salida
 
     if (turn == 0) {
+      decide("cruce: delante es lo mas libre -> sigue recto");
       // Recto: pasar el hueco sin volver a detectarlo.
       robot.drive(half + cfg::SIDE_SENSOR_AHEAD_MM, 0);
       robot.ignoreSidesFor(half);
@@ -222,7 +298,15 @@ void freeSpace() {
       const float clearance = static_cast<float>(robot.frontTurnMm() - frontRaw);
       if (clearance > 0) robot.backUp(clearance);
     }
-    robot.turnDegrees(static_cast<float>(turn));
+    turnsInPlace = robot.travelledMm() - lastTurnAt < cfg::LOOP_MIN_TRAVEL_MM ? turnsInPlace + 1 : 1;
+    lastTurnAt = robot.travelledMm();
+    if (turn == 180) {
+      deadEnd();
+    } else {
+      decide(turn > 0 ? "cruce: la izquierda es lo mas libre -> gira izquierda"
+                      : "cruce: la derecha es lo mas libre -> gira derecha");
+      robot.turnCorner(static_cast<float>(turn));
+    }
     if (turn != 180) {
       // Entrar en el pasillo nuevo hasta que los laterales vean sus paredes.
       robot.drive(fmaxf(half - cfg::SIDE_SENSOR_AHEAD_MM + 15.0f, 15.0f), 0);
@@ -351,7 +435,7 @@ void loop() {
   } else if (mode == 3) {
     solveMaze();
   } else {
-    followWall(mode == 1 ? -1 : 1);
+    followWall(mode == 1 ? -1 : 1, 0);
   }
   motors.coast();
 }

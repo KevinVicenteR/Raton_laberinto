@@ -31,17 +31,28 @@ class RobotHW : public raton::Robot {
   static const int kWatchBoth = 2;
   DriveEvent drive(float maxMm, int watchSide);
   int openSide() const { return openSide_; }
+  // Recorrido total hacia delante desde el arranque (mm), para detectar que no avanza.
+  float travelledMm() const { return odoDist_; }
   // La siguiente drive() que vigile huecos no mira los laterales durante los primeros mm (tras girar,
   // un lateral aun ve el pasillo del que viene y lo tomaria por un hueco nuevo).
   void ignoreSidesFor(float mm) { ignoreSideMm_ = mm; }
   void turnDegrees(float degrees) { rotate(degrees); }
+  // Giro de 90 para entrar en un pasillo: en dos tiempos si TURN_TWO_STAGE (cabe en 14 cm).
+  void turnCorner(float degrees);
+  // Marcha atras vigilando los laterales hasta ver un hueco y dejar el laser en su centro.
+  // Devuelve +1 (hueco a la izquierda), -1 (derecha) o 0 si no encontro ninguno.
+  int backOut(float maxMm);
+  // Umbral lateral de pared y punto muerto frontal: ajustables en marcha (la web los aprende).
+  int sideWall() const { return sideWall_; }
+  int deadzone() const { return deadzone_; }
   // Ancho del pasillo medido con los dos laterales mientras avanza (mm).
   float corridorMm() const { return corridorMm_; }
   // Lectura frontal a la que parar para que el eje de ruedas quede en el centro del cruce y pueda
   // girar sin rozar (con pasillos de 14 cm el raton apenas cabe girando).
   int frontTurnMm() const {
     const float v = 0.5f * corridorMm_ - cfg::FRONT_SENSOR_AHEAD_MM;
-    return v > cfg::FRONT_TURN_MIN_MM ? static_cast<int>(v) : cfg::FRONT_TURN_MIN_MM;
+    const int minimum = deadzone_ + cfg::FRONT_MARGIN_MM;
+    return v > minimum ? static_cast<int>(v) : minimum;
   }
   // Distancia a la pared de delante (mm, -1 = nada). Si el laser frontal deja de medir con la pared
   // cerca (por debajo de ~3 cm el VL53L0X falla), la estima con lo avanzado desde la ultima medida.
@@ -114,6 +125,8 @@ class RobotHW : public raton::Robot {
   float yawTarget_ = 0;  // rumbo objetivo suavizado para centrarse
   int openSide_ = 0;     // lado del ultimo hueco detectado (+1 izq, -1 der)
   float ignoreSideMm_ = 0;
+  int sideWall_ = cfg::SIDE_WALL_MM;
+  int deadzone_ = cfg::FRONT_DEADZONE_MM;
   float speed_ = cfg::WALL_FOLLOW_SPEED;
   float kpWall_ = cfg::KP_WALL;
   float trackWidth_ = cfg::TRACK_WIDTH_MM;
