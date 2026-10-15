@@ -5,6 +5,10 @@
 #include <string>
 
 #include "maze_io.h"
+#include "motion_progress.h"
+#include "motion_safety.h"
+#include "risk_predictor.h"
+#include <limits>
 #include "sim_robot.h"
 #include "solver.h"
 
@@ -28,6 +32,39 @@ uint16_t optimal(const raton::Maze& truth) {
   raton::FloodFill f;
   f.compute(truth, goals, n, true);
   return f.distance(C(0, 0));
+}
+
+void testMotionSafety() {
+  raton::BodyGeometry body;
+  raton::SensorObservation missing[3];
+  const auto unknown=raton::assessTurn(missing,body,90);
+  CHECK(unknown.feasible && !unknown.observed); // absence of evidence is explicit
+  const raton::ObservedSegment inside[]={{{0,-5},{0,5}}};
+  CHECK(!raton::sweptTurnClear(inside,1,body,90,70,75,0,3));
+  const raton::ObservedSegment tail[]={{{-18,-60},{-18,60}}};
+  CHECK(!raton::sweptTurnClear(tail,1,body,90,70,75,0,3));
+  const raton::ObservedSegment far[]={{{500,-300},{500,300}}};
+  CHECK(raton::sweptTurnClear(far,1,body,-90,70,75,0,3));
+  CHECK(!raton::sweptTurnClear(far,1,body,90,0,75,0,3));
+  CHECK(!raton::sweptTurnClear(far,1,body,90,70,std::numeric_limits<float>::quiet_NaN(),0,3));
+  raton::RiskModel zero={};float x[43]={};
+  CHECK(raton::predictRisk(zero,x)==0.5f);
+  x[0]=std::numeric_limits<float>::quiet_NaN();
+  CHECK(std::isnan(raton::predictRisk(zero,x)));
+}
+
+void testMotionProgress() {
+  // Tramo de 8 celdas interrumpido tras 2: el residuo no puede ser -6 celdas.
+  const auto partial = raton::motionProgress(320, 0, 155, 8, false);
+  CHECK(partial.cells == 2 && partial.offset == 10);
+  const auto reverse = raton::motionProgress(300, 10, 155, 8, true);
+  CHECK(reverse.cells == 2 && reverse.offset == 20);
+  const auto stopped = raton::motionProgress(0, 30, 155, 1, true);
+  CHECK(stopped.cells == 0 && stopped.offset == 30);
+  const auto turned = raton::motionProgress(52, 103, 155, 1, false);
+  CHECK(turned.cells == 1 && turned.offset == 0);
+  const auto overshoot = raton::motionProgress(330, 0, 155, 1, false);
+  CHECK(overshoot.cells == 1 && overshoot.offset == 175);
 }
 
 void testMazeBasics() {
@@ -133,8 +170,13 @@ void testRandomMazes() {
 }
 
 void testMazeFiles() {
+  const std::filesystem::path dir(RATON_MAZES_DIR);
+  CHECK(std::filesystem::is_directory(dir));
+  if (!std::filesystem::is_directory(dir)) return;
+  CHECK(std::filesystem::is_regular_file(dir / "clasico_01.txt"));
+  CHECK(std::filesystem::is_regular_file(dir / "impar_05.txt"));
   int count = 0;
-  for (const auto& entry : std::filesystem::directory_iterator(RATON_MAZES_DIR)) {
+  for (const auto& entry : std::filesystem::directory_iterator(dir)) {
     if (entry.path().extension() != ".txt") continue;
     raton::Maze m;
     std::string err;
@@ -150,6 +192,8 @@ void testMazeFiles() {
 }  // namespace
 
 int main() {
+  testMotionSafety();
+  testMotionProgress();
   testMazeBasics();
   testFloodFillOpenMaze();
   testParseAndWrite();

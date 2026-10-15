@@ -38,3 +38,14 @@ add_executable(raton_tests tests/test_core.cpp)
 target_link_libraries(raton_tests PRIVATE raton_simlib)
 target_compile_definitions(raton_tests PRIVATE RATON_MAZES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/mazes")
 add_test(NAME core COMMAND raton_tests)
+
+# Same feasibility checks and neural inference used by the firmware, exposed to Python.
+add_library(raton_navigation SHARED sim/navigation_bridge.cpp
+  lib/raton_core/src/motion_safety.cpp lib/raton_core/src/risk_predictor.cpp)
+target_include_directories(raton_navigation PRIVATE lib/raton_core/src)
+
+find_package(Python3 REQUIRED COMPONENTS Interpreter)
+  add_test(NAME navigation_python COMMAND ${Python3_EXECUTABLE} -B -m unittest discover
+    -s ${CMAKE_CURRENT_SOURCE_DIR}/tests -p test_sim_*.py)
+  set_tests_properties(navigation_python PROPERTIES
+    ENVIRONMENT "RATON_NATIVE_LIB=$<TARGET_FILE:raton_navigation>")

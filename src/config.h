@@ -156,6 +156,18 @@ const float W_FREE = 1.0f;
 const float W_NOVEL = 0.8f;
 const float W_TURN = 0.3f;
 const float B_STRAIGHT = 0.2f;
+// Pista conocida (modo 4): tramos rectos de una vez a esta velocidad (mm/s). Si una pared no coincide
+// con el mapa, pasa a buscar la meta como en una pista desconocida.
+const float COMP_SPEED = 250.0f;
+const float EXPLORE_SPEED = 250.0f;        // modo 3 (y respaldo del 4): tramos explorando por celdas
+const float REVERSE_SHORT_MM = 25.0f;      // marcha atras de un callejon: parar antes si hay pared detras
+                                           // (la cola barre 49 mm al girar y no cabria)
+// Pistas desconocidas (modo 5): ademas del espacio y la novedad, la direccion hacia la meta (coseno del
+// angulo, -1..1) y las veces que ya se salio por esa salida del cruce (memoria estilo Tremaux).
+const float W_GOAL = 0.6f;
+const float W_EXIT = 0.7f;
+const float GOAL_RADIUS_MM = 70.0f;   // dentro de este radio del centro de la meta = llegado
+
 // Puerta de confianza del mapa (modo 4): fraccion de paredes vistas que coinciden con el mapa. Si baja
 // de esto tras MAP_CONF_STEPS celdas, el raton pasa a modo prudente (mas despacio).
 const float MAP_CONF_MIN = 0.75f;
@@ -168,6 +180,11 @@ const float LOOP_ESCAPE_MM = 400.0f;        // tramo siguiendo la pared derecha 
 const bool TURN_TWO_STAGE = true;
 const float TURN_SPLIT_DEG = 70.0f;
 const float TURN_SPLIT_ADVANCE_MM = 75.0f;
+// Al girar en dos tiempos el eje avanza ~70 mm en la direccion nueva; con el raton "centrado" en una
+// celda el eje queda AXLE_BEHIND_CENTER_MM por detras del centro. El siguiente avance de celdas descuenta
+// esa diferencia para no descuadrarse respecto a la rejilla.
+const float AXLE_BEHIND_CENTER_MM = 33.0f;
+const int CELL_WALL_MM = 100;               // leyendo una celda parado: pared de esa celda si mide menos
 const int SIDE_CLOSE_MM = 60;               // lateral sin lectura tras una lectura menor que esto = demasiado
                                             // cerca (por debajo del minimo del laser), no un hueco
 const float UNSTICK_BACK_MM = 25.0f;        // atascado con el frente libre: atras...

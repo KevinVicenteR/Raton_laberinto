@@ -9,6 +9,8 @@
 #include "hw/motors.h"
 #include "config.h"
 #include "robot.h"
+#include "motion_safety.h"
+#include "risk_predictor.h"
 
 class RobotHW : public raton::Robot {
  public:
@@ -16,8 +18,9 @@ class RobotHW : public raton::Robot {
 
   raton::Walls readWalls() override;
   void moveForward(int cells) override;
-  void turnLeft() override { rotate(90.0f); }
-  void turnRight() override { rotate(-90.0f); }
+  // Giros del solver: en dos tiempos (caben en 14 cm) y llevando la cuenta del avance para la rejilla.
+  void turnLeft() override { turnCorner(90.0f, true); }
+  void turnRight() override { turnCorner(-90.0f, true); }
   void turnAround() override { rotate(180.0f); }
   void setRunMode(raton::RunMode mode) override { mode_ = mode; }
   void onStep(const raton::Maze& maze, const raton::FloodFill& flood, raton::Cell pos, raton::Dir heading) override;
@@ -50,8 +53,41 @@ class RobotHW : public raton::Robot {
   // un lateral aun ve el pasillo del que viene y lo tomaria por un hueco nuevo).
   void ignoreSidesFor(float mm) { ignoreSideMm_ = mm; }
   void turnDegrees(float degrees) { rotate(degrees); }
-  // Giro de 90 para entrar en un pasillo: en dos tiempos si TURN_TWO_STAGE (cabe en 14 cm).
-  void turnCorner(float degrees);
+  // Giro de 90 para entrar en un pasillo: en dos tiempos si TURN_TWO_STAGE (cabe en 14 cm). Con
+  // trackCells, el siguiente avance de celdas descuenta lo que el giro ya adelanto.
+  void turnCorner(float degrees, bool trackCells = false);
+  const raton::MotionResult& lastMotion() const { return lastMotion_; }
+  bool actionAllowed(float degrees);  // risk predictor is observational until promoted
+
+  // Avanza celdas completas a vmax. Si aparece una pared delante antes de lo esperado, se para ante ella
+  // y pone *unexpected a true. Devuelve las celdas avanzadas de verdad.
+  int runCells(int cells, float vmax, bool* unexpected);
+  // Marcha atras celdas completas (salir de un callejon: en 14 cm no cabe girar 180). shortMm: parar
+  // antes, para que la cola quepa al girar si en la celda de llegada hay pared detras.
+  int reverseCells(int cells, float shortMm, bool* stuck);
+  // Rumbo absoluto de la cuadricula (modos 3 y 4): los tramos mantienen ese rumbo y los giros acaban
+  // en el, asi los errores de cada giro no se acumulan. Llamar mirando al norte de la pista.
+  void setGrid(bool on) {
+    gridOn_ = on;
+    gridYaw_ = gyro_.totalYaw();
+  }
+  // Paredes de la celda leidas parado con varias medidas (izq, delante, der respecto al rumbo).
+  // Sin ninguna lectura de un lateral pero con la ultima muy corta hace nada = pegado a pared.
+  raton::Walls senseCell();
+  // Meta en coordenadas de odometria (mm desde el arranque): drive() se para al llegar.
+  void setGoal(float x, float y) {
+    goalX_mm_ = x;
+    goalY_mm_ = y;
+    goalSet_ = true;
+    goalReached_ = false;
+  }
+  void clearGoal() { goalSet_ = goalReached_ = false; }
+  bool goalReached() const { return goalReached_; }
+  // Coseno del angulo entre la direccion turnDeg y la meta (1 = va directo, -1 = se aleja); 0 sin meta.
+  float goalAlignment(float turnDeg) const;
+  // Memoria de cruces: veces que se ha salido por la salida turnDeg de la celda actual, y apuntarla.
+  int exitsToward(float turnDeg) const;
+  void markExit(float turnDeg);
   // Marcha atras vigilando los laterales hasta ver un hueco y dejar el laser en su centro.
   // Devuelve +1 (hueco a la izquierda), -1 (derecha) o 0 si no encontro ninguno.
   int backOut(float maxMm);
@@ -108,6 +144,12 @@ class RobotHW : public raton::Robot {
   void resetOdometry();
 
  private:
+  void recordMotion(const char* phase, float requested, const raton::MotionResult& result);
+  void sampleRiskHistory();
+  raton::SensorObservation sensorObservation(int i) const;
+  raton::RiskFrame riskHistory_[3];
+  uint32_t riskSampleCount_ = 0;
+  raton::MotionResult lastMotion_;
   void rotate(float degrees);
   // Un paso del control de velocidad y rumbo a la consigna v (mm/s).
   // useWalls = false ignora los laseres laterales (p. ej. cerca de una pared delante).
@@ -121,6 +163,7 @@ class RobotHW : public raton::Robot {
   void stopMotors();
   // Rumbo fusionado (giroscopio + encoders) desde el ultimo resetHeading().
   void resetHeading();
+  void resetHeadingToGrid();  // igual, pero con el cero en el rumbo de la cuadricula (si esta activa)
   void updateHeading();
   // Ordenes: x = parar, v<mm/s> = velocidad, k<valor> = KP_WALL, ? = ver valores.
   void handleInput();
@@ -158,12 +201,27 @@ class RobotHW : public raton::Robot {
   int mapSeen_ = 0;
   bool mapWarned_ = false;
   int cellOf(float v) const;
+  int worldDir(float turnDeg) const;  // 0 norte, 1 oeste, 2 sur, 3 este
+  uint8_t exits_[kGrid][kGrid][4] = {};
+  float pendingAdvance_ = 0;       // cuanto va el centro del raton por delante del centro de la celda
+  bool gridOn_ = false;
+  bool cornerLeg_ = false;         // drive() es el tramo diagonal de un giro en dos tiempos
+  float gridYaw_ = 0;              // totalYaw del norte de la cuadricula
+  float headingBase_ = 0;          // rumbo al empezar el tramo (para mezclar con los encoders)
+  float lastValidDist_[3] = {-1e9f, -1e9f, -1e9f};  // recorrido en la ultima lectura valida de cada laser
+  // Rumbo respecto a la cuadricula en (-180, 180].
+  float gridError() const;
+  float goalX_mm_ = 0;
+  float goalY_mm_ = 0;
+  bool goalSet_ = false;
+  bool goalReached_ = false;
   float trackWidth_ = cfg::TRACK_WIDTH_MM;
   float heading_ = 0;
   float lastGyroYaw_ = 0;
   float lastSpeed_ = 0;
   const char* state_ = "INICIO";
   uint32_t lastTelemetry_ = 0;
+  uint32_t lastObservationTelemetry_ = 0;
   uint32_t lastPeriodUs_ = 0;  // para medir el ciclo de control mas lento
   uint32_t maxLagUs_ = 0;
   bool startRequested_ = false;

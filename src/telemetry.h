@@ -12,6 +12,8 @@ void poll();
 // Pone una linea en la cola de envio (no espera; si la cola esta llena se descarta). No hace nada
 // si no hay nadie conectado.
 void println(const char* line);
+// Whole lines dropped due to queue pressure; diagnostic capture must report loss.
+uint32_t droppedLines();
 // Siguiente caracter recibido, o -1.
 int read();
 

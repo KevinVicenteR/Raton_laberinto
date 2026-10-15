@@ -49,7 +49,8 @@ void Lasers::update() {
     const uint16_t v = s.readRangeContinuousMillimeters();
     const int mm = static_cast<int>(v) + kOffset[i];
     const bool valid = !s.timeoutOccurred() && (!cfg::LASER_CHECK_STATUS || status == 11) && mm >= 0 && mm <= maxMm_;
-    raw_[i] = median3(i, valid ? mm : -1);
+    acquired_[i] = valid ? mm : -1;
+    raw_[i] = median3(i, acquired_[i]);
     // Confianza: una lectura es estable si sigue en el mismo estado (con/sin medida) y no salta mas de
     // LASER_STABLE_MM respecto a la anterior. Un pasillo libre (-1 seguido) tambien es estable.
     const bool stable = (raw_[i] < 0) == (prevRaw_[i] < 0) &&

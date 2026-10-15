@@ -1,0 +1,126 @@
+"""Observable-only navigation features and bindings to the firmware C++ core.
+
+The simulator's map, true x/y and collision geometry never enter these interfaces.
+"""
+import ctypes
+import math
+import os
+from pathlib import Path
+import re
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def firmware_config(sim_module):
+    from dataclasses import replace
+    text = (ROOT / 'src/config.h').read_text()
+    def number(name):
+        match = re.search(r'const\s+(?:float|int|uint32_t)\s+' + name + r'\s*=\s*(-?[\d.]+)f?\s*;', text)
+        if not match:
+            raise ValueError(f'configuration not a numeric literal: {name}')
+        return float(match[1])
+    mapping = dict(speed='SEARCH_SPEED', side_wall='SIDE_WALL_MM', front_wall='FRONT_WALL_MM',
+                   cfg_side_ahead='SIDE_SENSOR_AHEAD_MM', cfg_front_ahead='FRONT_SENSOR_AHEAD_MM',
+                   robot_width_cfg='ROBOT_WIDTH_MM', kp_wall='KP_WALL', deadband='LATERAL_DEADBAND_MM',
+                   max_wall_deg='MAX_WALL_CORRECTION_DEG', side_crash='SIDE_CRASH_MM',
+                   split_deg='TURN_SPLIT_DEG', split_advance='TURN_SPLIT_ADVANCE_MM',
+                   close_mm='SIDE_CLOSE_MM', comp_speed='COMP_SPEED', reverse_short='REVERSE_SHORT_MM',
+                   w_goal='W_GOAL', w_exit='W_EXIT', front_margin='FRONT_MARGIN_MM')
+    extra = {"turn_timeout":number("TURN_TIMEOUT_MS")/1000} if hasattr(sim_module.Firmware(), "turn_timeout") else {}
+    return replace(sim_module.Firmware(), **extra, **{k:number(v) for k,v in mapping.items()},
+                   turn_mode='dos_tiempos', unstick=True, weighted=True, edge_fix=False,
+                   w=tuple(number(n) for n in ('W_FREE','W_NOVEL','W_TURN','B_STRAIGHT')))
+
+
+def features(history, speed, yaw, heading, pending, action):
+    out = []
+    for frame in history:
+        for mm, valid, conf, age in frame:
+            out.extend((min(300,max(0,mm))/300 if valid else 0, float(valid),
+                        min(1,max(0,conf)), min(1000,max(0,age))/1000))
+    out.extend((speed/300, yaw/180, heading/90, pending/155))
+    out.extend(float(action == i) for i in range(3))
+    return out
+
+
+class NativeNavigation:
+    def __init__(self, path=None):
+        path = path or os.environ.get('RATON_NATIVE_LIB')
+        if not path:
+            path=next((p for p in (ROOT/'build/libraton_navigation.dylib', ROOT/'build/libraton_navigation.so',
+                                    ROOT/'build/raton_navigation.dll') if p.exists()),None)
+        if not path:
+            raise RuntimeError('Set RATON_NATIVE_LIB to the CMake raton_navigation library')
+        self.lib = ctypes.CDLL(str(path))
+        fp = ctypes.POINTER(ctypes.c_float)
+        self.lib.raton_turn.argtypes = [fp,fp,ctypes.c_float,ctypes.c_float,ctypes.c_float]
+        self.lib.raton_turn.restype = ctypes.c_float
+        self.lib.raton_risk.argtypes = [fp]
+        self.lib.raton_risk.restype = ctypes.c_float
+        self.lib.raton_features.argtypes = [fp,*([ctypes.c_float]*4),ctypes.c_int,fp]
+        self.lib.raton_features.restype = None
+
+    @staticmethod
+    def array(values):
+        return (ctypes.c_float * len(values))(*values)
+
+    def turn(self, observation, robot, fw, degrees):
+        if len(observation)!=3 or any(len(s)!=4 for s in observation):
+            return None
+        values = [v for s in observation for v in s]
+        body = (robot.length_front,robot.length_back,robot.width,fw.cfg_side_ahead,
+                fw.cfg_front_ahead,fw.robot_width_cfg)
+        out = self.lib.raton_turn(self.array(values),self.array(body),degrees,fw.split_deg,fw.split_advance)
+        return None if out == 10000 or not math.isfinite(out) else float(out)
+
+    def risk(self, x):
+        if len(x) != 43 or not all(math.isfinite(v) for v in x):
+            return float('nan')
+        return float(self.lib.raton_risk(self.array(x)))
+
+
+def instrument(method):
+    """Record primitive outcomes; exceptions propagate so failed moves cannot become successes."""
+    from functools import wraps
+    @wraps(method)
+    def wrapped(self, *args, **kwargs):
+        kind = method.__name__
+        start, distance, heading, contacts = self.t, self.travelled, self.th, self.collisions
+        requested = float(args[0]) if args else 0
+        if kind=="run_cells":requested*=self.pitch
+        action = (1 if requested > 0 else 2) if kind in ('safe_turn','turn_corner_track','rotate') else 0
+        x = self.risk_features(action)
+        reason, completed, result = 'complete', True, None
+        try:
+            result = yield from method(self,*args,**kwargs)
+            if kind == 'drive' and result != 'dist':
+                completed, reason = False, str(result)
+            if kind=='back_out' and not result:
+                completed,reason=False,'no_opening'
+            if kind=='back' and abs(self.travelled-distance)<requested-1:
+                completed,reason=False,'interrupted'
+            if kind == 'run_cells' and (result[0] < args[0] or result[1]):
+                completed, reason = False, 'interrupted'
+            return result
+        except GeneratorExit:
+            completed, reason = False, "goal_reached" if self.reached is not None else "simulation_closed"
+            raise
+        except MotionFailureBase as exc:
+            completed, reason = False, str(exc)
+            raise
+        finally:
+            actual = self.travelled-distance
+            delta = math.degrees(self.th-heading)
+            angular_error = requested-delta if kind in ('safe_turn','turn_corner_track','rotate') else 0
+            record = dict(t=start,end=self.t,kind=kind,requested=requested,actual_mm=actual,
+                          angular_error=angular_error,completed=completed,reason=reason,
+                          contacts=self.collisions-contacts,features=x,
+                          observation=self.observation(),pending=self.pending)
+            self.motions.append(record)
+            if len(self.motions)>20000:
+                raise RuntimeError('motion log limit reached')
+    return wrapped
+
+
+class MotionFailureBase(RuntimeError):
+    pass

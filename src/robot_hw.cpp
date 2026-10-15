@@ -1,6 +1,8 @@
 #include "robot_hw.h"
 
 #include "config.h"
+#include "motion_progress.h"
+#include "risk_model.h"
 #include "telemetry.h"
 
 namespace {
@@ -24,9 +26,56 @@ void RobotHW::waitPeriod(uint32_t& next) {
   telemetry::poll();
   handleInput();
   updateOdometry();
+  sampleRiskHistory();
   sendTelemetry();
   lastPeriodUs_ = micros();
   next += cfg::CONTROL_PERIOD_US;
+}
+
+raton::SensorObservation RobotHW::sensorObservation(int i) const {
+  const auto id=static_cast<Lasers::Id>(i);
+  return {static_cast<float>(lasers_.mm(id)),lasers_.confidence(id),
+          static_cast<float>(lasers_.lastValidAgeMs(id)),lasers_.mm(id)>=0};
+}
+
+void RobotHW::sampleRiskHistory() {
+  const uint32_t count=lasers_.sampleCount(Lasers::LEFT)+lasers_.sampleCount(Lasers::FRONT)+
+                       lasers_.sampleCount(Lasers::RIGHT);
+  if(count==riskSampleCount_) return;
+  riskSampleCount_=count;
+  riskHistory_[0]=riskHistory_[1];riskHistory_[1]=riskHistory_[2];
+  for(int i=0;i<3;++i)riskHistory_[2].sensor[i]=sensorObservation(i);
+}
+
+bool RobotHW::actionAllowed(float degrees) {
+  if(!raton::kRiskModelTrained || fabsf(degrees)==180) return true;
+  float x[43];
+  const int action=degrees==0?0:(degrees>0?1:2);
+  raton::riskFeatures(riskHistory_,lastSpeed_,gyro_.rate(),gridOn_?gridError():0,
+                      pendingAdvance_,action,x);
+  const float risk=raton::predictRisk(raton::kRiskModel,x);
+  char line[96];
+  snprintf(line,sizeof(line),"RISK action=%d per_mille=%d enabled=%d",action,
+           std::isfinite(risk)?static_cast<int>(risk*1000):-1,raton::kRiskModelEnabled);
+  telemetry::println(line);
+  return !raton::kRiskModelEnabled || !std::isfinite(risk) || risk<=raton::kRiskThreshold;
+}
+
+void RobotHW::recordMotion(const char* phase,float requested,const raton::MotionResult& result) {
+  lastMotion_=result;
+  char line[384];
+  snprintf(line,sizeof(line),"MOTION t=%lu phase=%s req=%d actual=%d error_cdeg=%d completed=%d reason=%d enc=%ld,%ld raw=%d,%d,%d filtered=%d,%d,%d age=%lu,%lu,%lu conf=%d,%d,%d",
+           static_cast<unsigned long>(millis()),phase,static_cast<int>(requested),
+           static_cast<int>(result.actualMm),static_cast<int>(result.angularErrorDeg*100),
+           result.completed,static_cast<int>(result.reason),encoders_.leftTotal(),encoders_.rightTotal(),
+           lasers_.acquiredMm(Lasers::LEFT),lasers_.acquiredMm(Lasers::FRONT),lasers_.acquiredMm(Lasers::RIGHT),
+           lasers_.mm(Lasers::LEFT),lasers_.mm(Lasers::FRONT),lasers_.mm(Lasers::RIGHT),
+           static_cast<unsigned long>(lasers_.lastValidAgeMs(Lasers::LEFT)),
+           static_cast<unsigned long>(lasers_.lastValidAgeMs(Lasers::FRONT)),
+           static_cast<unsigned long>(lasers_.lastValidAgeMs(Lasers::RIGHT)),
+           static_cast<int>(100*lasers_.confidence(Lasers::LEFT)),static_cast<int>(100*lasers_.confidence(Lasers::FRONT)),
+           static_cast<int>(100*lasers_.confidence(Lasers::RIGHT)));
+  telemetry::println(line);
 }
 
 void RobotHW::resetOdometry() {
@@ -35,6 +84,10 @@ void RobotHW::resetOdometry() {
   odoYaw0_ = gyro_.totalYaw();
   odoLastA_ = 0;
   memset(visits_, 0, sizeof(visits_));
+  memset(exits_, 0, sizeof(exits_));
+  pendingAdvance_ = 0;
+  for(auto& frame:riskHistory_)frame=raton::RiskFrame{};
+  riskSampleCount_=0;
   cellX_ = cellY_ = -1;
   odoL_ = encoders_.leftTotal();
   odoR_ = encoders_.rightTotal();
@@ -47,6 +100,9 @@ void RobotHW::updateOdometry() {
   odoL_ = l;
   odoR_ = r;
   odoDist_ += ds;
+  for (int i = 0; i < 3; ++i) {
+    if (lasers_.mm(static_cast<Lasers::Id>(i)) >= 0) lastValidDist_[i] = odoDist_;
+  }
   // El rumbo sale del giroscopio (no patina); 0 = mirando hacia +Y al empezar. Se integra con el
   // rumbo medio del paso para que los giros en marcha no deformen el mapa.
   const float a = (gyro_.totalYaw() - odoYaw0_) / 57.2958f;
@@ -65,6 +121,32 @@ void RobotHW::updateOdometry() {
 int RobotHW::cellOf(float v) const {
   const float pitch = corridorMm_ + 15.0f;  // pasillo + pared
   return static_cast<int>(floorf(v / pitch + 0.5f)) + kGrid / 2;
+}
+
+int RobotHW::worldDir(float turnDeg) const {
+  const float h = (gyro_.totalYaw() - odoYaw0_) + turnDeg;
+  return ((static_cast<int>(lroundf(h / 90.0f)) % 4) + 4) % 4;
+}
+
+float RobotHW::goalAlignment(float turnDeg) const {
+  if (!goalSet_) return 0.0f;
+  const float gx = goalX_mm_ - odoX_, gy = goalY_mm_ - odoY_;
+  const float len = hypotf(gx, gy);
+  if (len < 1.0f) return 1.0f;
+  const int d = worldDir(turnDeg);
+  const float dx[4] = {0, -1, 0, 1}, dy[4] = {1, 0, -1, 0};
+  return (dx[d] * gx + dy[d] * gy) / len;
+}
+
+int RobotHW::exitsToward(float turnDeg) const {
+  if (cellX_ < 0 || cellX_ >= kGrid || cellY_ < 0 || cellY_ >= kGrid) return 0;
+  return exits_[cellX_][cellY_][worldDir(turnDeg)];
+}
+
+void RobotHW::markExit(float turnDeg) {
+  if (cellX_ < 0 || cellX_ >= kGrid || cellY_ < 0 || cellY_ >= kGrid) return;
+  uint8_t& e = exits_[cellX_][cellY_][worldDir(turnDeg)];
+  if (e < 255) e++;
 }
 
 int RobotHW::visitsToward(float turnDeg) const {
@@ -103,7 +185,22 @@ void RobotHW::resetHeading() {
   gyro_.update();
   gyro_.resetYaw();
   heading_ = 0;
+  headingBase_ = 0;
   lastGyroYaw_ = 0;
+}
+
+void RobotHW::resetHeadingToGrid() {
+  resetHeading();
+  // Con cuadricula, el rumbo cero es el de la pista, no hacia donde mira ahora.
+  if (gridOn_) heading_ = headingBase_ = -gridError();
+}
+
+float RobotHW::gridError() const {
+  // Cuanto esta girado respecto al rumbo de la cuadricula mas cercano (multiplo de 90).
+  float e = fmodf(gyro_.totalYaw() - gridYaw_, 90.0f);
+  if (e > 45.0f) e -= 90.0f;
+  if (e < -45.0f) e += 90.0f;
+  return e;
 }
 
 void RobotHW::updateHeading() {
@@ -113,7 +210,7 @@ void RobotHW::updateHeading() {
   heading_ += g - lastGyroYaw_;
   lastGyroYaw_ = g;
   const float diff = (encoders_.right() - encoders_.left()) * cfg::MM_PER_COUNT;
-  const float encYaw = diff / trackWidth_ * 57.2958f;
+  const float encYaw = headingBase_ + diff / trackWidth_ * 57.2958f;
   heading_ += cfg::ENC_YAW_WEIGHT * (encYaw - heading_);
 }
 
@@ -220,6 +317,18 @@ void RobotHW::runCommand(const char* cmd) {
 void RobotHW::sendTelemetry() {
   if (millis() - lastTelemetry_ < cfg::TELEMETRY_PERIOD_MS) return;
   lastTelemetry_ = millis();
+  if(millis()-lastObservationTelemetry_>=250) {
+    lastObservationTelemetry_=millis();
+  char sample[256];
+  snprintf(sample,sizeof(sample),"OBS t=%lu raw=%d,%d,%d filtered=%d,%d,%d age=%lu,%lu,%lu conf=%d,%d,%d enc=%ld,%ld yaw=%d phase=%s drops=%lu",
+    static_cast<unsigned long>(millis()),lasers_.acquiredMm(Lasers::LEFT),lasers_.acquiredMm(Lasers::FRONT),lasers_.acquiredMm(Lasers::RIGHT),
+    lasers_.mm(Lasers::LEFT),lasers_.mm(Lasers::FRONT),lasers_.mm(Lasers::RIGHT),
+    static_cast<unsigned long>(lasers_.lastValidAgeMs(Lasers::LEFT)),static_cast<unsigned long>(lasers_.lastValidAgeMs(Lasers::FRONT)),
+    static_cast<unsigned long>(lasers_.lastValidAgeMs(Lasers::RIGHT)),static_cast<int>(100*lasers_.confidence(Lasers::LEFT)),
+    static_cast<int>(100*lasers_.confidence(Lasers::FRONT)),static_cast<int>(100*lasers_.confidence(Lasers::RIGHT)),
+    encoders_.leftTotal(),encoders_.rightTotal(),static_cast<int>(gyro_.totalYaw()*100),state_,static_cast<unsigned long>(telemetry::droppedLines()));
+  telemetry::println(sample);
+  }
   char line[160];
   const int a = static_cast<int>(gyro_.totalYaw() - odoYaw0_);
   // q = lecturas SIN filtrar (para el mapa: el filtro mantiene valores viejos cuando el laser no mide).
@@ -302,14 +411,27 @@ bool RobotHW::lateralOffset(float& offset) const {
 }
 
 void RobotHW::moveForward(int cells) {
-  if (cells <= 0) return;
-  const float vmax = mode_ == raton::RunMode::Speed ? cfg::SPEED_RUN_SPEED : speed_;
-  const float target = cells * cfg::CELL_MM;
+  runCells(cells, mode_ == raton::RunMode::Speed ? cfg::SPEED_RUN_SPEED : speed_, nullptr);
+}
+
+int RobotHW::runCells(int cells, float vmax, bool* unexpected) {
+  if (unexpected) *unexpected = false;
+  if (cells <= 0) return 0;
+  if(!actionAllowed(0)) {
+    aborted_=true;
+    recordMotion("cells",cells*cfg::CELL_MM,{false,0,0,raton::MotionReason::ObservedObstacle});
+    if(unexpected)*unexpected=true;
+    return 0;
+  }
+  // Si el giro anterior ya adelanto parte de la celda, se descuenta (ver AXLE_BEHIND_CENTER_MM).
+  const float already = pendingAdvance_;
+  pendingAdvance_ = 0;
+  const float target = fmaxf(cells * cfg::CELL_MM - already, 0.0f);
   const float dt = cfg::CONTROL_PERIOD_US * 1e-6f;
 
   setState("CELDA");
   encoders_.reset();
-  resetHeading();
+  resetHeadingToGrid();
   yawTarget_ = 0;
   headingRef_ = 0;
 
@@ -317,13 +439,14 @@ void RobotHW::moveForward(int cells) {
   float lastPos = 0;
   float speed = 0;      // velocidad medida filtrada
   float integral = 0;
+  float pos = 0;
   uint32_t movingAt = millis();  // si se atasca (empujando una pared), deja de empujar
   uint32_t next = micros();
 
   while (!aborted_) {
     waitPeriod(next);
 
-    const float pos = 0.5f * (encoders_.left() + encoders_.right()) * cfg::MM_PER_COUNT;
+    pos = 0.5f * (encoders_.left() + encoders_.right()) * cfg::MM_PER_COUNT;
     speed = cfg::SPEED_FILTER * speed + (1.0f - cfg::SPEED_FILTER) * (pos - lastPos) / dt;
     lastPos = pos;
     lastSpeed_ = speed;
@@ -331,14 +454,22 @@ void RobotHW::moveForward(int cells) {
     if (speed > 20.0f) movingAt = millis();
     if (millis() - movingAt > cfg::STALL_MS) {
       setState("ATASCO");
+      if (unexpected) *unexpected = true;
       break;
     }
 
     float remaining = target - pos;
-    // En la ultima celda, si hay pared delante, frena por el laser: corrige el error acumulado.
     const int front = frontMm();
-    if (remaining < cfg::CELL_MM && front >= 0 && front < cfg::FRONT_WALL_MM + cfg::CELL_MM / 2) {
-      remaining = static_cast<float>(front - (deadzone_ + cfg::FRONT_MARGIN_MM));
+    const int stop = deadzone_ + cfg::FRONT_MARGIN_MM;
+    if (front >= 0 && front < cfg::FRONT_WALL_MM) {
+      if (remaining > front + cfg::CELL_MM / 2) {
+        // Pared delante mucho antes de lo esperado: el mapa no coincide. Parar ante ella.
+        if (unexpected) *unexpected = true;
+        remaining = static_cast<float>(front - stop);
+      } else if (remaining < cfg::CELL_MM) {
+        // Ultima celda con pared delante: frenar por el laser corrige el error acumulado.
+        remaining = static_cast<float>(front - stop);
+      }
     }
     if (remaining <= 1.0f) break;
 
@@ -349,6 +480,79 @@ void RobotHW::moveForward(int cells) {
     controlStep(v, speed, integral, dt);
   }
   stopMotors();
+  const auto progress = raton::motionProgress(pos, already, cfg::CELL_MM, cells, false);
+  const int moved = progress.cells;
+  // Donde queda el centro del raton respecto al de la celda: con pared delante lo dice el laser; si no,
+  // lo que se paso o le falto por encoders. Lo usan el giro y la marcha atras siguientes.
+  lasers_.waitFresh(1);
+  const int f = lasers_.mm(Lasers::FRONT);
+  if (f >= 0 && f < cfg::FRONT_WALL_MM) {
+    pendingAdvance_ = 0.5f * corridorMm_ - f - cfg::FRONT_SENSOR_AHEAD_MM + cfg::AXLE_BEHIND_CENTER_MM;
+  } else {
+    pendingAdvance_ = progress.offset;
+  }
+  const bool complete=!aborted_ && moved>=cells && !(unexpected && *unexpected);
+  recordMotion("cells",cells*cfg::CELL_MM,{complete,pos,gridError(),aborted_?raton::MotionReason::Aborted:
+               (complete?raton::MotionReason::Complete:raton::MotionReason::Interrupted)});
+  return moved < cells ? moved : cells;
+}
+
+int RobotHW::reverseCells(int cells, float shortMm, bool* stuck) {
+  if (stuck) *stuck = false;
+  if (cells <= 0) return 0;
+  const float ofs = pendingAdvance_;
+  const float target = fmaxf(cells * cfg::CELL_MM + ofs - shortMm, 0.0f);
+  setState("ATRAS");
+  encoders_.reset();
+  resetHeadingToGrid();
+  uint32_t next = micros();
+  uint32_t movingAt = millis();
+  float back = 0, last = 0;
+  const float dt = cfg::CONTROL_PERIOD_US * 1e-6f;
+  while (!aborted_) {
+    waitPeriod(next);
+    back = -0.5f * (encoders_.left() + encoders_.right()) * cfg::MM_PER_COUNT;
+    if (back >= target - 1.0f) break;
+    if ((back - last) / dt > 20.0f) movingAt = millis();
+    last = back;
+    if (millis() - movingAt > cfg::STALL_MS) {
+      if (stuck) *stuck = true;  // algo detras que no estaba en el mapa
+      break;
+    }
+    updateHeading();
+    // Mantener el rumbo de la cuadricula; sin centrar con los laterales (marcha atras se corrige al reves).
+    const float steer = cfg::KP_YAW * -heading_ - cfg::KD_YAW * gyro_.rate();
+    const float pwm = (target - back) < 30.0f ? cfg::PWM_MIN_MOVE : cfg::BACKUP_PWM;
+    motors_.set(-pwm - steer, -pwm + steer);
+  }
+  stopMotors();
+  const auto progress = raton::motionProgress(back, ofs, cfg::CELL_MM, cells, true);
+  pendingAdvance_ = progress.offset;
+  const int moved = progress.cells;
+  const bool complete=!aborted_ && moved>=cells && !(stuck && *stuck);
+  recordMotion("reverse",-cells*cfg::CELL_MM,{complete,-back,gridError(),aborted_?raton::MotionReason::Aborted:
+               (complete?raton::MotionReason::Complete:raton::MotionReason::Interrupted)});
+  return moved < cells ? moved : cells;
+}
+
+raton::Walls RobotHW::senseCell() {
+  int best[3] = {-1, -1, -1};
+  for (int k = 0; k < 5; ++k) {
+    lasers_.waitFresh(1);
+    for (int i = 0; i < 3; ++i) {
+      const int v = lasers_.mm(static_cast<Lasers::Id>(i));
+      if (v >= 0 && (best[i] < 0 || v < best[i])) best[i] = v;
+    }
+  }
+  auto wall = [&](int i, int threshold) {
+    if (best[i] >= 0) return best[i] < threshold;
+    // Ninguna lectura: si la ultima valida era muy corta y fue hace menos de 4 cm de recorrido, esta
+    // pegado a la pared (el VL53L0X no mide tan cerca). En un hueco de verdad fue hace casi una celda.
+    const Lasers::Id id = static_cast<Lasers::Id>(i);
+    return lasers_.lastValidMm(id) < cfg::SIDE_CLOSE_MM && fabsf(odoDist_ - lastValidDist_[i]) < 40.0f;
+  };
+  return raton::Walls{wall(Lasers::LEFT, cfg::CELL_WALL_MM), wall(Lasers::FRONT, cfg::CELL_WALL_MM),
+                      wall(Lasers::RIGHT, cfg::CELL_WALL_MM)};
 }
 
 void RobotHW::controlStep(float v, float speed, float& integral, float dt, bool useWalls) {
@@ -457,6 +661,10 @@ RobotHW::DriveEvent RobotHW::drive(float maxMm, int watchSide) {
       break;
     }
 
+    if (goalSet_ && hypotf(odoX_ - goalX_mm_, odoY_ - goalY_mm_) < cfg::GOAL_RADIUS_MM) {
+      goalReached_ = true;
+      break;
+    }
     float remaining = maxMm - pos;
     if (remaining <= 1.0f) break;
     const int front = frontMm();
@@ -468,12 +676,13 @@ RobotHW::DriveEvent RobotHW::drive(float maxMm, int watchSide) {
     const bool leftClose = left >= 0 && left < cfg::SIDE_CRASH_MM;
     const bool rightClose = right >= 0 && right < cfg::SIDE_CRASH_MM;
     const bool narrow = left >= 0 && right >= 0 && abs(left - right) < cfg::SIDE_CRASH_MARGIN_MM;
-    if (leftClose && !narrow && (right < 0 || left < right)) {
+    // En el tramo diagonal de un giro los laterales ven esquinas y postes: ni roces ni centrado.
+    if (!cornerLeg_ && leftClose && !narrow && (right < 0 || left < right)) {
       ev = DriveEvent::CrashLeft;
       setState("ROCE");
       break;
     }
-    if (rightClose && !narrow && (left < 0 || right < left)) {
+    if (!cornerLeg_ && rightClose && !narrow && (left < 0 || right < left)) {
       ev = DriveEvent::CrashRight;
       setState("ROCE");
       break;
@@ -539,9 +748,13 @@ RobotHW::DriveEvent RobotHW::drive(float maxMm, int watchSide) {
     const float confScale = cfg::CONF_MIN_SPEED + (1.0f - cfg::CONF_MIN_SPEED) * confAll;
     const float vmax = (frontNear ? fminf(speed_, cfg::SLOW_NEAR_WALL_SPEED) : speed_) * confScale;
     v = fminf(fminf(v + cfg::ACCEL * dt, vmax), fmaxf(brakeSpeed, cfg::MIN_SPEED));
-    controlStep(v, speed, integral, dt, !frontNear);
+    controlStep(v, speed, integral, dt, !frontNear && !cornerLeg_);
   }
   stopMotors();
+  const float actual=0.5f*(encoders_.left()+encoders_.right())*cfg::MM_PER_COUNT;
+  recordMotion(cornerLeg_?"diagonal":"drive",maxMm,{ev==DriveEvent::Distance,actual,heading_,
+    ev==DriveEvent::Aborted?raton::MotionReason::Aborted:(ev==DriveEvent::Distance?
+    raton::MotionReason::Complete:raton::MotionReason::Interrupted)});
   return ev;
 }
 
@@ -589,15 +802,69 @@ void RobotHW::selfCheck(char* msg) {
   snprintf(msg, 22, "Mot %s Las %s", motorsSwapped ? "CRUZ" : "ok", lasersSwapped ? "CRUZ" : "ok");
 }
 
-void RobotHW::turnCorner(float degrees) {
+void RobotHW::turnCorner(float degrees, bool trackCells) {
   if (!cfg::TURN_TWO_STAGE || fabsf(fabsf(degrees) - 90.0f) > 1.0f) {
     rotate(degrees);
     return;
   }
+  if(!actionAllowed(degrees)) {
+    aborted_=true;
+    recordMotion("turn",degrees,{false,0,0,raton::MotionReason::ObservedObstacle});
+    return;
+  }
+  lasers_.waitFresh(1);
+  raton::SensorObservation observations[3];
+  for(int i=0;i<3;++i)observations[i]=sensorObservation(i);
+  raton::BodyGeometry body;
+  body.sideAhead=cfg::SIDE_SENSOR_AHEAD_MM;body.frontAhead=cfg::FRONT_SENSOR_AHEAD_MM;
+  body.sensorWidth=cfg::ROBOT_WIDTH_MM;
+  const auto assessment=raton::assessTurn(observations,body,degrees,cfg::TURN_SPLIT_DEG,cfg::TURN_SPLIT_ADVANCE_MM);
+  char guardLine[112];
+  snprintf(guardLine,sizeof(guardLine),"SWEEP observed=%d feasible=%d entry=%d enabled=%d",assessment.observed,
+           assessment.feasible,static_cast<int>(assessment.entryMm),raton::kMotionGuardEnabled);
+  telemetry::println(guardLine);
+  if(raton::kMotionGuardEnabled && !assessment.feasible) {
+    aborted_=true;
+    setState("BARRIDO_FALLO");
+    recordMotion("turn",degrees,{false,0,0,raton::MotionReason::ObservedObstacle});
+    return;
+  }
+  if(raton::kMotionGuardEnabled && assessment.entryMm<0) backUp(-assessment.entryMm);
+  else if(raton::kMotionGuardEnabled && assessment.entryMm>0) drive(assessment.entryMm,0);
+  if(raton::kMotionGuardEnabled && assessment.entryMm!=0) {
+    const float actual=0.5f*(encoders_.left()+encoders_.right())*cfg::MM_PER_COUNT;
+    if(fabsf(actual-assessment.entryMm)>3) {
+      aborted_=true;
+      recordMotion("entry",assessment.entryMm,{false,actual,0,raton::MotionReason::Interrupted});
+    }
+  }
+  if(aborted_)return;
+  const float initialYaw=gyro_.totalYaw();
   const float sign = degrees > 0 ? 1.0f : -1.0f;
   rotate(sign * cfg::TURN_SPLIT_DEG);
+  if (aborted_) return;
+  cornerLeg_ = true;
   drive(cfg::TURN_SPLIT_ADVANCE_MM, 0);
-  rotate(sign * (90.0f - cfg::TURN_SPLIT_DEG));
+  cornerLeg_ = false;
+  const float cornerDistance = 0.5f * (encoders_.left() + encoders_.right()) * cfg::MM_PER_COUNT;
+  if (aborted_) return;
+  if (gridOn_) {
+    // Segundo tiempo hasta el rumbo exacto de la cuadricula (no un angulo fijo): no acumula errores.
+    gridYaw_ += sign * 90.0f;
+    float e = fmodf(gridYaw_ - gyro_.totalYaw(), 360.0f);
+    if (e > 180.0f) e -= 360.0f;
+    if (e < -180.0f) e += 360.0f;
+    rotate(e);
+  } else {
+    rotate(sign * (90.0f - cfg::TURN_SPLIT_DEG));
+  }
+  if (aborted_) return;
+  if (trackCells) {
+    // El eje avanzo la distancia medida por sin(split) en la direccion nueva; la referencia de
+    // celda centrada lo tiene AXLE_BEHIND_CENTER_MM por detras del centro.
+    pendingAdvance_ = cornerDistance * sinf(cfg::TURN_SPLIT_DEG / 57.2958f) + cfg::AXLE_BEHIND_CENTER_MM;
+  }
+  recordMotion("turn",degrees,{true,cornerDistance,degrees-(gyro_.totalYaw()-initialYaw),raton::MotionReason::Complete});
 }
 
 int RobotHW::backOut(float maxMm) {
@@ -634,6 +901,9 @@ int RobotHW::backOut(float maxMm) {
     motors_.set(-cfg::BACKUP_PWM - steer, -cfg::BACKUP_PWM + steer);
   }
   stopMotors();
+  const float actual=0.5f*(encoders_.left()+encoders_.right())*cfg::MM_PER_COUNT;
+  recordMotion("back_out",-maxMm,{!aborted_ && found!=0,actual,heading_,aborted_?
+    raton::MotionReason::Aborted:(found?raton::MotionReason::Complete:raton::MotionReason::Interrupted)});
   return found;
 }
 
@@ -652,6 +922,10 @@ void RobotHW::backUp(float mm) {
     motors_.set(-cfg::BACKUP_PWM - steer, -cfg::BACKUP_PWM + steer);
   }
   stopMotors();
+  const float actual=0.5f*(encoders_.left()+encoders_.right())*cfg::MM_PER_COUNT;
+  const bool complete=!aborted_ && actual<=-mm+1;
+  recordMotion("back",-mm,{complete,actual,heading_,complete?raton::MotionReason::Complete:
+    (aborted_?raton::MotionReason::Aborted:raton::MotionReason::Interrupted)});
 }
 
 void RobotHW::rotate(float degrees) {
@@ -662,26 +936,20 @@ void RobotHW::rotate(float degrees) {
   const uint32_t t0 = millis();
   uint32_t next = micros();
   int settled = 0;
-  int reversals = 0;
-  int lastSign = degrees >= 0 ? 1 : -1;
 
   while (!aborted_ && millis() - t0 < cfg::TURN_TIMEOUT_MS) {
     waitPeriod(next);
     const float err = degrees - gyro_.yaw();
     const float rate = gyro_.rate();
     // Dentro de tolerancia: frenar y dar el giro por bueno en cuanto se quede casi quieto.
-    // Tras pasarse dos veces de un lado a otro, tambien se acepta (evita bailar sobre el objetivo).
-    if (fabsf(err) < cfg::TURN_TOLERANCE_DEG || reversals >= 2) {
+    // Oscilar no demuestra que el giro se haya completado.
+    if (fabsf(err) < cfg::TURN_TOLERANCE_DEG) {
       motors_.brake();
       if (fabsf(rate) < 30.0f && ++settled > 3) break;
       continue;
     }
     settled = 0;
     const int sign = err >= 0 ? 1 : -1;
-    if (sign != lastSign) {
-      reversals++;
-      lastSign = sign;
-    }
     float pwm = clampf(cfg::KP_TURN * err - cfg::KD_TURN * rate, -cfg::TURN_PWM_MAX, cfg::TURN_PWM_MAX);
     // El minimo solo hace falta para arrancar: girando ya, se deja bajar y frena sin pasarse.
     if (fabsf(rate) < 30.0f && fabsf(pwm) < cfg::TURN_PWM_MIN) pwm = sign * cfg::TURN_PWM_MIN;
@@ -695,6 +963,13 @@ void RobotHW::rotate(float degrees) {
     }
   }
   stopMotors();
+  if (!aborted_ && fabsf(degrees - gyro_.yaw()) >= cfg::TURN_TOLERANCE_DEG) {
+    aborted_ = true;
+    setState("GIRO_FALLO");
+    telemetry::println("ERROR: giro incompleto; parado para no perder la posicion");
+  }
+  recordMotion("rotate",degrees,{!aborted_,0,degrees-gyro_.yaw(),aborted_?
+    raton::MotionReason::TurnError:raton::MotionReason::Complete});
 }
 
 void RobotHW::onStep(const raton::Maze& maze, const raton::FloodFill& flood, raton::Cell pos, raton::Dir heading) {

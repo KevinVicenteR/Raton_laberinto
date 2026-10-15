@@ -1,0 +1,68 @@
+{
+  "date": "2026-10-15",
+  "board": "Arduino Nano 33 BLE",
+  "trained": true,
+  "risk_enabled": false,
+  "motion_guard_enabled": false,
+  "objective_met": false,
+  "selected_navigation_threshold": null,
+  "training_generation_seconds": 255.5902902079979,
+  "fit_seconds": 3.0371667920007894,
+  "metrics": [
+    {
+      "suite": "current21",
+      "controller": "original",
+      "n": 21,
+      "arrivals": 10,
+      "clean_arrivals": 1,
+      "contacts": 116,
+      "stops": 11
+    },
+    {
+      "suite": "current21",
+      "controller": "corrected",
+      "n": 21,
+      "arrivals": 9,
+      "clean_arrivals": 0,
+      "contacts": 76,
+      "stops": 12
+    },
+    {
+      "suite": "current21",
+      "controller": "neural",
+      "n": 21,
+      "arrivals": 0,
+      "clean_arrivals": 0,
+      "contacts": 16,
+      "stops": 21
+    },
+    {
+      "suite": "reserved",
+      "controller": "original",
+      "n": 180,
+      "arrivals": 72,
+      "clean_arrivals": 0,
+      "contacts": 1132,
+      "stops": 108
+    },
+    {
+      "suite": "reserved",
+      "controller": "corrected",
+      "n": 180,
+      "arrivals": 43,
+      "clean_arrivals": 0,
+      "contacts": 783,
+      "stops": 137
+    },
+    {
+      "suite": "reserved",
+      "controller": "neural",
+      "n": 180,
+      "arrivals": 0,
+      "clean_arrivals": 0,
+      "contacts": 90,
+      "stops": 180
+    }
+  ],
+  "baseline_sha256": "58f9a60a72b006c1c49352166c61a4871275131471962aa0161aa3e2188cfa10"
+}

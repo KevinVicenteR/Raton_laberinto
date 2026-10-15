@@ -12,6 +12,7 @@ BLEService uart("6E400001-B5A3-F393-E0A9-E50E24DCCA9E");
 BLECharacteristic rx("6E400002-B5A3-F393-E0A9-E50E24DCCA9E", BLEWrite | BLEWriteWithoutResponse, 20);
 BLECharacteristic tx("6E400003-B5A3-F393-E0A9-E50E24DCCA9E", BLENotify, 20);
 bool ready = false;
+uint32_t dropped = 0;
 
 char inbuf[64];
 int inHead = 0;
@@ -70,12 +71,14 @@ void poll() {
 void println(const char* line) {
   if (!ready || !BLE.connected()) return;
   const int n = static_cast<int>(strlen(line)) + 1;  // con el salto de linea
-  if (outUsed() + n >= static_cast<int>(sizeof(outbuf))) return;  // llena: se pierde esta linea
+  if (outUsed() + n >= static_cast<int>(sizeof(outbuf))) { ++dropped; return; }
   for (int i = 0; i < n; ++i) {
     outbuf[outHead] = i < n - 1 ? line[i] : '\n';
     outHead = (outHead + 1) % static_cast<int>(sizeof(outbuf));
   }
 }
+
+uint32_t droppedLines() { return dropped; }
 
 int read() {
   if (inHead == inTail) return -1;

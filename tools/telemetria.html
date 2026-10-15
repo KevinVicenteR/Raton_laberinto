@@ -99,8 +99,8 @@
       <div class="modes" id="modes">
         <button class="mode sel" data-mode="1"><b>1 · Pared derecha</b><span>Sigue la pared de la derecha. No necesita saber el tamaño de la pista.</span></button>
         <button class="mode" data-mode="2"><b>2 · Pared izquierda</b><span>Sigue la pared de la izquierda. No necesita saber el tamaño de la pista.</span></button>
-        <button class="mode" data-mode="3"><b>3 · Laberinto</b><span>Busca el camino más corto a la meta (flood fill). Indica la celda meta en Ajustes.</span></button>
-        <button class="mode" data-mode="4"><b>4 · Ruta competencia</b><span>Va directo por el camino más corto del laberinto del reglamento (32 celdas). Si una pared no coincide, recalcula.</span></button>
+        <button class="mode" data-mode="3"><b>3 · Laberinto</b><span>Pista desconocida: explora por celdas hasta la meta (sale de los callejones marcha atrás). Al volver a arrancar, carrera rápida por el mapa aprendido.</span></button>
+        <button class="mode" data-mode="4"><b>4 · Ruta competencia</b><span>Va directo por el camino más corto del laberinto del reglamento, por tramos. Si una pared no coincide, sigue explorando por celdas.</span></button>
         <button class="mode" data-mode="5"><b>5 · Espacio libre</b><span>En cada cruce o pared se para, mira los tres láseres y va hacia donde hay más espacio libre.</span></button>
       </div>
       <p class="status" id="modeNote" style="margin:10px 0 0">El modo se aplica al pulsar ARRANCAR. Si el ratón está en marcha, se para y arranca en el modo nuevo.</p>
@@ -161,7 +161,7 @@
         <div class="row"><label for="steer">Control de dirección</label><select id="steer"><option value="0">Cascada (recomendado)</option><option value="1">PID directo (Kp / Kd)</option></select></div>
         <div class="row"><label for="kp">Centrado de la cascada</label><input type="range" id="kp" min="0" max="0.3" step="0.01" value="0.15"><span class="num" id="kpV">0.15</span></div>
         <div class="row"><label>PID directo</label>Kp <input id="pidKp" value="0.0014" style="font:inherit;padding:7px 10px;border-radius:8px;border:1px solid var(--border);background:var(--panel);color:var(--text);width:90px"> Kd <input id="pidKd" value="1.0" style="font:inherit;padding:7px 10px;border-radius:8px;border:1px solid var(--border);background:var(--panel);color:var(--text);width:90px"></div>
-        <div class="row"><label for="wts">Pesos de la red</label><input id="wts" value="1.0,0.8,0.3,0.2" style="font:inherit;padding:7px 10px;border-radius:8px;border:1px solid var(--border);background:var(--panel);color:var(--text);width:170px"><span class="status">espacio, novedad, giro, sesgo recto</span></div>
+        <div class="row"><label for="wts">Pesos de decisión</label><input id="wts" value="1.0,0.8,0.3,0.2" style="font:inherit;padding:7px 10px;border-radius:8px;border:1px solid var(--border);background:var(--panel);color:var(--text);width:170px"><span class="status">espacio, novedad, giro, sesgo recto</span></div>
         <div class="row"><label for="range">Alcance láseres</label><input type="range" id="range" min="60" max="400" step="10" value="160"><span class="num" id="rangeV">160 mm</span></div>
         <div class="row"><label for="sig">Eco mínimo (ve menos →)</label><input type="range" id="sig" min="0.1" max="3" step="0.1" value="0.6"><span class="num" id="sigV">0.6</span></div>
         <div class="row"><label for="goal">Meta (modo laberinto)</label><input id="goal" placeholder="x,y  (ej. 4,2)" style="font:inherit;padding:7px 10px;border-radius:8px;border:1px solid var(--border);background:var(--panel);color:var(--text);width:140px"><span class="status">celda contando desde abajo a la izquierda</span></div>

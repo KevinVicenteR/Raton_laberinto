@@ -20,6 +20,7 @@ class Lasers {
   // Distancia filtrada (Kalman) en mm, o -1 si no hay medida valida (fuera de rango).
   int mm(Id id) const { return mm_[map(id)]; }
   // Ultima lectura sin filtrar, o -1.
+  int acquiredMm(Id id) const { return acquired_[map(id)]; }
   int rawMm(Id id) const { return raw_[map(id)]; }
   // Confianza 0..1 de cada laser: baja si sus lecturas saltan o aparecen y desaparecen (fantasmas).
   float confidence(Id id) const { return conf_[map(id)]; }
@@ -34,6 +35,8 @@ class Lasers {
 
   // Espera hasta tener n medidas nuevas de los tres sensores (para leer paredes parado).
   void waitFresh(int n);
+
+  uint32_t sampleCount(Id id) const { return samples_[map(id)]; }
 
   bool ok(Id id) const { return ok_[id]; }
 
@@ -57,6 +60,7 @@ class Lasers {
 
   int mm_[3] = {-1, -1, -1};
   int raw_[3] = {-1, -1, -1};
+  int acquired_[3] = {-1, -1, -1};
   float kd_[3] = {0, 0, 0};    // distancia estimada (mm)
   float kv_[3] = {0, 0, 0};    // velocidad estimada (mm/s)
   float kp_[3][4] = {};        // covarianza 2x2 [dd, dv, vd, vv]
