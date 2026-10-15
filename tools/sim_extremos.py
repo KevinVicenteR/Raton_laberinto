@@ -58,6 +58,8 @@ class Firmware:
     split_advance: float = 75.0
     close_mm: float = 60.0       # -1 tras una lectura por debajo de esto = demasiado cerca
     unstick: bool = False        # desatasco: atrás y enderezarse si se atasca con el frente libre
+    weighted: bool = False       # decision ponderada en los cruces (como el firmware)
+    w: tuple = (1.0, 0.8, 0.3, 0.2)  # espacio, novedad, giro, sesgo recto
 
 
 @dataclass
@@ -159,6 +161,9 @@ class Sim:
         self.events = []
         self._near = []
         self._near_at = None
+        self.visits = {}
+        self.last_valid = {"L": (1000, 0), "F": (1000, 0), "R": (1000, 0)}
+        self.cell = None
 
     def near(self):
         """Paredes a menos de 300 mm (se recalcula al moverse 40 mm): acelera mucho el laberinto grande."""
@@ -257,9 +262,27 @@ class Sim:
             else:
                 self.miss[key] = 0
                 self.readings[key] = val
+                self.last_valid[key] = (val, self.t)
+
+    def odo_cell(self, x=None, y=None):
+        pitch = self.corridor_est + 15
+        x = self.x if x is None else x
+        y = self.y if y is None else y
+        return (math.floor(x / pitch + 0.5), math.floor(y / pitch + 0.5))
+
+    def visits_toward(self, turn_deg):
+        h = math.degrees(self.th) - 90 + turn_deg      # 0 = norte, positivo a la izquierda
+        d = int(round(h / 90)) % 4
+        dx, dy = [(0, 1), (-1, 0), (0, -1), (1, 0)][d]
+        cx, cy = self.odo_cell()
+        return self.visits.get((cx + dx, cy + dy), 0)
 
     def tick(self):
         self.t += self.DT
+        c = self.odo_cell()
+        if c != self.cell:
+            self.cell = c
+            self.visits[c] = self.visits.get(c, 0) + 1
         if self.t >= self.next_sample:
             self.sample()
             self.next_sample += 0.020
@@ -499,14 +522,31 @@ class Sim:
             for _ in range(8):   # parado: medidas nuevas
                 yield
                 self.tick()
-            L, F, R = space(self.readings["L"]), space(self.readings["F"]), space(self.readings["R"])
-            turn, best = 0, (F if F > fw.front_wall else -1)
-            if L > fw.side_wall and L > best:
-                best, turn = L, 90
-            if R > fw.side_wall and R > best:
-                best, turn = R, -90
-            if best < 0:
-                turn = 180
+            def side(key):
+                v = self.readings[key]
+                lv, lt = self.last_valid[key]
+                if v < 0 and fw.weighted and lv < fw.close_mm and self.t - lt < 0.3:
+                    return lv   # demasiado cerca, no libre
+                return space(v)
+            L, F, R = side("L"), space(self.readings["F"]), side("R")
+            if fw.weighted:
+                w = fw.w
+                def score(mm, td):
+                    return (w[0] * min(mm, 300) / 300 + w[1] / (1 + self.visits_toward(td))
+                            - w[2] * abs(td) / 90 + (w[3] if td == 0 else 0))
+                cand = []
+                if F > fw.front_wall: cand.append((score(F, 0), 0))
+                if L > fw.side_wall: cand.append((score(L, 90), 90))
+                if R > fw.side_wall: cand.append((score(R, -90), -90))
+                turn = max(cand)[1] if cand else 180
+            else:
+                turn, best = 0, (F if F > fw.front_wall else -1)
+                if L > fw.side_wall and L > best:
+                    best, turn = L, 90
+                if R > fw.side_wall and R > best:
+                    best, turn = R, -90
+                if best < 0:
+                    turn = 180
             if turn == 0:
                 yield from self.drive(half + fw.cfg_side_ahead, 0)
                 ignore = half

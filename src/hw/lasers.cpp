@@ -50,6 +50,16 @@ void Lasers::update() {
     const int mm = static_cast<int>(v) + kOffset[i];
     const bool valid = !s.timeoutOccurred() && (!cfg::LASER_CHECK_STATUS || status == 11) && mm >= 0 && mm <= maxMm_;
     raw_[i] = median3(i, valid ? mm : -1);
+    // Confianza: una lectura es estable si sigue en el mismo estado (con/sin medida) y no salta mas de
+    // LASER_STABLE_MM respecto a la anterior. Un pasillo libre (-1 seguido) tambien es estable.
+    const bool stable = (raw_[i] < 0) == (prevRaw_[i] < 0) &&
+                        (raw_[i] < 0 || abs(raw_[i] - prevRaw_[i]) <= cfg::LASER_STABLE_MM);
+    conf_[i] += cfg::LASER_CONF_RATE * ((stable ? 1.0f : 0.0f) - conf_[i]);
+    prevRaw_[i] = raw_[i];
+    if (raw_[i] >= 0) {
+      lastValid_[i] = raw_[i];
+      lastValidAt_[i] = millis();
+    }
     filter(i, raw_[i]);
     samples_[i]++;
   }
@@ -118,7 +128,8 @@ void Lasers::filter(int i, int z) {
       if (++jumps_[i] >= cfg::LASER_JUMP_CONFIRM) restart();
     } else {
       jumps_[i] = 0;
-      const float s = p00 + cfg::LASER_KF_R;
+      const float r = cfg::LASER_KF_R * (1.0f + cfg::LASER_R_BY_CONF * (1.0f - conf_[i]));
+      const float s = p00 + r;
       const float k0 = p00 / s;
       const float k1 = p10 / s;
       kd_[i] += k0 * innovation;

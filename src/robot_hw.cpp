@@ -34,6 +34,8 @@ void RobotHW::resetOdometry() {
   odoY_ = 0;
   odoYaw0_ = gyro_.totalYaw();
   odoLastA_ = 0;
+  memset(visits_, 0, sizeof(visits_));
+  cellX_ = cellY_ = -1;
   odoL_ = encoders_.leftTotal();
   odoR_ = encoders_.rightTotal();
 }
@@ -52,6 +54,28 @@ void RobotHW::updateOdometry() {
   odoLastA_ = a;
   odoX_ -= ds * sinf(am);
   odoY_ += ds * cosf(am);
+  const int cx = cellOf(odoX_), cy = cellOf(odoY_ + 0.5f * corridorMm_);
+  if (cx != cellX_ || cy != cellY_) {
+    cellX_ = cx;
+    cellY_ = cy;
+    if (cx >= 0 && cy >= 0 && cx < kGrid && cy < kGrid && visits_[cx][cy] < 255) visits_[cx][cy]++;
+  }
+}
+
+int RobotHW::cellOf(float v) const {
+  const float pitch = corridorMm_ + 15.0f;  // pasillo + pared
+  return static_cast<int>(floorf(v / pitch + 0.5f)) + kGrid / 2;
+}
+
+int RobotHW::visitsToward(float turnDeg) const {
+  if (cellX_ < 0) return 0;
+  // Direccion en la pista: 0 = norte (+y), 1 = oeste, 2 = sur, 3 = este (angulos positivos a la izquierda).
+  const float h = (gyro_.totalYaw() - odoYaw0_) + turnDeg;
+  const int d = ((static_cast<int>(lroundf(h / 90.0f)) % 4) + 4) % 4;
+  const int dx[4] = {0, -1, 0, 1}, dy[4] = {1, 0, -1, 0};
+  const int x = cellX_ + dx[d], y = cellY_ + dy[d];
+  if (x < 0 || y < 0 || x >= kGrid || y >= kGrid) return 0;
+  return visits_[x][y];
 }
 
 void RobotHW::idle(uint32_t ms) {
@@ -116,7 +140,7 @@ void RobotHW::handleInput() {
 }
 
 void RobotHW::runCommand(const char* cmd) {
-  char reply[64];
+  char reply[112];
   const float value = atof(cmd + 1);
   switch (cmd[0]) {
     case 'v':
@@ -124,6 +148,15 @@ void RobotHW::runCommand(const char* cmd) {
       break;
     case 'k':
       kpWall_ = clampf(value, 0.0f, 1.0f);
+      break;
+    case 'j':
+      kpSteer_ = clampf(value, 0.0f, 0.02f);
+      break;
+    case 'd':
+      kdSteer_ = clampf(value, 0.0f, 5.0f);
+      break;
+    case 'p':
+      steerMode_ = value >= 1 ? 1 : 0;
       break;
     case 's':
       startRequested_ = true;
@@ -134,6 +167,22 @@ void RobotHW::runCommand(const char* cmd) {
       if (comma) {
         goalX_ = atoi(cmd + 1);
         goalY_ = atoi(comma + 1);
+      }
+      break;
+    }
+    case 'n': {
+      // n<espacio>,<novedad>,<giro>,<sesgo>
+      float v[4];
+      const char* p = cmd + 1;
+      int k = 0;
+      while (k < 4 && *p) {
+        v[k++] = atof(p);
+        p = strchr(p, ',');
+        if (!p) break;
+        p++;
+      }
+      if (k == 4) {
+        for (int i = 0; i < 4; ++i) w_[i] = clampf(v[i], -5.0f, 5.0f);
       }
       break;
     }
@@ -155,13 +204,14 @@ void RobotHW::runCommand(const char* cmd) {
     case '?':
       break;
     default:
-      snprintf(reply, sizeof(reply), "? s x m<1-5> v k r g w z G<x>,<y> ?");
+      snprintf(reply, sizeof(reply), "? s x m<1-5> v p k j d r g w z n G ?");
       telemetry::println(reply);
       Serial.println(reply);
       return;
   }
-  snprintf(reply, sizeof(reply), "v=%d k=%d/1000 r=%d g=%d/100 w=%d z=%d meta=%d,%d", static_cast<int>(speed_),
-           static_cast<int>(kpWall_ * 1000), lasers_.maxMm(), static_cast<int>(lasers_.signalLimit() * 100),
+  snprintf(reply, sizeof(reply), "v=%d dir=%s k=%d/1000 j=%d/10000 d=%d/100 r=%d g=%d/100 w=%d z=%d meta=%d,%d",
+           static_cast<int>(speed_), steerMode_ ? "PID" : "cascada", static_cast<int>(kpWall_ * 1000),
+           static_cast<int>(kpSteer_ * 10000), static_cast<int>(kdSteer_ * 100), lasers_.maxMm(), static_cast<int>(lasers_.signalLimit() * 100),
            sideWall_, deadzone_, goalX_, goalY_);
   telemetry::println(reply);
   Serial.println(reply);
@@ -170,14 +220,16 @@ void RobotHW::runCommand(const char* cmd) {
 void RobotHW::sendTelemetry() {
   if (millis() - lastTelemetry_ < cfg::TELEMETRY_PERIOD_MS) return;
   lastTelemetry_ = millis();
-  char line[128];
+  char line[160];
   const int a = static_cast<int>(gyro_.totalYaw() - odoYaw0_);
   // q = lecturas SIN filtrar (para el mapa: el filtro mantiene valores viejos cuando el laser no mide).
-  snprintf(line, sizeof(line), "%s I%d F%d D%d v%d r%d p%d x%d y%d a%d t%d q%d,%d,%d", state_,
+  snprintf(line, sizeof(line), "%s I%d F%d D%d v%d r%d p%d x%d y%d a%d t%d q%d,%d,%d c%d,%d,%d g%d", state_,
            lasers_.mm(Lasers::LEFT), lasers_.mm(Lasers::FRONT), lasers_.mm(Lasers::RIGHT),
            static_cast<int>(lastSpeed_), static_cast<int>(heading_), static_cast<int>(corridorMm_),
            static_cast<int>(odoX_), static_cast<int>(odoY_), a, static_cast<int>(maxLagUs_ / 1000),
-           lasers_.rawMm(Lasers::LEFT), lasers_.rawMm(Lasers::FRONT), lasers_.rawMm(Lasers::RIGHT));
+           lasers_.rawMm(Lasers::LEFT), lasers_.rawMm(Lasers::FRONT), lasers_.rawMm(Lasers::RIGHT),
+           static_cast<int>(lasers_.confidence(Lasers::LEFT) * 100), static_cast<int>(lasers_.confidence(Lasers::FRONT) * 100),
+           static_cast<int>(lasers_.confidence(Lasers::RIGHT) * 100), static_cast<int>(mapConfidence() * 100));
   maxLagUs_ = 0;
   telemetry::println(line);
 }
@@ -203,6 +255,31 @@ raton::Walls RobotHW::readWalls() {
   return raton::Walls{wall(lasers_.mm(Lasers::LEFT), sideWall_),
                       wall(frontMm(), cfg::FRONT_WALL_MM),
                       wall(lasers_.mm(Lasers::RIGHT), sideWall_)};
+}
+
+bool RobotHW::lateralOffset(float& offset, float& rate, float& conf) const {
+  const int l = lasers_.mm(Lasers::LEFT);
+  const int r = lasers_.mm(Lasers::RIGHT);
+  const bool hasL = l >= 0 && l < sideWall_;
+  const bool hasR = r >= 0 && r < sideWall_;
+  const float center = 0.5f * (corridorMm_ - cfg::ROBOT_WIDTH_MM);
+  const float cl = lasers_.confidence(Lasers::LEFT), cr = lasers_.confidence(Lasers::RIGHT);
+  if (hasL && hasR) {
+    offset = (l - r) * 0.5f;
+    rate = (lasers_.rate(Lasers::LEFT) - lasers_.rate(Lasers::RIGHT)) * 0.5f;
+    conf = fminf(cl, cr);
+  } else if (hasL) {
+    offset = l - center;
+    rate = lasers_.rate(Lasers::LEFT);
+    conf = cl;
+  } else if (hasR) {
+    offset = center - r;
+    rate = -lasers_.rate(Lasers::RIGHT);
+    conf = cr;
+  } else {
+    return false;
+  }
+  return true;
 }
 
 bool RobotHW::lateralOffset(float& offset) const {
@@ -234,6 +311,7 @@ void RobotHW::moveForward(int cells) {
   encoders_.reset();
   resetHeading();
   yawTarget_ = 0;
+  headingRef_ = 0;
 
   float v = 0;          // velocidad de consigna
   float lastPos = 0;
@@ -285,17 +363,40 @@ void RobotHW::controlStep(float v, float speed, float& integral, float dt, bool 
     if (base < cfg::PWM_MIN_RUN) base = cfg::PWM_MIN_RUN;
   }
 
-  // Rumbo: mantener yaw = 0, desviado un poco para volver al centro del pasillo. Zona muerta y
-  // suavizado para que no haga zigzag entre las paredes.
-  float target = 0;
-  float offset;
-  if (useWalls && lateralOffset(offset) && fabsf(offset) > cfg::LATERAL_DEADBAND_MM) {
-    offset -= offset > 0 ? cfg::LATERAL_DEADBAND_MM : -cfg::LATERAL_DEADBAND_MM;
-    target = clampf(kpWall_ * offset, -cfg::MAX_WALL_CORRECTION_DEG, cfg::MAX_WALL_CORRECTION_DEG);
+  // Direccion en capas:
+  //  - con paredes: PID de desviacion lateral (KP_STEER, KD_STEER) con ganancias escaladas por la
+  //    confianza de los laseres (si un laser da fantasmas, se le hace menos caso);
+  //  - sin paredes (o laseres poco fiables): mantener el rumbo con el giroscopio (KP_YAW).
+  // En ambos casos el giroscopio amortigua (KD_YAW). Positivo = girar a la izquierda.
+  float steer;
+  float offset, rate, conf;
+  const bool walls = useWalls && lateralOffset(offset, rate, conf) && conf > 0.2f;
+  if (walls) {
+    if (fabsf(offset) <= cfg::LATERAL_DEADBAND_MM) {
+      offset = 0;
+    } else {
+      offset -= offset > 0 ? cfg::LATERAL_DEADBAND_MM : -cfg::LATERAL_DEADBAND_MM;
+    }
   }
-  yawTarget_ += cfg::YAW_TARGET_SMOOTH * (target - yawTarget_);
-  const float steer = clampf(cfg::KP_YAW * (yawTarget_ - heading_) - cfg::KD_YAW * gyro_.rate(),
-                             -cfg::MAX_STEER, cfg::MAX_STEER);
+  if (steerMode_ == 1) {
+    // PID directo sobre la desviacion (KP_STEER, KD_STEER), escalado por la confianza.
+    if (walls) {
+      steer = conf * (kpSteer_ * offset + kdSteer_ * rate * dt) - cfg::KD_YAW * gyro_.rate();
+      headingRef_ = heading_;
+    } else {
+      steer = cfg::KP_YAW * (headingRef_ - heading_) - cfg::KD_YAW * gyro_.rate();
+    }
+  } else {
+    // Cascada: la desviacion fija el rumbo objetivo (con menos fuerza si los laseres son poco fiables)
+    // y el PID del giroscopio lo sigue.
+    float target = 0;
+    if (walls) {
+      target = clampf(conf * kpWall_ * offset, -cfg::MAX_WALL_CORRECTION_DEG, cfg::MAX_WALL_CORRECTION_DEG);
+    }
+    yawTarget_ += cfg::YAW_TARGET_SMOOTH * (target - yawTarget_);
+    steer = cfg::KP_YAW * (yawTarget_ - heading_) - cfg::KD_YAW * gyro_.rate();
+  }
+  steer = clampf(steer, -cfg::MAX_STEER, cfg::MAX_STEER);
 
   motors_.set(base - steer, base + steer);
 }
@@ -322,6 +423,7 @@ RobotHW::DriveEvent RobotHW::drive(float maxMm, int watchSide) {
     ignoreSideMm_ = 0;
   }
   yawTarget_ = 0;
+  headingRef_ = 0;
   uint32_t movingAt = millis();  // ultima vez que se movia: si se atasca, se trata como pared
   const uint32_t startMs = millis();
   uint32_t fastAt = 0;  // ultima vez que iba en marcha de verdad (para detectar un frenazo por golpe)
@@ -431,7 +533,11 @@ RobotHW::DriveEvent RobotHW::drive(float maxMm, int watchSide) {
     }
 
     const float brakeSpeed = sqrtf(2.0f * cfg::ACCEL * remaining);
-    const float vmax = frontNear ? fminf(speed_, cfg::SLOW_NEAR_WALL_SPEED) : speed_;
+    // La velocidad baja si los laseres son poco fiables (la red ajusta la consigna del PID de velocidad).
+    const float confAll = fminf(lasers_.confidence(Lasers::FRONT),
+                                fmaxf(lasers_.confidence(Lasers::LEFT), lasers_.confidence(Lasers::RIGHT)));
+    const float confScale = cfg::CONF_MIN_SPEED + (1.0f - cfg::CONF_MIN_SPEED) * confAll;
+    const float vmax = (frontNear ? fminf(speed_, cfg::SLOW_NEAR_WALL_SPEED) : speed_) * confScale;
     v = fminf(fminf(v + cfg::ACCEL * dt, vmax), fmaxf(brakeSpeed, cfg::MIN_SPEED));
     controlStep(v, speed, integral, dt, !frontNear);
   }
@@ -592,7 +698,23 @@ void RobotHW::rotate(float degrees) {
 }
 
 void RobotHW::onStep(const raton::Maze& maze, const raton::FloodFill& flood, raton::Cell pos, raton::Dir heading) {
-  (void)maze;
+  // Puerta del mapa: comparar las paredes que acaba de ver (izq, delante, der) con el mapa conocido.
+  if (expected_ && mode_ == raton::RunMode::Search) {
+    const raton::Dir dirs[3] = {raton::leftOf(heading), heading, raton::rightOf(heading)};
+    for (raton::Dir d : dirs) {
+      if (!maze.isKnown(pos, d)) continue;
+      mapSeen_++;
+      if (maze.hasWall(pos, d) == expected_(pos.x, pos.y, d)) mapHits_++;
+    }
+    if (!mapWarned_ && mapSeen_ >= 3 * cfg::MAP_CONF_STEPS && mapConfidence() < cfg::MAP_CONF_MIN) {
+      mapWarned_ = true;
+      speed_ *= 0.7f;
+      char line[80];
+      snprintf(line, sizeof(line), "DECIDE: el mapa coincide solo un %d%% -> modo prudente (mas despacio)",
+               static_cast<int>(mapConfidence() * 100));
+      telemetry::println(line);
+    }
+  }
   char l1[22];
   char l2[22];
   char l3[22];

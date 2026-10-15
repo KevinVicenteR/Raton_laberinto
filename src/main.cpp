@@ -262,8 +262,16 @@ void freeSpace() {
     // Parado en el cruce: leer los tres laseres con medidas nuevas.
     robot.setState("CRUCE");
     lasers.waitFresh(3);
-    const int left = space(lasers.mm(Lasers::LEFT));
-    const int right = space(lasers.mm(Lasers::RIGHT));
+    // Sin lectura justo despues de una lectura muy corta = demasiado cerca para el laser, no libre.
+    auto side = [&](Lasers::Id id) {
+      const int mm = lasers.mm(id);
+      if (mm < 0 && lasers.lastValidMm(id) < cfg::SIDE_CLOSE_MM && lasers.lastValidAgeMs(id) < 300) {
+        return lasers.lastValidMm(id);
+      }
+      return space(mm);
+    };
+    const int left = side(Lasers::LEFT);
+    const int right = side(Lasers::RIGHT);
     const int frontRaw = robot.frontMm();
     const int front = space(frontRaw);
     const bool leftOpen = left > robot.sideWall();
@@ -273,22 +281,27 @@ void freeSpace() {
     snprintf(line, sizeof(line), "CRUCE izq%d del%d der%d", left, front, right);
     telemetry::println(line);
 
-    // Elegir la direccion con mas espacio. Si delante tambien esta libre, se prefiere el hueco lateral
-    // que se acaba de encontrar solo si tiene mas espacio.
-    int turn = 0;  // grados: +90 izquierda, -90 derecha, 0 recto, 180 media vuelta
-    int best = frontOpen ? front : -1;
-    if (leftOpen && left > best) {
-      best = left;
-      turn = 90;
-    }
-    if (rightOpen && right > best) {
-      best = right;
-      turn = -90;
-    }
-    if (best < 0) turn = 180;  // los tres cerrados: callejon sin salida
+    // Decision ponderada (una neurona por direccion): espacio libre, novedad, coste de girar y sesgo.
+    const float* w = robot.weights();
+    auto score = [&](int mm, float turnDeg) {
+      const float freeN = (mm > 300 ? 300 : mm) / 300.0f;
+      const float novel = 1.0f / (1.0f + robot.visitsToward(turnDeg));
+      return w[0] * freeN + w[1] * novel - w[2] * fabsf(turnDeg) / 90.0f + (turnDeg == 0.0f ? w[3] : 0.0f);
+    };
+    const float sF = frontOpen ? score(front, 0) : -99, sL = leftOpen ? score(left, 90) : -99,
+                sR = rightOpen ? score(right, -90) : -99;
+    int turn = 180;  // grados: +90 izquierda, -90 derecha, 0 recto, 180 media vuelta (callejon)
+    float best = -50;
+    if (sF > best) { best = sF; turn = 0; }
+    if (sL > best) { best = sL; turn = 90; }
+    if (sR > best) { best = sR; turn = -90; }
+    char why[80];
+    snprintf(why, sizeof(why), "cruce izq %d recto %d der %d (x100) -> %s", static_cast<int>(sL * 100),
+             static_cast<int>(sF * 100), static_cast<int>(sR * 100),
+             turn == 0 ? "recto" : turn == 90 ? "izquierda" : turn == -90 ? "derecha" : "callejon");
 
     if (turn == 0) {
-      decide("cruce: delante es lo mas libre -> sigue recto");
+      decide(why);
       // Recto: pasar el hueco sin volver a detectarlo.
       robot.drive(half + cfg::SIDE_SENSOR_AHEAD_MM, 0);
       robot.ignoreSidesFor(half);
@@ -303,8 +316,7 @@ void freeSpace() {
     if (turn == 180) {
       deadEnd();
     } else {
-      decide(turn > 0 ? "cruce: la izquierda es lo mas libre -> gira izquierda"
-                      : "cruce: la derecha es lo mas libre -> gira derecha");
+      decide(why);
       robot.turnCorner(static_cast<float>(turn));
     }
     if (turn != 180) {
@@ -318,6 +330,7 @@ void freeSpace() {
 // Flood fill: explora hasta probar el camino optimo y luego hace carreras rapidas. Necesita
 // MAZE_WIDTH, MAZE_HEIGHT y CELL_MM de la pista; sale de (START_X, START_Y) mirando al norte.
 void solveMaze() {
+  robot.setExpectedMap(nullptr);  // la puerta del mapa solo tiene sentido en el modo 4
   solver.setStart(raton::Cell{static_cast<int8_t>(cfg::START_X), static_cast<int8_t>(cfg::START_Y)});
   if (robot.goalX() >= 0) {
     solver.setGoal(raton::Cell{static_cast<int8_t>(robot.goalX()), static_cast<int8_t>(robot.goalY())});
@@ -345,8 +358,20 @@ void solveMaze() {
 // Ruta de la competencia: carga el laberinto del reglamento (competition_maze.h) y va por el camino
 // mas corto. En cada celda sigue mirando las paredes: si alguna no coincide con el dibujo, corrige
 // el mapa y recalcula, asi llega aunque el laberinto real cambie un poco.
+bool competitionWall(int x, int y, int dir) {
+  using namespace competition;
+  const int r = HEIGHT - 1 - y;
+  switch (dir) {
+    case raton::NORTH: return MAP[2 * r][4 * x + 2] == '-';
+    case raton::SOUTH: return MAP[2 * r + 2][4 * x + 2] == '-';
+    case raton::WEST: return MAP[2 * r + 1][4 * x] == '|';
+    default: return MAP[2 * r + 1][4 * x + 4] == '|';
+  }
+}
+
 void competitionRun() {
   using namespace competition;
+  robot.setExpectedMap(competitionWall);
   solver.setStart(raton::Cell{START_X, START_Y});
   solver.setGoal(raton::Cell{GOAL_X, GOAL_Y});
   solver.reset(WIDTH, HEIGHT);

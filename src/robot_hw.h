@@ -31,6 +31,19 @@ class RobotHW : public raton::Robot {
   static const int kWatchBoth = 2;
   DriveEvent drive(float maxMm, int watchSide);
   int openSide() const { return openSide_; }
+  // Veces que ha pasado por la celda que queda en la direccion turnDeg (+90 izq, -90 der, 0 delante),
+  // con celdas del tamano del pasillo medido. Para premiar explorar zonas nuevas.
+  int visitsToward(float turnDeg) const;
+  // Pesos de la decision en los cruces: [espacio, novedad, giro, sesgo recto].
+  const float* weights() const { return w_; }
+  // Puerta del mapa: funcion que dice si el mapa conocido tiene pared en (x, y, dir N=0 E=1 S=2 W=3).
+  void setExpectedMap(bool (*fn)(int, int, int)) {
+    expected_ = fn;
+    mapHits_ = mapSeen_ = 0;
+    mapWarned_ = false;
+  }
+  float mapConfidence() const { return mapSeen_ ? static_cast<float>(mapHits_) / mapSeen_ : 1.0f; }
+
   // Recorrido total hacia delante desde el arranque (mm), para detectar que no avanza.
   float travelledMm() const { return odoDist_; }
   // La siguiente drive() que vigile huecos no mira los laterales durante los primeros mm (tras girar,
@@ -101,6 +114,8 @@ class RobotHW : public raton::Robot {
   void controlStep(float v, float speed, float& integral, float dt, bool useWalls = true);
   // Desplazamiento lateral respecto al centro del pasillo (mm, positivo = a la derecha).
   bool lateralOffset(float& offset) const;
+  // Lo mismo con la velocidad de cambio (mm/s) y la confianza de los laseres usados.
+  bool lateralOffset(float& offset, float& rate, float& conf) const;
   void waitPeriod(uint32_t& next);
   // Frena, suelta y espera SETTLE_MS corrigiendo el sesgo del giroscopio.
   void stopMotors();
@@ -128,7 +143,21 @@ class RobotHW : public raton::Robot {
   int sideWall_ = cfg::SIDE_WALL_MM;
   int deadzone_ = cfg::FRONT_DEADZONE_MM;
   float speed_ = cfg::WALL_FOLLOW_SPEED;
-  float kpWall_ = cfg::KP_WALL;
+  float kpWall_ = cfg::KP_WALL;    // cascada: grados de rumbo por mm (orden k)
+  float kpSteer_ = cfg::KP_STEER;  // PID directo (orden j)
+  float kdSteer_ = cfg::KD_STEER;  // PID directo (orden d)
+  int steerMode_ = cfg::STEER_MODE;  // 0 cascada, 1 PID directo (orden p)
+  float headingRef_ = 0;          // rumbo a mantener cuando no hay paredes para centrarse
+  float w_[4] = {cfg::W_FREE, cfg::W_NOVEL, cfg::W_TURN, cfg::B_STRAIGHT};
+  static const int kGrid = 40;    // rejilla de celdas visitadas (centrada en la salida)
+  uint8_t visits_[kGrid][kGrid] = {};
+  int cellX_ = -1;
+  int cellY_ = -1;
+  bool (*expected_)(int, int, int) = nullptr;
+  int mapHits_ = 0;
+  int mapSeen_ = 0;
+  bool mapWarned_ = false;
+  int cellOf(float v) const;
   float trackWidth_ = cfg::TRACK_WIDTH_MM;
   float heading_ = 0;
   float lastGyroYaw_ = 0;

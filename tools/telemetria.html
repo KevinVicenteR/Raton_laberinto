@@ -116,6 +116,8 @@
         <div class="tile"><div class="label">Velocidad</div><div class="value"><span id="vV">—</span> <span class="unit">mm/s</span></div></div>
         <div class="tile"><div class="label">Rumbo</div><div class="value"><span id="vR">—</span> <span class="unit">°</span></div></div>
         <div class="tile"><div class="label">Pasillo</div><div class="value"><span id="vP">—</span> <span class="unit">mm</span></div></div>
+        <div class="tile"><div class="label">Confianza láseres (izq · del · der)</div><div class="value" style="font-size:20px"><span id="vC">—</span> <span class="unit">%</span></div></div>
+        <div class="tile"><div class="label">Coincide con el mapa</div><div class="value"><span id="vG">—</span> <span class="unit">%</span></div></div>
         <div class="tile" style="grid-column:1/-1"><div class="label">Última decisión</div><div class="value" style="font-size:15px;font-weight:500" id="vDec">—</div></div>
         <div class="tile"><div class="label">Ciclo más lento</div><div class="value"><span id="vT">—</span> <span class="unit">ms</span></div></div>
       </div>
@@ -124,6 +126,21 @@
     <section class="panel">
       <h2>Lo que ve el ratón</h2>
       <canvas id="robot"></canvas>
+    </section>
+
+    <section class="panel wide">
+      <h2>Pista de competencia <span class="status" style="text-transform:none;font-weight:400">· haz clic en una celda para recolocar el ratón ahí</span></h2>
+      <div class="tiles" style="margin-bottom:12px">
+        <div class="tile"><div class="label">Celda actual</div><div class="value" id="cCell">—</div></div>
+        <div class="tile"><div class="label">Celdas hasta la meta</div><div class="value" id="cDist">—</div></div>
+        <div class="tile"><div class="label">Tiempo (máx. 10:00)</div><div class="value" id="cTime">0:00.0</div></div>
+        <div class="tile"><div class="label">En la misma zona</div><div class="value"><span id="cStay">0</span> <span class="unit">s (máx. 30)</span></div></div>
+        <div class="tile" style="grid-column:span 2"><div class="label">Aviso</div><div class="value" style="font-size:16px" id="cWarn">—</div></div>
+        <div class="tile" style="grid-column:1/-1"><div class="label">Ruta más corta de INICIO a META</div><div class="value" style="font-size:15px;font-weight:500" id="cRoute">—</div></div>
+      </div>
+      <canvas id="track" style="height:auto;aspect-ratio:19/10;cursor:crosshair"></canvas>
+      <div class="legend"><span><i style="background:#2b9a66"></i>Inicio</span><span><i style="background:#7048e8"></i>Meta</span><span><i style="background:var(--left)"></i>Recorrido</span><span><i style="background:var(--front)"></i>Ratón</span><span><i style="background:#ffd43b"></i>Ruta más corta</span><span><i style="background:#ff8787"></i>Ruta que falta</span>
+        <label style="margin-left:auto"><input type="checkbox" id="track3d" checked> Mostrar la pista en el mapa 3D</label></div>
     </section>
 
     <section class="panel wide">
@@ -141,7 +158,10 @@
       <h2>Ajustes en marcha</h2>
       <div class="controls">
         <div class="row"><label for="speed">Velocidad</label><input type="range" id="speed" min="30" max="400" step="10" value="100"><span class="num" id="speedV">100 mm/s</span></div>
-        <div class="row"><label for="kp">Centrado (KP_WALL)</label><input type="range" id="kp" min="0" max="0.3" step="0.01" value="0.08"><span class="num" id="kpV">0.08</span></div>
+        <div class="row"><label for="steer">Control de dirección</label><select id="steer"><option value="0">Cascada (recomendado)</option><option value="1">PID directo (Kp / Kd)</option></select></div>
+        <div class="row"><label for="kp">Centrado de la cascada</label><input type="range" id="kp" min="0" max="0.3" step="0.01" value="0.15"><span class="num" id="kpV">0.15</span></div>
+        <div class="row"><label>PID directo</label>Kp <input id="pidKp" value="0.0014" style="font:inherit;padding:7px 10px;border-radius:8px;border:1px solid var(--border);background:var(--panel);color:var(--text);width:90px"> Kd <input id="pidKd" value="1.0" style="font:inherit;padding:7px 10px;border-radius:8px;border:1px solid var(--border);background:var(--panel);color:var(--text);width:90px"></div>
+        <div class="row"><label for="wts">Pesos de la red</label><input id="wts" value="1.0,0.8,0.3,0.2" style="font:inherit;padding:7px 10px;border-radius:8px;border:1px solid var(--border);background:var(--panel);color:var(--text);width:170px"><span class="status">espacio, novedad, giro, sesgo recto</span></div>
         <div class="row"><label for="range">Alcance láseres</label><input type="range" id="range" min="60" max="400" step="10" value="160"><span class="num" id="rangeV">160 mm</span></div>
         <div class="row"><label for="sig">Eco mínimo (ve menos →)</label><input type="range" id="sig" min="0.1" max="3" step="0.1" value="0.6"><span class="num" id="sigV">0.6</span></div>
         <div class="row"><label for="goal">Meta (modo laberinto)</label><input id="goal" placeholder="x,y  (ej. 4,2)" style="font:inherit;padding:7px 10px;border-radius:8px;border:1px solid var(--border);background:var(--panel);color:var(--text);width:140px"><span class="status">celda contando desde abajo a la izquierda</span></div>
@@ -239,7 +259,13 @@ function onData(chunk) {
 
 // Formato: ESTADO I<izq> F<frontal> D<der> v<mm/s> r<rumbo> p<pasillo> x<mm> y<mm> a<grados>
 function onLine(line) {
-  if (line === 'INICIO_MAPA') { clearMap(); log('Arranca: mapa nuevo'); return; }
+  if (line === 'INICIO_MAPA') {
+    clearMap(); log('Arranca: mapa nuevo');
+    compTrail = []; compOrigin.x = (COMP.start[0] + 0.5) * COMP.PITCH; compOrigin.y = (COMP.start[1] + 0.5) * COMP.PITCH - COMP.axleBack;
+    raceStart = performance.now(); raceEnd = null; stayFrom = raceStart; $('cWarn').textContent = 'En carrera';
+    return;
+  }
+  if (line === 'META' && raceStart && !raceEnd) { raceEnd = performance.now(); $('cWarn').textContent = '¡En la meta!'; }
   if (line.startsWith('DECIDE: ')) {
     record.push(`${((performance.now() - recordStart) / 1000).toFixed(2)}\t${line}`);
     $('vDec').textContent = line.slice(8);
@@ -247,12 +273,19 @@ function onLine(line) {
     return;
   }
   record.push(`${((performance.now() - recordStart) / 1000).toFixed(2)}\t${line}`);
-  const m = line.match(/^(\S+) I(-?\d+) F(-?\d+) D(-?\d+) v(-?\d+) r(-?\d+) p(-?\d+)(?: x(-?\d+) y(-?\d+) a(-?\d+))?(?: t(\d+))?(?: q(-?\d+),(-?\d+),(-?\d+))?$/);
+  const m = line.match(/^(\S+) I(-?\d+) F(-?\d+) D(-?\d+) v(-?\d+) r(-?\d+) p(-?\d+)(?: x(-?\d+) y(-?\d+) a(-?\d+))?(?: t(\d+))?(?: q(-?\d+),(-?\d+),(-?\d+))?(?: c(\d+),(\d+),(\d+) g(\d+))?$/);
   if (!m) { log(line); return; }
   last = { state: m[1], I: +m[2], F: +m[3], D: +m[4], v: +m[5], r: +m[6], p: +m[7] };
   if (m[12] !== undefined) { last.qI = +m[12]; last.qF = +m[13]; last.qD = +m[14]; }
+  if (m[15] !== undefined) {
+    $('vC').textContent = `${m[15]} · ${m[16]} · ${m[17]}`;
+    $('vC').style.color = Math.min(+m[15], +m[16], +m[17]) < 60 ? 'var(--danger)' : '';
+    $('vG').textContent = m[18];
+    $('vG').style.color = +m[18] < 75 ? 'var(--danger)' : '';
+  }
   if (m[8] !== undefined) supervise({ t: performance.now(), ...last, x: +m[8], y: +m[9] });
   if (m[8] !== undefined) addToMap(+m[8], +m[9], +m[10], last);
+  if (m[8] !== undefined) compUpdate(+m[8], +m[9], +m[10]);
   samples.push({ t: performance.now(), I: last.I, F: last.F, D: last.D });
   while (samples.length && performance.now() - samples[0].t > HISTORY_MS) samples.shift();
   $('state').textContent = last.state;
@@ -329,6 +362,177 @@ function drawChart() {
     ctx.stroke();
   }
 }
+
+// ---------- Pista de competencia (laberinto del reglamento, igual que src/competition_maze.h) ----------
+const COMP = {
+  W: 19, H: 10, PITCH: 155, WALL: 15,     // celdas de 14 cm + 1.5 cm de pared
+  start: [18, 0], goal: [4, 2],           // contando desde abajo a la izquierda
+  axleBack: 33,                           // el eje de ruedas va 33 mm por detras del centro del raton
+  map: ["+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+", "|                       |           |                   |           |       |", "+   +   +---+   +---+   +   +   +---+   +---+   +---+   +   +---+   +---+   +", "|   |   |                   |               |               |               |", "+---+   +   +   +---+   +---+   +---+---+---+   +---+   +   +   +---+---+   +", "|   |   |   |   |   |   |           |               |   |               |   |", "+   +   +   +---+   +---+---+---+   +---+   +---+   +---+---+   +---+   +   +", "|           |   |           |   |               |   |           |       |   |", "+---+   +   +   +   +---+---+   +---+---+   +   +   +   +   +---+   +---+   +", "|   |   |           |   |       |           |   |       |                   |", "+   +   +   +   +---+   +---+   +---+   +---+   +---+---+---+---+   +---+   +", "|           |               |       |       |   |   |                   |   |", "+   +---+   +---+   +---+   +   +   +---+   +   +   +   +---+---+   +---+   +", "|               |       |   |   |       |                   |               |", "+   +---+   +---+   +---+   +   +---+   +---+   +   +---+   +   +   +---+   +", "|           |       |   |   |   |   |       |   |               |       |   |", "+---+   +---+   +   +   +   +   +   +   +   +   +---+---+---+   +   +   +   +", "|       |   |       |   |       |       |       |                   |   |   |", "+   +---+   +---+---+   +   +   +---+   +---+   +   +---+   +---+   +   +   +", "|                           |   |               |           |           |   |", "+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+"],
+};
+const compWall = (x, y, d) => {          // d: 'N','S','E','W'
+  const r = COMP.H - 1 - y;
+  if (d === 'N') return COMP.map[2 * r][4 * x + 2] === '-';
+  if (d === 'S') return COMP.map[2 * r + 2][4 * x + 2] === '-';
+  if (d === 'W') return COMP.map[2 * r + 1][4 * x] === '|';
+  return COMP.map[2 * r + 1][4 * x + 4] === '|';
+};
+// Distancia en celdas desde cada celda a la meta (sobre el mapa conocido).
+const compDist = (() => {
+  const dist = Array.from({ length: COMP.W }, () => Array(COMP.H).fill(Infinity));
+  const q = [COMP.goal]; dist[COMP.goal[0]][COMP.goal[1]] = 0;
+  const mv = { N: [0, 1], S: [0, -1], E: [1, 0], W: [-1, 0] };
+  while (q.length) {
+    const [x, y] = q.shift();
+    for (const d of 'NSEW') {
+      if (compWall(x, y, d)) continue;
+      const nx = x + mv[d][0], ny = y + mv[d][1];
+      if (nx < 0 || ny < 0 || nx >= COMP.W || ny >= COMP.H || dist[nx][ny] !== Infinity) continue;
+      dist[nx][ny] = dist[x][y] + 1; q.push([nx, ny]);
+    }
+  }
+  return dist;
+})();
+// Ruta mas corta entre dos celdas siguiendo el mapa de distancias a la meta (lista de celdas).
+function compRoute(from) {
+  const mv = { N: [0, 1], S: [0, -1], E: [1, 0], W: [-1, 0] };
+  const route = [from];
+  let [x, y] = from;
+  if (compDist[x] === undefined || compDist[x][y] === Infinity) return route;
+  while (compDist[x][y] > 0) {
+    let next = null;
+    for (const d of 'NESW') {
+      if (compWall(x, y, d)) continue;
+      const nx = x + mv[d][0], ny = y + mv[d][1];
+      if (nx >= 0 && ny >= 0 && nx < COMP.W && ny < COMP.H && compDist[nx][ny] === compDist[x][y] - 1) { next = [nx, ny]; break; }
+    }
+    if (!next) break;
+    [x, y] = next; route.push(next);
+  }
+  return route;
+}
+const compBest = compRoute(COMP.start);
+// Indicaciones: tramos rectos y giros ("3 al norte, gira a la izquierda, 2 al oeste...").
+(() => {
+  const name = { '0,1': 'norte', '0,-1': 'sur', '1,0': 'este', '-1,0': 'oeste' };
+  const legs = [];
+  for (let i = 1; i < compBest.length; i++) {
+    const d = `${compBest[i][0] - compBest[i - 1][0]},${compBest[i][1] - compBest[i - 1][1]}`;
+    if (legs.length && legs[legs.length - 1].d === d) legs[legs.length - 1].n++; else legs.push({ d, n: 1 });
+  }
+  const turns = legs.length - 1;
+  const secs = (compBest.length - 1) * COMP.PITCH / 100 + turns * 1.5;   // a 100 mm/s y ~1.5 s por giro
+  document.addEventListener('DOMContentLoaded', () => {});
+  window.compRouteText = `${compBest.length - 1} celdas, ${turns} giros, ~${Math.round(secs)} s a 100 mm/s: ` +
+    legs.map(l => `${l.n} al ${name[l.d]}`).join(' → ');
+})();
+
+// Pose del raton en la pista: la odometria empieza en el eje, con el raton centrado en la salida mirando al norte.
+const compOrigin = { x: (COMP.start[0] + 0.5) * COMP.PITCH, y: (COMP.start[1] + 0.5) * COMP.PITCH - COMP.axleBack };
+let compPose = null, compTrail = [], raceStart = null, raceEnd = null, stayCell = null, stayFrom = 0, compLeft = [];
+
+function compUpdate(x, y, aDeg) {
+  const wx = compOrigin.x + x, wy = compOrigin.y + y;
+  compPose = { x: wx, y: wy, a: aDeg };
+  const last = compTrail[compTrail.length - 1];
+  if (!last || Math.hypot(last[0] - wx, last[1] - wy) > 5) compTrail.push([wx, wy]);
+  // celda del centro del raton (33 mm por delante del eje)
+  const a = aDeg * Math.PI / 180;
+  const cx = Math.floor((wx - Math.sin(a) * COMP.axleBack) / COMP.PITCH), cy = Math.floor((wy + Math.cos(a) * COMP.axleBack) / COMP.PITCH);
+  const inside = cx >= 0 && cy >= 0 && cx < COMP.W && cy < COMP.H;
+  $('cCell').textContent = inside ? `${cx},${cy}` : 'fuera';
+  $('cDist').textContent = inside && compDist[cx][cy] !== Infinity ? compDist[cx][cy] : '—';
+  compLeft = inside ? compRoute([cx, cy]) : [];
+  const now = performance.now();
+  const zone = inside ? `${Math.floor(cx / 2)},${Math.floor(cy / 2)}` : 'fuera';   // zona = 2x2 celdas
+  if (zone !== stayCell) { stayCell = zone; stayFrom = now; }
+  if (inside && cx === COMP.goal[0] && cy === COMP.goal[1] && raceStart && !raceEnd) {
+    raceEnd = now; $('cWarn').textContent = '¡En la meta!'; log(`Meta en ${fmtTime(raceEnd - raceStart)}`);
+  }
+}
+
+const fmtTime = ms => `${Math.floor(ms / 60000)}:${((ms % 60000) / 1000).toFixed(1).padStart(4, '0')}`;
+function compTick() {
+  const now = performance.now();
+  if (raceStart) {
+    const t = (raceEnd || now) - raceStart;
+    $('cTime').textContent = fmtTime(t);
+    $('cTime').style.color = t > 540000 ? 'var(--danger)' : '';
+    const stay = raceEnd ? 0 : (now - stayFrom) / 1000;
+    $('cStay').textContent = stay.toFixed(0);
+    $('cStay').style.color = stay > 20 ? 'var(--danger)' : '';
+    if (!raceEnd) {
+      $('cWarn').textContent = stay > 20 ? `Lleva ${stay.toFixed(0)} s en la misma zona: a los 30 s descalifican`
+        : t > 540000 ? 'Queda menos de 1 minuto de los 10' : 'En carrera';
+    }
+  }
+}
+
+function trackScale(w, h) {
+  const pad = 8;
+  return { pad, sc: Math.min((w - 2 * pad) / (COMP.W * COMP.PITCH), (h - 2 * pad) / (COMP.H * COMP.PITCH)) };
+}
+
+function drawTrack() {
+  const c = $('track');
+  const [ctx, w, h] = fitCanvas(c);
+  ctx.clearRect(0, 0, w, h);
+  const { pad, sc } = trackScale(w, h);
+  const X = x => pad + x * sc, Y = y => pad + (COMP.H * COMP.PITCH - y) * sc;
+  ctx.fillStyle = '#16181c'; ctx.fillRect(X(0), Y(COMP.H * COMP.PITCH), COMP.W * COMP.PITCH * sc, COMP.H * COMP.PITCH * sc);
+  const cell = (cx, cy, color) => { ctx.fillStyle = color; ctx.fillRect(X(cx * COMP.PITCH), Y((cy + 1) * COMP.PITCH), COMP.PITCH * sc, COMP.PITCH * sc); };
+  cell(COMP.start[0], COMP.start[1], 'rgba(43,154,102,.45)');
+  cell(COMP.goal[0], COMP.goal[1], 'rgba(112,72,232,.55)');
+  ctx.strokeStyle = '#cfd3da'; ctx.lineWidth = Math.max(2, COMP.WALL * sc); ctx.lineCap = 'round';
+  ctx.beginPath();
+  for (let y = 0; y < COMP.H; y++) for (let x = 0; x < COMP.W; x++) {
+    const x0 = x * COMP.PITCH, y0 = y * COMP.PITCH, x1 = x0 + COMP.PITCH, y1 = y0 + COMP.PITCH;
+    if (compWall(x, y, 'N')) { ctx.moveTo(X(x0), Y(y1)); ctx.lineTo(X(x1), Y(y1)); }
+    if (compWall(x, y, 'W')) { ctx.moveTo(X(x0), Y(y0)); ctx.lineTo(X(x0), Y(y1)); }
+    if (y === 0 && compWall(x, y, 'S')) { ctx.moveTo(X(x0), Y(y0)); ctx.lineTo(X(x1), Y(y0)); }
+    if (x === COMP.W - 1 && compWall(x, y, 'E')) { ctx.moveTo(X(x1), Y(y0)); ctx.lineTo(X(x1), Y(y1)); }
+  }
+  ctx.stroke();
+  ctx.font = `600 ${Math.max(9, COMP.PITCH * sc * 0.22)}px system-ui`; ctx.fillStyle = '#fff'; ctx.textAlign = 'center';
+  ctx.fillText('INICIO', X((COMP.start[0] + .5) * COMP.PITCH), Y((COMP.start[1] + .5) * COMP.PITCH) + 4);
+  ctx.fillText('META', X((COMP.goal[0] + .5) * COMP.PITCH), Y((COMP.goal[1] + .5) * COMP.PITCH) + 4);
+  const routeLine = (route, color, width, dash) => {
+    if (route.length < 2) return;
+    ctx.strokeStyle = color; ctx.lineWidth = width; ctx.setLineDash(dash); ctx.beginPath();
+    route.forEach(([cx, cy], i) => { const px = X((cx + .5) * COMP.PITCH), py = Y((cy + .5) * COMP.PITCH); i ? ctx.lineTo(px, py) : ctx.moveTo(px, py); });
+    ctx.stroke(); ctx.setLineDash([]);
+  };
+  routeLine(compBest, 'rgba(255,212,59,.75)', Math.max(3, COMP.PITCH * sc * 0.18), [8, 6]);
+  routeLine(compLeft, '#ff8787', 2, []);
+  if (compTrail.length > 1) {
+    ctx.strokeStyle = css('--left'); ctx.lineWidth = 2; ctx.beginPath();
+    compTrail.forEach(([x, y], i) => i ? ctx.lineTo(X(x), Y(y)) : ctx.moveTo(X(x), Y(y)));
+    ctx.stroke();
+  }
+  if (compPose) {   // cuerpo del raton: 83 mm por delante del eje, 17 por detras, 92 de ancho
+    const a = compPose.a * Math.PI / 180, fx = -Math.sin(a), fy = Math.cos(a), lx = -Math.cos(a), ly = -Math.sin(a);
+    const pts = [[83, 46], [83, -46], [-17, -46], [-17, 46]].map(([f, l]) => [compPose.x + fx * f + lx * l, compPose.y + fy * f + ly * l]);
+    ctx.fillStyle = css('--front'); ctx.beginPath();
+    pts.forEach(([x, y], i) => i ? ctx.lineTo(X(x), Y(y)) : ctx.moveTo(X(x), Y(y)));
+    ctx.closePath(); ctx.fill();
+    ctx.strokeStyle = '#fff'; ctx.lineWidth = 2; ctx.beginPath();
+    ctx.moveTo(X(compPose.x), Y(compPose.y)); ctx.lineTo(X(compPose.x + fx * 75), Y(compPose.y + fy * 75)); ctx.stroke();
+  }
+}
+
+// Clic en una celda: recolocar el raton en su centro (corrige la deriva de la odometria).
+$('track').addEventListener('click', e => {
+  const r = $('track').getBoundingClientRect();
+  const { pad, sc } = trackScale(r.width, r.height);
+  const wx = (e.clientX - r.left - pad) / sc, wy = COMP.H * COMP.PITCH - (e.clientY - r.top - pad) / sc;
+  const cx = Math.floor(wx / COMP.PITCH), cy = Math.floor(wy / COMP.PITCH);
+  if (cx < 0 || cy < 0 || cx >= COMP.W || cy >= COMP.H || !compPose) return;
+  const a = compPose.a * Math.PI / 180;
+  const ax = (cx + .5) * COMP.PITCH + Math.sin(a) * COMP.axleBack, ay = (cy + .5) * COMP.PITCH - Math.cos(a) * COMP.axleBack;
+  compOrigin.x += ax - compPose.x; compOrigin.y += ay - compPose.y;
+  compPose.x = ax; compPose.y = ay;
+  log(`Ratón recolocado en la celda ${cx},${cy}`);
+});
 
 // ---------- Supervisor y aprendizaje (corre en la pagina, el raton no gasta nada) ----------
 const hist = [];                 // ultimas muestras (30 s)
@@ -413,7 +617,7 @@ const S = 0.1;            // mm -> unidades de la escena
 const L_HIT = 1.0, L_FREE = -0.4, L_MIN = -2, L_MAX = 4, L_WALL = 0.9;
 const grid = new Map();   // "cx,cy" -> log-odds
 let gridDirty = false, lastRebuild = 0;
-let scene, camera, renderer, controls, wallMesh, pathLine, pathPts = [], robotObj;
+let scene, camera, renderer, controls, wallMesh, pathLine, pathPts = [], robotObj, trackGroup;
 const MAX_WALLS = 30000;
 
 function initMap() {
@@ -439,6 +643,30 @@ function initMap() {
     new THREE.MeshLambertMaterial({ color: 0xc8a06a }), MAX_WALLS);
   wallMesh.count = 0;
   scene.add(wallMesh);
+
+  // Paredes reales de la pista de competencia, transparentes, en el mismo origen que la odometria.
+  trackGroup = new THREE.Group();
+  const wallMat = new THREE.MeshLambertMaterial({ color: 0x9aa3b2, transparent: true, opacity: 0.35 });
+  const ox = compOrigin.x, oy = compOrigin.y, P = COMP.PITCH, T = COMP.WALL;
+  const addWall = (x0, y0, x1, y1) => {
+    const len = Math.hypot(x1 - x0, y1 - y0) + T, horiz = y0 === y1;
+    const m = new THREE.Mesh(new THREE.BoxGeometry((horiz ? len : T) * S, 50 * S, (horiz ? T : len) * S), wallMat);
+    m.position.copy(toScene((x0 + x1) / 2 - ox, (y0 + y1) / 2 - oy, 25 * S));
+    trackGroup.add(m);
+  };
+  for (let y = 0; y < COMP.H; y++) for (let x = 0; x < COMP.W; x++) {
+    if (compWall(x, y, 'N')) addWall(x * P, (y + 1) * P, (x + 1) * P, (y + 1) * P);
+    if (compWall(x, y, 'W')) addWall(x * P, y * P, x * P, (y + 1) * P);
+    if (y === 0 && compWall(x, y, 'S')) addWall(x * P, 0, (x + 1) * P, 0);
+    if (x === COMP.W - 1 && compWall(x, y, 'E')) addWall((x + 1) * P, y * P, (x + 1) * P, (y + 1) * P);
+  }
+  const goalTile = new THREE.Mesh(new THREE.PlaneGeometry(P * S, P * S), new THREE.MeshBasicMaterial({ color: 0x7048e8, transparent: true, opacity: 0.4 }));
+  goalTile.rotation.x = -Math.PI / 2; goalTile.position.copy(toScene((COMP.goal[0] + .5) * P - ox, (COMP.goal[1] + .5) * P - oy, 0.05));
+  trackGroup.add(goalTile);
+  const bestPts = compBest.map(([cx, cy]) => toScene((cx + .5) * P - ox, (cy + .5) * P - oy, 0.4));
+  trackGroup.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(bestPts), new THREE.LineBasicMaterial({ color: 0xffd43b })));
+  scene.add(trackGroup);
+  $('track3d').onchange = e => { trackGroup.visible = e.target.checked; };
 
   pathLine = new THREE.Line(new THREE.BufferGeometry(), new THREE.LineBasicMaterial({ color: 0x2f6fdf }));
   scene.add(pathLine);
@@ -550,9 +778,10 @@ function clearMap() {
 }
 
 initMap();
+$('cRoute').textContent = window.compRouteText;
 
 function frame() {
-  drawRobot(); drawChart();
+  drawRobot(); drawChart(); drawTrack(); compTick();
   if (renderer) {
     if (gridDirty && performance.now() - lastRebuild > 150) { rebuildWalls(); lastRebuild = performance.now(); }
     followRobot(); controls.update(); renderer.render(scene, camera);
@@ -604,12 +833,17 @@ $('sig').oninput = e => $('sigV').textContent = (+e.target.value).toFixed(1);
 $('send').onclick = async () => {
   await send(`v${$('speed').value}\n`);
   userSpeed = curSpeed = +$('speed').value;
+  await send(`p${$('steer').value}\n`);
   await send(`k${$('kp').value}\n`);
+  if (!isNaN(+$('pidKp').value)) await send(`j${$('pidKp').value}\n`);
+  if (!isNaN(+$('pidKd').value)) await send(`d${$('pidKd').value}\n`);
   await send(`r${$('range').value}\n`);
+  const wts = $('wts').value.replace(/\s/g, '');
+  if (/^-?[\d.]+(,-?[\d.]+){3}$/.test(wts)) await send(`n${wts}\n`);
   await send(`g${$('sig').value}\n`);
   const goal = $('goal').value.replace(/\s/g, '');
   if (/^\d+,\d+$/.test(goal)) await send(`G${goal}\n`);
-  log(`Ajustes enviados: velocidad ${$('speed').value} mm/s, KP_WALL ${$('kp').value}, alcance ${$('range').value} mm, eco ${$('sig').value}`);
+  log(`Ajustes enviados: velocidad ${$('speed').value} mm/s, dirección ${$('steer').value === '1' ? `PID Kp ${$('pidKp').value} Kd ${$('pidKd').value}` : `cascada ${$('kp').value}`}, alcance ${$('range').value} mm, eco ${$('sig').value}`);
 };
 $('ask').onclick = () => send('?\n');
 </script>

@@ -105,6 +105,12 @@ const int LASER_OFFSET_IZQ = 0;
 const int LASER_OFFSET_FRO = 0;
 const int LASER_OFFSET_DER = 0;
 
+// ---------- Confianza de los laseres (la usa la red para ajustar el PID y los filtros) ----------
+const int LASER_STABLE_MM = 25;           // salto maximo entre lecturas para contar como estable
+const float LASER_CONF_RATE = 0.05f;      // rapidez con que cambia la confianza (por lectura)
+const float LASER_R_BY_CONF = 4.0f;       // Kalman: ruido de medida x (1 + esto * (1 - confianza))
+const float CONF_MIN_SPEED = 0.6f;        // con confianza 0 la velocidad baja a este factor
+
 // ---------- Filtro de Kalman de los laseres ----------
 const float LASER_KF_R = 64.0f;        // ruido de medida (mm^2, ~8 mm): mas alto = suaviza mas pero tarda mas
 const float LASER_KF_ACCEL = 1500.0f;  // cuanto puede cambiar la velocidad de acercamiento (mm/s^2): mas alto = reacciona antes
@@ -142,6 +148,18 @@ const int FRONT_TURN_MIN_MM = FRONT_DEADZONE_MM + FRONT_MARGIN_MM;           // 
                                             // del cruce (pasillo/2 - FRONT_SENSOR_AHEAD_MM), nunca menos que esto
 const int FRONT_MEMORY_MM = 100;            // con la pared a menos de esto, si el laser deja de medir se
                                             // estima la distancia con los encoders (no la da por desaparecida)
+// Decision ponderada en los cruces (modo 5): puntuacion de cada direccion libre =
+//   W_FREE * espacio (0..1) + W_NOVEL * novedad (1 = celda sin visitar) - W_TURN * giro (0, 1 o 2)
+//   + B_STRAIGHT si es seguir recto. Gana la mayor. Pesos optimizados en tools/sim_extremos.py y
+//   ajustables desde la web (orden n<free>,<novel>,<turn>,<bias>).
+const float W_FREE = 1.0f;
+const float W_NOVEL = 0.8f;
+const float W_TURN = 0.3f;
+const float B_STRAIGHT = 0.2f;
+// Puerta de confianza del mapa (modo 4): fraccion de paredes vistas que coinciden con el mapa. Si baja
+// de esto tras MAP_CONF_STEPS celdas, el raton pasa a modo prudente (mas despacio).
+const float MAP_CONF_MIN = 0.75f;
+const int MAP_CONF_STEPS = 8;
 const int LOOP_TURNS = 3;                   // modo 5: giros seguidos sin avanzar = atrapado en un cruce
 const float LOOP_MIN_TRAVEL_MM = 60.0f;     // avance minimo entre giros para no contar como bucle
 const float LOOP_ESCAPE_MM = 400.0f;        // tramo siguiendo la pared derecha para salir del bucle
@@ -177,9 +195,22 @@ const float KFF_SPEED = (PWM_MAX - PWM_MIN_RUN) / 500.0f; // PWM por mm/s, sumad
 const float SPEED_FILTER = 0.85f;         // suavizado de la velocidad medida (0..1, mas = mas suave)
 const float KP_SPEED = 0.0008f;
 const float KI_SPEED = 0.004f;
-const float KP_YAW = 0.006f;              // PWM por grado de error
-const float KD_YAW = 0.0004f;             // PWM por grado/s
-const float KP_WALL = 0.08f;              // grados de correccion por mm descentrado
+const float KP_YAW = 0.012f;              // PWM por grado de error
+const float KD_YAW = 0.0002f;             // PWM por grado/s
+const float KP_WALL = 0.15f;              // cascada: grados de rumbo por mm descentrado (modo por defecto)
+// PID de direccion sobre la desviacion lateral (mm respecto al centro del pasillo):
+//   giro = KP_STEER * desviacion + KD_STEER * (cambio de la desviacion en un ciclo de control)
+// La derivada sale de la velocidad que estima el Kalman de cada laser (no del valor crudo, que salta).
+const float KP_STEER = 0.0014f;           // PWM entre ruedas por mm de desviacion
+const float KD_STEER = 1.0f;              // PWM por mm de cambio de desviacion en un ciclo (5 ms)
+// Modo de direccion:
+//   0 = CASCADA (por defecto): la desviacion lateral fija el rumbo objetivo (KP_WALL, escalado por la
+//       confianza de los laseres) y un PID rapido sobre el giroscopio lo sigue. En tools/sim_extremos.py
+//       llega en 14 de 15 casos de 14 cm.
+//   1 = PID DIRECTO con KP_STEER y KD_STEER sobre la desviacion. En la simulacion con Kp 0.0014 y Kd 1.0
+//       llega en 1 de 10 (el Kd amplifica el ruido de los laseres, que actualizan a 50 Hz).
+// Se cambia en marcha desde la web (orden p0 / p1).
+const int STEER_MODE = 0;
 const float MAX_WALL_CORRECTION_DEG = 4.0f;
 const float LATERAL_DEADBAND_MM = 5.0f;   // descentrado menor que esto no se corrige (evita zigzag)
 const float YAW_TARGET_SMOOTH = 0.1f;     // 0..1: suavizado del rumbo objetivo por ciclo

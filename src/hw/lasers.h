@@ -21,6 +21,13 @@ class Lasers {
   int mm(Id id) const { return mm_[map(id)]; }
   // Ultima lectura sin filtrar, o -1.
   int rawMm(Id id) const { return raw_[map(id)]; }
+  // Confianza 0..1 de cada laser: baja si sus lecturas saltan o aparecen y desaparecen (fantasmas).
+  float confidence(Id id) const { return conf_[map(id)]; }
+  // Velocidad a la que cambia la distancia (mm/s, estimada por el Kalman); 0 si no mide.
+  float rate(Id id) const { return mm_[map(id)] < 0 ? 0.0f : kv_[map(id)]; }
+  // Ultima lectura valida y hace cuantos ms fue (para distinguir "demasiado cerca" de "libre").
+  int lastValidMm(Id id) const { return lastValid_[map(id)]; }
+  uint32_t lastValidAgeMs(Id id) const { return millis() - lastValidAt_[map(id)]; }
 
   // Intercambia izquierdo y derecho si estan montados al reves.
   void setSwapped(bool swapped) { swapped_ = swapped; }
@@ -43,6 +50,10 @@ class Lasers {
   void filter(int i, int z);
   int median3(int i, int z);
   int hist3_[3][3] = {{100000, 100000, 100000}, {100000, 100000, 100000}, {100000, 100000, 100000}};
+  float conf_[3] = {1, 1, 1};
+  int lastValid_[3] = {1000, 1000, 1000};
+  uint32_t lastValidAt_[3] = {0, 0, 0};
+  int prevRaw_[3] = {-1, -1, -1};
 
   int mm_[3] = {-1, -1, -1};
   int raw_[3] = {-1, -1, -1};
