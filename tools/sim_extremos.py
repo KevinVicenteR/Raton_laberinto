@@ -55,6 +55,12 @@ class Firmware:
     max_wall_deg: float = 4.0
     deadband: float = 5.0
     side_crash: float = 8.0
+    raw_survey: bool = False    # experimental: classify stationary walls from acquired samples
+    survey_samples: int = 5      # fresh stationary observations per new cell
+    goal_grid: bool = False       # experimental mode 5 with a goal uses persistent cell exploration
+    risk_reverse_last: bool = False # reverse has no model output; retain deterministic ordering
+    risk_rank: bool = False       # rank feasible choices, never reject every exit
+    precision_turns: bool = False  # experimental gyro refinement before each diagonal
     turn_timeout: float = 4.0  # legacy baseline; main bank imports TURN_TIMEOUT_MS
     turn_mode: str = "sitio"     # "sitio" = gira sobre el eje; "seguro" = retrocede antes;
                                  # "dos_tiempos" = gira 70, avanza, gira 20 (y sale marcha atras de callejones)
@@ -100,6 +106,7 @@ class Case:
     seconds: float = 90.0
     known: list = None           # mapa que cree conocer el raton (modo 4); None = el real
     controller: str = "baseline"  # baseline, corrected, neural (experimental gate)
+    sweep_guard: bool = True
     trace: bool = False
     use_goal: bool = False       # modo 5 con meta (direccion hacia la meta + memoria de cruces)
 
@@ -362,13 +369,13 @@ class Sim:
         risk=float(self.predictor(self.risk_features(action)))
         self.risk_scores.append((self.t,degrees,risk))
         # Invalid inference falls back to deterministic control.
-        return not (self.c.controller=="neural" and self.risk_threshold is not None and
+        return not (not self.c.fw.risk_rank and self.c.controller=="neural" and self.risk_threshold is not None and
                     math.isfinite(risk) and risk>self.risk_threshold)
 
     def prepare_turn(self, degrees):
         if not self.action_allowed(degrees):
             raise MotionFailure("giro rechazado por riesgo")
-        if self.c.controller=="baseline":
+        if self.c.controller=="baseline" or not self.c.sweep_guard:
             return
         entry=self.native.turn(self.observation(),self.c.robot,self.c.fw,degrees)
         if entry is None:
@@ -535,6 +542,25 @@ class Sim:
         if abs(target - self.th) > math.radians(3):
             raise MotionFailure("giro incompleto")
 
+    def rotate_precise_to(self, target):
+        """Coarse move retains actuator error; gyro feedback then corrects the observed error.
+
+        Only gyro heading enters the fine loop. Collision tests and sensor noise remain active.
+        This models an additional control loop, not a quieter gyro or a smaller robot.
+        """
+        error=lambda: (target-self.th+math.pi)%(2*math.pi)-math.pi
+        yield from self.rotate(math.degrees(error()))
+        start=self.t
+        while abs(error())>math.radians(0.5) and self.t-start<1.0:
+            yield
+            self.tick()
+            step=math.copysign(min(abs(error()),math.radians(30)*self.DT),error())
+            # Fine-stage actuator disturbance; feedback does not get access to any walls.
+            step+=math.radians(self.rnd.gauss(0,1.5))*self.DT
+            self.try_move(self.x,self.y,self.th+step)
+        if abs(error())>math.radians(0.5):
+            raise MotionFailure("refinamiento angular incompleto")
+
     @N.instrument
     def back(self, mm):
         start = self.travelled
@@ -581,9 +607,16 @@ class Sim:
             if abs(deg) == 90:
                 yield from self.prepare_turn(deg)
                 sgn = 1 if deg > 0 else -1
-                yield from self.rotate(sgn * fw.split_deg)
+                heading=self.th
+                if fw.precision_turns:
+                    yield from self.rotate_precise_to(heading+math.radians(sgn*fw.split_deg))
+                else:
+                    yield from self.rotate(sgn * fw.split_deg)
                 yield from self.drive(fw.split_advance, 0, corner=fw.corner_leg)
-                yield from self.rotate(sgn * (90 - fw.split_deg))
+                if fw.precision_turns:
+                    yield from self.rotate_precise_to(heading+math.radians(sgn*90))
+                else:
+                    yield from self.rotate(sgn * (90 - fw.split_deg))
                 return
             if abs(deg) == 180:
                 side = yield from self.back_out(3 * self.pitch)
@@ -642,6 +675,9 @@ class Sim:
                 ignore = half + fw.cfg_side_ahead
 
     def mode5(self):
+        if self.c.fw.goal_grid and self.c.use_goal:
+            yield from self.explore(tuple(self.c.start),0)
+            return
         fw = self.c.fw
         space = lambda v: 10000 if v < 0 else v
         last_turn_at, in_place, ignore, stuck = self.travelled, 0, 0.0, 0
@@ -896,7 +932,11 @@ class Sim:
         lat = max(-15.0, min(15.0, far - nominal)) if fw.turn_lat_comp and 0 <= far < fw.side_wall else 0.0
         adv = (reach - lat) / math.sin(math.radians(split))
         self.along = None
-        yield from self.rotate(sgn * split)
+        heading=self.grid_th if self.grid_th is not None else self.th
+        if fw.precision_turns:
+            yield from self.rotate_precise_to(heading+math.radians(sgn*split))
+        else:
+            yield from self.rotate(sgn * split)
         corner_start = self.travelled
         yield from self.drive(adv, 0, corner=fw.corner_leg)
         corner_distance = self.travelled - corner_start
@@ -904,9 +944,15 @@ class Sim:
             # Segundo tiempo hasta el rumbo exacto de la cuadricula, no un angulo fijo.
             self.grid_th += math.radians(sgn * 90)
             err = (self.grid_th - self.th + math.pi) % (2 * math.pi) - math.pi
-            yield from self.rotate(math.degrees(err))
+            if fw.precision_turns:
+                yield from self.rotate_precise_to(self.grid_th)
+            else:
+                yield from self.rotate(math.degrees(err))
         else:
-            yield from self.rotate(sgn * (90 - split))
+            if fw.precision_turns:
+                yield from self.rotate_precise_to(heading+math.radians(sgn*90))
+            else:
+                yield from self.rotate(sgn * (90 - split))
         self.pending = corner_distance * math.sin(math.radians(split)) + axle_back
 
     def mode4(self):
@@ -999,12 +1045,12 @@ class Sim:
         while pos != goal:
             if pos not in seen:
                 got = {"L": [], "F": [], "R": []}
-                for _ in range(5):       # parado: 5 lecturas nuevas de cada laser
+                for _ in range(fw.survey_samples):  # fresh stationary observations, no true walls
                     for _ in range(4):
                         yield
                         self.tick()
                     for k in got:
-                        got[k].append(self.readings[k])
+                        got[k].append(self.raw_readings[k] if fw.raw_survey else self.readings[k])
                 def is_wall(k, thr):
                     valid = [v for v in got[k] if v >= 0]
                     if valid:
@@ -1037,7 +1083,13 @@ class Sim:
             if not opts:
                 raise MotionFailure("todas las salidas rechazadas por riesgo")
             # Empates: recto, luego giros, y marcha atras lo ultimo.
-            d = min(opts, key=lambda d: (0 if d == heading else (2 if (d - heading) % 4 == 2 else 1),
+            def risk_key(d):
+                if self.predictor is None or not fw.risk_rank or (d-heading)%4==2:
+                    return 0
+                angle=0 if d==heading else (-90 if (d-heading)%4==1 else 90)
+                risk=float(self.predictor(self.risk_features(0 if angle==0 else (1 if angle>0 else 2))))
+                return round(risk,2) if math.isfinite(risk) else 0
+            d = min(opts, key=lambda d: (int(fw.risk_reverse_last and (d-heading)%4==2), risk_key(d), 0 if d == heading else (2 if (d - heading) % 4 == 2 else 1),
                                          visits.get((pos[0] + mv[d][0], pos[1] + mv[d][1]), 0)))
             diff = (d - heading) % 4
             self.decisions.append((round(self.t, 1), pos, heading, d, {k: round(v) for k, v in self.readings.items()},

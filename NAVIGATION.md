@@ -63,8 +63,9 @@ con `complete=false` hasta terminar. No se activa automáticamente un modelo al 
 Entrenamiento: mapas 1000–1039. Validación de modelo y umbrales: mapas 1100–1109. Prueba reservada:
 mapas 200–229, modos 3 y 5, ruido 1–3. Los 21 casos anteriores se conservan. La selección de umbral
 por navegación exige más llegadas sin contacto, sin perder llegadas ni éxitos limpios previos.
-La validación de navegación no encontró ningún umbral mejor; el 0.2 guardado es un candidato
-de clasificación rechazado para activación, no una recomendación de conducción.
+La primera validación de navegación no encontró ningún umbral mejor. La segunda red tampoco
+propone un umbral con la sensibilidad de clasificación solicitada (`threshold=null`). Ninguno
+de esos resultados autoriza activar el modelo.
 
 ## Contratos y límites
 
@@ -103,3 +104,89 @@ los resultados reservados. La etapa física queda pendiente y no forma parte de 
 No se copió código de los repositorios investigados. No se reactivaron los ajustes rechazados en
 la búsqueda anterior (`robust_lateral`, `fused_stop`, `adaptive_split`, `align_front`, etc.). El nuevo
 barrido observado se evaluó separadamente y quedó desactivado tras las regresiones encontradas.
+
+
+## Segunda ronda: páginas y control experimental
+
+Abrir `tools/simular.sh simulacion` para ver el laboratorio y `tools/simular.sh web` para
+telemetría. Ambas páginas usan `tools/sim_resultados/dashboard.json`. Los recorridos guardados
+se reproducen con sensores, antigüedad, contactos y resultado final; no son simulaciones
+inventadas en JavaScript. Telemetría permite importar JSON o registros descargados de la propia
+página. En reproducción se bloquean órdenes al robot y el supervisor automático. Seleccionar
+un modo ya no reinicia el robot. Los diagnósticos OBS/MOTION/RISK/SWEEP se interpretan también
+en conexión real. Si falla la vista 3D, el resto de la página sigue disponible.
+
+Los siguientes controladores son **candidatos del simulador**, no implementaciones activadas
+ni cargadas en el firmware:
+
+- `precision-guard`: conserva 70°–avance–20°, con una corrección giroscópica lenta hasta 0.5°
+  antes del avance. Conserva el error de actuación grueso, añade perturbación en la corrección
+  y tiene un límite adicional de 1 s. Se conservan ruido, pérdidas y geometría física.
+- `hybrid`: usa lo anterior y, en modo 5 con meta explícita, utiliza memoria de celdas. Esto
+  cambia la estrategia del modo 5; no equivale a mejorar sus cuatro pesos.
+- `hybrid-neural`: ordena alternativas con el predictor. `ranked` conserva la marcha atrás
+  como último recurso, porque la red no fue entrenada para estimar su riesgo.
+- `mapped`: comprueba el cuerpo completo contra paredes ya observadas y, únicamente en modo
+  4, contra el mapa previo explícito de competencia. Integra encoders y giroscopio para ese
+  control: nunca lee `self.x`, `self.y`, `self.segs` ni las paredes ocultas para decidir el barrido.
+  Las correcciones de entrada de hasta 30 mm son movimientos físicos simulados, no cambios
+  de coordenadas. Una pared observada se representa conservadoramente como un tramo de celda.
+- `survey` y `mapped-raw`: experimentos con 20 observaciones estacionarias, filtradas o crudas.
+  Más observaciones no garantiza mejores recorridos; sus resultados también se conservan.
+
+Resultados de 21 casos: barrido inicial 0 llegadas limpias / 76 contactos; giro preciso con
+barrido 4 / 28; memoria y giro preciso 6 / 24; barrido con memoria de paredes 11 / 12.
+Los 21 casos conservan los límites anteriores (120, 300 o 600 s según el caso). El objetivo
+sigue pendiente: **11/21 no es cero fallos**. Los mapas reservados se reportan por separado.
+
+```sh
+python3 -B tools/navigation_experiments.py evaluate --controllers mapped --suite all \
+  --baseline work/baseline-simulator.py --out work/mapped.json
+python3 -B tools/navigation_experiments.py collect --training-controller mapped-raw \
+  --noises 1,2,3,4 --budget 1800 --out work/mapped-data.json
+python3 -B tools/navigation_experiments.py train --data work/mapped-data.json \
+  --out tools/models/checkpoints/candidate.json --positive-weight 4 --budget 1200
+python3 -B tools/publish_dashboard.py --evaluation work/mapped.json \
+  --model tools/models/risk_model.json --controller mapped
+node tests/test_telemetry_protocol.cjs
+```
+
+El publicador solo acepta evaluaciones completas y vuelve a ejecutar las reproducciones;
+rechaza publicarlas si llegada, contactos o fallo no coinciden con el resultado medido.
+El ajuste `positive-weight` es experimental y no activa el modelo. Los modelos de rondas
+anteriores se conservan en `tools/models/checkpoints/`. La comparación de modelos requiere
+validación por navegación, además del error de clasificación.
+
+
+Resultados completos del candidato `mapped`: 80/180 llegadas limpias en mapas 200–229
+(114 llegadas, 88 contactos); 60/180 en mapas nuevos 400–429 (108 llegadas, 140 contactos).
+Los mapas nuevos no se usaron para entrenar ni elegir el candidato. Las pruebas aisladas
+obtuvieron 8/12 llegadas limpias y conservaron los fallos con descentrado, reversa y zigzag.
+No se ha conseguido el objetivo ni existe una garantía de ausencia de contactos.
+
+La tercera red usa 11.696 ejemplos de entrenamiento y 2.100 de validación después de quitar
+duplicados exactos, procedentes de 600 episodios generados en esta ronda. En navegación de
+validación, `mapped-ranked` empata 10/40 llegadas limpias con `mapped`, pero aumenta los contactos
+20→24; no cumple el criterio de mejora. Queda en `tools/models/checkpoints/round3-candidate.*`,
+desactivada. No sustituye al modelo de observación del firmware. Su C++ exportado coincide con
+Python (100 entradas, error absoluto máximo 2.16e-7). Para repetir esa comprobación:
+
+```sh
+python3 -B tools/verify_risk_model.py --model tools/models/checkpoints/round3-candidate.json \
+  --header tools/models/checkpoints/round3-candidate.h --workdir work/model-check
+python3 -B tools/navigation_experiments.py validate-ranking \
+  --model tools/models/checkpoints/round3-candidate.json --out work/validation-round3.json
+python3 -B tools/navigation_experiments.py evaluate --controllers mapped --suite fresh \
+  --baseline work/baseline-simulator.py --out work/new-maps.json
+```
+
+Las variantes `survey`, `mapped-raw`, la ordenación neuronal y la corrección con memoria de
+paredes se mantienen accesibles para reproducir los experimentos; su presencia no significa
+que superen a la mejor variante. No se transfirieron al robot los controladores del simulador.
+El banco usa giroscopio y encoders idealizados, una geometría 2D y un modelo hipotético de
+lecturas cortas; faltan calibración física, deslizamiento, dinámica de motores y validación real.
+
+En las variantes con `goal_grid`, los modos 3 y 5 con meta comparten el explorador de celdas y
+pueden repetir exactamente la trayectoria con la misma semilla. Los bancos cuentan ambas
+entradas de modo, no 180 trayectorias estadísticamente independientes. La deduplicación del
+conjunto de entrenamiento evita contar de nuevo los ejemplos exactos compartidos.

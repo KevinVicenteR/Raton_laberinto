@@ -48,6 +48,11 @@ def run_job(job):
         sys.modules['nav_original']=module
         spec.loader.exec_module(module)
     fw=firmware_config(module)
+    if controller in ('precision','precision-guard','precision-neural','precision-guard-neural','hybrid','hybrid-neural','survey','ranked','mapped','mapped-raw','mapped-ranked'):
+        fw=replace(fw,precision_turns=True)
+    if controller in ('hybrid','hybrid-neural','survey','ranked','mapped','mapped-raw','mapped-ranked'):
+        fw=replace(fw,goal_grid=True,risk_rank=controller in ('hybrid-neural','ranked','mapped-ranked'),risk_reverse_last=controller in ('ranked','mapped-ranked'))
+    if controller in ('survey','mapped-raw'):fw=replace(fw,survey_samples=20,raw_survey=controller=='mapped-raw')
     known=None
     if suite in ('competition','altered'):
         maze=S.comp_maze() if suite=='competition' else P.altered_comp()
@@ -64,8 +69,14 @@ def run_job(job):
             sensor=replace(sensor,latency_ms=rng.choice((0,20,40)))
     opts=dict(mode=mode,fw=fw,use_goal=mode==5,known=known,seconds=seconds,sensor=sensor)
     if module is S:
-        opts.update(controller='baseline' if controller=='original' else controller,trace=trace)
-    sim=module.Sim(module.Case(str(maze_seed),maze,P.START,P.GOAL,**opts),seed=noise_seed)
+        kind='neural' if controller in ('neural','precision-neural','precision-guard-neural','hybrid-neural','ranked','mapped-ranked') else ('baseline' if controller=='original' else 'corrected')
+        opts.update(controller=kind,trace=trace,sweep_guard=controller not in ('precision','precision-neural','unguarded'))
+    simulator=module.Sim
+    if controller in ('mapped','mapped-raw','mapped-ranked'):
+        from navigation_candidates import ObservedMapSim
+        simulator=ObservedMapSim
+        if mode==4:opts['known']=S.comp_maze()
+    sim=simulator(module.Case(str(maze_seed),maze,P.START,P.GOAL,**opts),seed=noise_seed)
     if model_path and module is S:
         model=json.loads(Path(model_path).read_text())
         sim.predictor=Predictor(model)
@@ -80,12 +91,20 @@ def run_job(job):
     out=dict(maze=maze_seed,noise_seed=noise_seed,mode=mode,controller=controller,suite=suite,
              reached=sim.reached,contacts=sim.collisions,clean_arrival=sim.reached is not None and sim.collisions==0,
              stopped=sim.reached is None,failure=sim.failure,elapsed=sim.t,position_error_mm=position_error,
-             turns=sim.turns,
+             turns=sim.turns,navigation_policy='cell-memory' if getattr(fw,'goal_grid',False) else 'original-mode',
+             precision_turns=fw.precision_turns if hasattr(fw,'precision_turns') else False,
+             survey_samples=fw.survey_samples if hasattr(fw,'survey_samples') else 5,
+             raw_survey=fw.raw_survey if hasattr(fw,'raw_survey') else False,
+             mapped_guard=controller in ('mapped','mapped-raw','mapped-ranked'),
              goal_position_error_mm=math.hypot(body_center[0]-(P.GOAL[0]+.5)*sim.pitch,
                                                body_center[1]-(P.GOAL[1]+.5)*sim.pitch))
     if suite=='data' or trace:
         out['motions']=sim.motions
     if trace:
+        if not sim.trace or sim.trace[-1]['t']<sim.t:
+            sim.trace.append(dict(t=sim.t,raw=sim.raw_readings.copy(),filtered=sim.readings.copy(),
+                sensors=sim.observation(),encoder_mm=sim.travelled,heading_deg=math.degrees(sim.th),
+                truth=(sim.x,sim.y,sim.th)))
         out.update(trace=sim.trace,trail=sim.trail,events=sim.events)
     return out
 
@@ -94,7 +113,9 @@ def evaluate(args):
     jobs=[]
     if args.model and args.threshold is None:
         args.threshold=json.loads(Path(args.model).read_text())['threshold']
-    controllers=('original','corrected','neural') if args.model else ('original','corrected')
+    controllers=tuple(args.controllers.split(',')) if args.controllers else (('original','corrected','neural') if args.model else ('original','corrected'))
+    allowed={'original','corrected','neural','precision','precision-guard','precision-neural','precision-guard-neural','unguarded','hybrid','hybrid-neural','survey','ranked','mapped','mapped-raw','mapped-ranked'}
+    if not set(controllers)<=allowed:raise ValueError('unknown controller')
     for controller in controllers:
         if args.suite in ('21','all'):
             for seed in (1,2,3):
@@ -103,13 +124,13 @@ def evaluate(args):
                 jobs.append((0,seed,4,controller,args.model,args.threshold,'altered',args.baseline,False))
             for maze in range(100,108):
                 for mode in (3,5):jobs.append((maze,1,mode,controller,args.model,args.threshold,'random',args.baseline,False))
-        if args.suite in ('reserved','all'):
-            for maze in range(200,230):
+        if args.suite in ('reserved','fresh','all'):
+            for maze in (range(400,430) if args.suite=='fresh' else range(200,230)):
                 for noise in (1,2,3):
-                    for mode in (3,5):jobs.append((maze,noise,mode,controller,args.model,args.threshold,'reserved',args.baseline,False))
+                    for mode in (3,5):jobs.append((maze,noise,mode,controller,args.model,args.threshold,'fresh' if args.suite=='fresh' else 'reserved',args.baseline,False))
     rows=[]
     source_hashes={n:hashlib.sha256((Path(__file__).parent/n).read_bytes()).hexdigest()
-                   for n in ('sim_extremos.py','navigation.py','navigation_experiments.py')}
+                   for n in ('sim_extremos.py','navigation.py','navigation_experiments.py','navigation_candidates.py')}
     model_hash=hashlib.sha256(Path(args.model).read_bytes()).hexdigest() if args.model else None
     start=time.monotonic()
     # Progress is durable after each completed case; a killed run is explicitly incomplete.
@@ -129,9 +150,9 @@ def collect(args):
     start=time.monotonic(); jobs=[]
     for split,seeds in [('train',range(1000,1040)),('validation',range(1100,1110))]:
         for maze in seeds:
-            for noise in (1,2):
+            for noise in args.noises:
                 for mode in (3,5):
-                    controller='baseline' if noise==1 else 'corrected'
+                    controller=args.training_controller if args.training_controller else ('precision-guard' if args.precision else ('baseline' if noise==1 else 'corrected'))
                     jobs.append((maze,noise,mode,controller,None,None,'data',None,False))
     rows=[];examples=[]
     pool=ProcessPoolExecutor(max_workers=args.workers)
@@ -195,7 +216,7 @@ def train(args):
         order=rng.permutation(len(x))
         for indices in np.array_split(order,max(1,int(np.ceil(len(x)/128)))):
             xx,yy=x[indices],y[indices];a,b,p=forward(xx)
-            dz=(p-yy)/len(xx)
+            dz=(p-yy)*np.where(yy>0,args.positive_weight,1)/len(xx)
             db=(dz@params[4].T)*(b>0);da=(db@params[2].T)*(a>0)
             grads=[xx.T@da,da.sum(0),a.T@db,db.sum(0),b.T@dz,dz.sum(0)]
             for v,g in zip(params,grads):v-=.03*np.clip(g,-1,1)
@@ -214,7 +235,7 @@ def train(args):
     model=dict(w1=params[0].T.tolist(),b1=params[1].tolist(),w2=params[2].T.tolist(),
                b2=params[3].tolist(),w3=params[4].ravel().tolist(),b3=float(params[5][0]),
                threshold=choice[2] if choice else None,enabled=False,architecture=[43,32,16,1],
-               seed=42,epochs=epochs,validation_bce=best,train_examples=len(x),validation_examples=len(vx),
+               seed=42,epochs=epochs,positive_weight=args.positive_weight,validation_bce=best,train_examples=len(x),validation_examples=len(vx),
                threshold_validation=choice,wall_seconds=time.monotonic()-start,
                data_sha256=hashlib.sha256(Path(args.data).read_bytes()).hexdigest(),
                train_mazes=sorted(set(r['maze'] for r in groups['train'])),
@@ -243,7 +264,7 @@ def calibrate(args):
         for maze in model['validation_mazes']:
             for noise in (1,2):
                 for mode in (3,5):
-                    jobs.append((maze,noise,mode,'corrected' if threshold is None else 'neural',
+                    jobs.append((maze,noise,mode,args.controller if threshold is None else ('precision-neural' if args.controller=='precision' else 'neural'),
                                  args.model,threshold,'validation',None,False))
     rows=[]
     with ProcessPoolExecutor(max_workers=args.workers) as pool:
@@ -268,18 +289,45 @@ def calibrate(args):
         test_mazes_used=False)))
 
 
+
+def validate_ranking(args):
+    model=json.loads(Path(args.model).read_text())
+    jobs=[(maze,noise,mode,controller,args.model,None,'validation',None,False)
+          for controller in ('mapped','mapped-ranked') for maze in model['validation_mazes']
+          for noise in (1,2) for mode in (3,5)]
+    rows=[]
+    with ProcessPoolExecutor(max_workers=args.workers) as pool:
+        for row in pool.map(run_job,jobs):
+            rows.append(row)
+            print(f'{len(rows)}/{len(jobs)} {row["controller"]} clean={row["clean_arrival"]}',flush=True)
+    metrics={}
+    for controller in ('mapped','mapped-ranked'):
+        part=[r for r in rows if r['controller']==controller]
+        metrics[controller]=dict(clean=sum(r['clean_arrival'] for r in part),arrivals=sum(r['reached'] is not None for r in part),contacts=sum(r['contacts'] for r in part))
+    a,b=metrics['mapped'],metrics['mapped-ranked']
+    clean=lambda c:{(r['maze'],r['noise_seed'],r['mode']) for r in rows if r['controller']==c and r['clean_arrival']}
+    qualifies=b['clean']>a['clean'] and b['arrivals']>=a['arrivals'] and clean('mapped')<=clean('mapped-ranked')
+    Path(args.out).write_text(json.dumps(dict(complete=True,expected=len(jobs),results=rows,metrics=metrics,
+       qualifies_for_test=qualifies,model_enabled=False,test_mazes_used=False,
+       model_sha256=hashlib.sha256(Path(args.model).read_bytes()).hexdigest())))
+
+
 def main():
     p=argparse.ArgumentParser(); sub=p.add_subparsers(dest='command',required=True)
     c=sub.add_parser('collect');c.add_argument('--out',required=True);c.add_argument('--budget',type=float,default=7200)
-    c.add_argument('--workers',type=int,default=4)
+    c.add_argument('--noises',type=lambda value:tuple(int(n) for n in value.split(',')),default=(1,2));c.add_argument('--workers',type=int,default=4);c.add_argument('--precision',action='store_true');c.add_argument('--training-controller',choices=('precision-guard','hybrid','mapped','mapped-raw'))
     t=sub.add_parser('train');t.add_argument('--data',required=True);t.add_argument('--out',required=True)
-    t.add_argument('--export');t.add_argument('--budget',type=float,default=1200)
+    t.add_argument('--positive-weight',type=float,default=1.0);t.add_argument('--export');t.add_argument('--budget',type=float,default=1200)
     e=sub.add_parser('evaluate');e.add_argument('--out',required=True);e.add_argument('--model')
     e.add_argument('--baseline',required=True);e.add_argument('--threshold',type=float)
-    e.add_argument('--suite',choices=('21','reserved','all'),default='all');e.add_argument('--workers',type=int,default=4)
+    e.add_argument('--controllers');e.add_argument('--suite',choices=('21','reserved','fresh','all'),default='all');e.add_argument('--workers',type=int,default=4)
     c=sub.add_parser('calibrate');c.add_argument('--model',required=True);c.add_argument('--out',required=True)
-    c.add_argument('--workers',type=int,default=4)
-    args=p.parse_args();dict(collect=collect,train=train,evaluate=evaluate,calibrate=calibrate)[args.command](args)
+    c.add_argument('--workers',type=int,default=4);c.add_argument('--controller',choices=('corrected','precision'),default='corrected')
+    v=sub.add_parser('validate-ranking');v.add_argument('--model',required=True);v.add_argument('--out',required=True);v.add_argument('--workers',type=int,default=4)
+    args=p.parse_args()
+    if args.command=='train' and not 1<=args.positive_weight<=100:p.error('positive-weight must be between 1 and 100')
+    if args.command=='collect' and (not args.noises or any(n<0 for n in args.noises)):p.error('nonnegative noise seeds required')
+    dict(collect=collect,train=train,evaluate=evaluate,calibrate=calibrate,**{'validate-ranking':validate_ranking})[args.command](args)
 
 
 if __name__=='__main__':main()

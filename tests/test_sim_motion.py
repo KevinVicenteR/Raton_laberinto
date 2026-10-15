@@ -48,5 +48,43 @@ class MotionTests(unittest.TestCase):
         self.assertTrue(sim.protected)
 
 
+    def test_precision_feedback_corrects_coarse_endpoint_error(self):
+        class CoarseError(P.S.Sim):
+            def rotate(self, degrees):
+                self.th += math.radians(degrees - 6)
+                yield from ()
+            def try_move(self, x, y, heading):
+                self.th = heading
+                return True
+        sim = self.make_sim(CoarseError)
+        target = sim.th + math.radians(70)
+        list(sim.rotate_precise_to(target))
+        self.assertLessEqual(abs(sim.th-target), math.radians(.5))
+        self.assertGreater(sim.t, .1)  # correction consumes actual simulated time
+
+    def test_blocked_precision_stage_does_not_confirm_turn(self):
+        class BlockedFine(P.S.Sim):
+            def rotate(self, degrees):
+                yield from ()
+            def try_move(self, *args):
+                return False
+        sim = self.make_sim(BlockedFine)
+        with self.assertRaisesRegex(P.S.MotionFailure, 'refinamiento angular incompleto'):
+            list(sim.rotate_precise_to(sim.th+math.radians(6)))
+        self.assertLessEqual(sim.t, 1.01)
+
+    def test_goal_memory_strategy_is_explicitly_opt_in(self):
+        from dataclasses import replace
+        class Remember(P.S.Sim):
+            def explore(self, start, heading, prior=None):
+                self.used_memory = (start, heading)
+                yield from ()
+        sim = self.make_sim(Remember)
+        self.assertFalse(sim.c.fw.goal_grid)
+        sim.c = replace(sim.c, use_goal=True, fw=replace(sim.c.fw, goal_grid=True))
+        list(sim.mode5())
+        self.assertEqual(sim.used_memory, (sim.c.start, 0))
+
+
 if __name__ == '__main__':
     unittest.main()

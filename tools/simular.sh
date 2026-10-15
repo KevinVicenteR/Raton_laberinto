@@ -4,6 +4,7 @@
 # Uso (desde cualquier carpeta):
 #   tools/simular.sh            casos extremos (tools/sim_extremos.py) y abre el informe
 #   tools/simular.sh pesos [N]  optimiza los pesos de la decision en los cruces con N candidatos (24)
+#   tools/simular.sh simulacion abre el laboratorio con resultados y reproducciones
 #   tools/simular.sh web        solo sirve la pagina de telemetria y la abre
 #
 # La pagina y el informe se sirven en http://localhost:8000 (la telemetria Bluetooth necesita Chrome,
@@ -54,6 +55,10 @@ case "${1:-casos}" in
     "$PY" "$TOOLS/optimiza_pesos.py" "${2:-24}"
     echo "Copia los pesos a W_FREE, W_NOVEL, W_TURN y B_STRAIGHT en src/config.h o envialos desde la web."
     ;;
+  simulacion)
+    serve
+    open_url "http://localhost:$PORT/simulacion.html"
+    ;;
   web)
     serve
     open_url "http://localhost:$PORT/telemetria.html"
@@ -63,7 +68,7 @@ case "${1:-casos}" in
     sed -n '2,10p' "$0" | sed 's/^# \{0,1\}//'
     ;;
   *)
-    echo "Opcion desconocida: $1 (usa casos, pesos o web)" >&2
+    echo "Opcion desconocida: $1 (usa casos, pesos, simulacion o web)" >&2
     exit 1
     ;;
 esac

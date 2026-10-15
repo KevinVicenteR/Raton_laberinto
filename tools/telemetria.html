@@ -33,6 +33,8 @@
   main { max-width: 1100px; margin: 0 auto; padding: 20px 16px 40px; }
   header { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-bottom: 16px; }
   h1 { font-size: 20px; margin: 0; flex: 1; }
+  nav a { color:var(--text); padding:6px 8px; }
+  nav a[aria-current] { font-weight:600; }
   .status { font-size: 13px; color: var(--muted); }
   .status b { color: var(--text); }
   button { font: inherit; padding: 8px 14px; border-radius: 8px; border: 1px solid var(--border);
@@ -80,11 +82,13 @@
 </style>
 <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+<script src="telemetry_protocol.js"></script>
 </head>
 <body>
 <main>
   <header>
     <h1>Telemetría del ratón</h1>
+    <nav class="row" aria-label="Páginas del proyecto"><a href="simulacion.html">Simulación</a><a href="telemetria.html" aria-current="page">Telemetría</a></nav>
     <span class="status" id="status">Desconectado</span>
     <button class="primary" id="connect">Conectar</button>
     <button class="go" id="start" disabled>ARRANCAR</button>
@@ -93,8 +97,18 @@
 
   <div class="warn" id="nobt">Este navegador no admite Web Bluetooth. Abre la página en <b>Chrome</b> o <b>Edge</b> (en Mac, Windows o Android; en iPhone no funciona).</div>
 
+  <section class="panel" style="margin-bottom:16px" aria-label="Origen y reproducción de datos">
+    <div class="row"><h2 style="margin:0;flex:1">Origen: <span id="dataSource">Sin conexión</span></h2><span class="status" id="sessionResult">Sin sesión</span></div>
+    <div class="row" style="margin-top:12px"><label for="replayExample">Sesión de simulación</label><select id="replayExample"><option>Cargando ejemplos…</option></select><button id="loadExample">Abrir sesión</button><label for="sessionFile">Importar registro</label><input type="file" id="sessionFile" accept=".json,.txt"></div>
+    <div class="row" style="margin-top:12px"><button id="replayPlay" disabled>Reproducir</button><label for="replaySpeed">Velocidad</label><select id="replaySpeed"><option value="1">1×</option><option value="2" selected>2×</option><option value="4">4×</option></select><span id="replayTime" class="num">0.0 s</span><button id="leaveReplay" disabled>Volver a conexión</button></div>
+    <label for="replaySeek" class="status">Tiempo de la sesión</label><input type="range" id="replaySeek" min="0" max="1" step="any" value="0" disabled style="width:100%">
+    <p class="status" id="sessionMessage" role="status">Puedes revisar sensores y maniobras sin conectar el robot. La reproducción mantiene desactivadas las órdenes al hardware.</p>
+    <details style="margin-top:12px"><summary style="cursor:pointer">Detalle de sensores y maniobras</summary>
+    <div class="tiles" style="margin-top:12px"><div class="tile"><div class="label">Fase de maniobra</div><div class="value" id="motionPhase" style="font-size:18px">—</div></div><div class="tile"><div class="label">Último resultado</div><div class="value" id="motionResult" style="font-size:18px">—</div></div><div class="tile"><div class="label">Red neuronal</div><div class="value" id="riskState" style="font-size:18px">Sin datos</div></div><div class="tile"><div class="label">Edad láseres (ms)</div><div class="value" id="sensorAge" style="font-size:18px">—</div></div><div class="tile"><div class="label">Lecturas adquiridas</div><div class="value" id="rawSensors" style="font-size:18px">—</div></div><div class="tile"><div class="label">Líneas perdidas</div><div class="value" id="droppedLines" style="font-size:18px">—</div></div><div class="tile"><div class="label">Error angular</div><div class="value" id="motionAngle" style="font-size:18px">—</div></div><div class="tile"><div class="label">Encoders / avance</div><div class="value" id="encoderTicks" style="font-size:18px">—</div></div><div class="tile"><div class="label">Barrido observado</div><div class="value" id="sweepState" style="font-size:18px">Sin datos</div></div></div>
+    </details>
+  </section>
   <div class="grid">
-    <section class="panel wide">
+    <section class="panel wide" id="modePanel">
       <h2>Modo</h2>
       <div class="modes" id="modes">
         <button class="mode sel" data-mode="1"><b>1 · Pared derecha</b><span>Sigue la pared de la derecha. No necesita saber el tamaño de la pista.</span></button>
@@ -103,7 +117,7 @@
         <button class="mode" data-mode="4"><b>4 · Ruta competencia</b><span>Va directo por el camino más corto del laberinto del reglamento, por tramos. Si una pared no coincide, sigue explorando por celdas.</span></button>
         <button class="mode" data-mode="5"><b>5 · Espacio libre</b><span>En cada cruce o pared se para, mira los tres láseres y va hacia donde hay más espacio libre.</span></button>
       </div>
-      <p class="status" id="modeNote" style="margin:10px 0 0">El modo se aplica al pulsar ARRANCAR. Si el ratón está en marcha, se para y arranca en el modo nuevo.</p>
+      <p class="status" id="modeNote" style="margin:10px 0 0">El modo se aplica al pulsar ARRANCAR. Elegir un modo no envía órdenes ni reinicia el robot.</p>
     </section>
 
     <section class="panel">
@@ -129,7 +143,7 @@
     </section>
 
     <section class="panel wide">
-      <h2>Pista de competencia <span class="status" style="text-transform:none;font-weight:400">· haz clic en una celda para recolocar el ratón ahí</span></h2>
+      <h2>Pista de competencia <span id="trackHint" class="status" style="text-transform:none;font-weight:400">· haz clic en una celda para recolocar el ratón ahí</span></h2>
       <div class="tiles" style="margin-bottom:12px">
         <div class="tile"><div class="label">Celda actual</div><div class="value" id="cCell">—</div></div>
         <div class="tile"><div class="label">Celdas hasta la meta</div><div class="value" id="cDist">—</div></div>
@@ -198,9 +212,11 @@ const HISTORY_MS = 20000;
 const MAX_MM = 400;  // escala de las graficas
 
 let device = null, rxChar = null, buffer = '';
+let replayActive=false;
+const viewNow=()=>replayActive&&window.RatonSession?window.RatonSession.now():performance.now();
 // Registro de todo lo recibido, para descargarlo y revisar una prueba.
 const record = [];
-let recordStart = performance.now();
+let recordStart = viewNow();
 const samples = [];  // {t, I, F, D}
 let last = null;
 
@@ -217,12 +233,15 @@ function log(text) {
 }
 
 function setConnected(on) {
-  $('status').innerHTML = on ? `Conectado a <b>${device.name || 'Raton'}</b>` : 'Desconectado';
+  $('status').textContent = on ? 'Conectado a '+(device.name || 'Ratón') : 'Desconectado';
+  if(!on){rxChar=null;buffer='';}
+  $('dataSource').textContent=on?'Robot conectado':replayActive?'Reproducción local':'Sin conexión';
   $('connect').textContent = on ? 'Desconectar' : 'Conectar';
   for (const id of ['stop', 'start', 'send', 'ask']) $(id).disabled = !on;
 }
 
 async function connect() {
+  if(replayActive&&window.RatonSession)window.RatonSession.stop();
   if (device && device.gatt.connected) { device.gatt.disconnect(); return; }
   try {
     device = await navigator.bluetooth.requestDevice({ filters: [{ services: [NUS] }] });
@@ -241,6 +260,7 @@ async function connect() {
 }
 
 async function send(text) {
+  if(replayActive)return;
   if (!rxChar) return;
   try { await rxChar.writeValue(new TextEncoder().encode(text)); }
   catch (err) { log('Error al enviar: ' + err.message); }
@@ -259,20 +279,24 @@ function onData(chunk) {
 
 // Formato: ESTADO I<izq> F<frontal> D<der> v<mm/s> r<rumbo> p<pasillo> x<mm> y<mm> a<grados>
 function onLine(line) {
+  if(window.RatonSession&&window.RatonSession.diagnostic(line)) {
+    record.push(`${((viewNow()-recordStart)/1000).toFixed(2)}\t${line}`);
+    return;
+  }
   if (line === 'INICIO_MAPA') {
     clearMap(); log('Arranca: mapa nuevo');
     compTrail = []; compOrigin.x = (COMP.start[0] + 0.5) * COMP.PITCH; compOrigin.y = (COMP.start[1] + 0.5) * COMP.PITCH - COMP.axleBack;
-    raceStart = performance.now(); raceEnd = null; stayFrom = raceStart; $('cWarn').textContent = 'En carrera';
+    raceStart = viewNow(); raceEnd = null; stayFrom = raceStart; $('cWarn').textContent = 'En carrera';
     return;
   }
-  if (line === 'META' && raceStart && !raceEnd) { raceEnd = performance.now(); $('cWarn').textContent = '¡En la meta!'; }
+  if (line === 'META' && raceStart && !raceEnd) { raceEnd = viewNow(); $('cWarn').textContent = '¡En la meta!'; }
   if (line.startsWith('DECIDE: ')) {
-    record.push(`${((performance.now() - recordStart) / 1000).toFixed(2)}\t${line}`);
+    record.push(`${((viewNow() - recordStart) / 1000).toFixed(2)}\t${line}`);
     $('vDec').textContent = line.slice(8);
     log(line.slice(8));
     return;
   }
-  record.push(`${((performance.now() - recordStart) / 1000).toFixed(2)}\t${line}`);
+  record.push(`${((viewNow() - recordStart) / 1000).toFixed(2)}\t${line}`);
   const m = line.match(/^(\S+) I(-?\d+) F(-?\d+) D(-?\d+) v(-?\d+) r(-?\d+) p(-?\d+)(?: x(-?\d+) y(-?\d+) a(-?\d+))?(?: t(\d+))?(?: q(-?\d+),(-?\d+),(-?\d+))?(?: c(\d+),(\d+),(\d+) g(\d+))?$/);
   if (!m) { log(line); return; }
   last = { state: m[1], I: +m[2], F: +m[3], D: +m[4], v: +m[5], r: +m[6], p: +m[7] };
@@ -283,13 +307,13 @@ function onLine(line) {
     $('vG').textContent = m[18];
     $('vG').style.color = +m[18] < 75 ? 'var(--danger)' : '';
   }
-  if (m[8] !== undefined) supervise({ t: performance.now(), ...last, x: +m[8], y: +m[9] });
+  if (!replayActive && m[8] !== undefined) supervise({ t: viewNow(), ...last, x: +m[8], y: +m[9] });
   if (m[8] !== undefined) addToMap(+m[8], +m[9], +m[10], last);
   if (m[8] !== undefined) compUpdate(+m[8], +m[9], +m[10]);
-  samples.push({ t: performance.now(), I: last.I, F: last.F, D: last.D });
-  while (samples.length && performance.now() - samples[0].t > HISTORY_MS) samples.shift();
+  samples.push({ t: viewNow(), I: last.I, F: last.F, D: last.D });
+  while (samples.length && viewNow() - samples[0].t > HISTORY_MS) samples.shift();
   $('state').textContent = last.state;
-  const mm = v => v < 0 ? 'libre' : v;
+  const mm = v => v < 0 ? 'Sin lectura' : v;
   $('vI').textContent = mm(last.I); $('vF').textContent = mm(last.F); $('vD').textContent = mm(last.D);
   $('vV').textContent = last.v; $('vR').textContent = last.r; $('vP').textContent = last.p;
   if (m[11] !== undefined) { $('vT').textContent = m[11]; $('vT').style.color = +m[11] > 20 ? 'var(--danger)' : ''; }
@@ -348,7 +372,7 @@ function drawChart() {
     ctx.fillText(mm, 6, y + 4);
   }
   ctx.fillText('-20 s', padL, h - 4); ctx.fillText('ahora', padL + plotW - 30, h - 4);
-  const now = performance.now();
+  const now = viewNow();
   for (const [key, color] of [['I', '--left'], ['F', '--front'], ['D', '--right']]) {
     ctx.strokeStyle = css(color); ctx.lineWidth = 2; ctx.beginPath();
     let drawing = false;
@@ -378,7 +402,8 @@ const compWall = (x, y, d) => {          // d: 'N','S','E','W'
   return COMP.map[2 * r + 1][4 * x + 4] === '|';
 };
 // Distancia en celdas desde cada celda a la meta (sobre el mapa conocido).
-const compDist = (() => {
+let compDist = computeCompDist();
+function computeCompDist() {
   const dist = Array.from({ length: COMP.W }, () => Array(COMP.H).fill(Infinity));
   const q = [COMP.goal]; dist[COMP.goal[0]][COMP.goal[1]] = 0;
   const mv = { N: [0, 1], S: [0, -1], E: [1, 0], W: [-1, 0] };
@@ -392,7 +417,7 @@ const compDist = (() => {
     }
   }
   return dist;
-})();
+}
 // Ruta mas corta entre dos celdas siguiendo el mapa de distancias a la meta (lista de celdas).
 function compRoute(from) {
   const mv = { N: [0, 1], S: [0, -1], E: [1, 0], W: [-1, 0] };
@@ -443,7 +468,7 @@ function compUpdate(x, y, aDeg) {
   $('cCell').textContent = inside ? `${cx},${cy}` : 'fuera';
   $('cDist').textContent = inside && compDist[cx][cy] !== Infinity ? compDist[cx][cy] : '—';
   compLeft = inside ? compRoute([cx, cy]) : [];
-  const now = performance.now();
+  const now = viewNow();
   const zone = inside ? `${Math.floor(cx / 2)},${Math.floor(cy / 2)}` : 'fuera';   // zona = 2x2 celdas
   if (zone !== stayCell) { stayCell = zone; stayFrom = now; }
   if (inside && cx === COMP.goal[0] && cy === COMP.goal[1] && raceStart && !raceEnd) {
@@ -453,7 +478,7 @@ function compUpdate(x, y, aDeg) {
 
 const fmtTime = ms => `${Math.floor(ms / 60000)}:${((ms % 60000) / 1000).toFixed(1).padStart(4, '0')}`;
 function compTick() {
-  const now = performance.now();
+  const now = viewNow();
   if (raceStart) {
     const t = (raceEnd || now) - raceStart;
     $('cTime').textContent = fmtTime(t);
@@ -462,6 +487,7 @@ function compTick() {
     $('cStay').textContent = stay.toFixed(0);
     $('cStay').style.color = stay > 20 ? 'var(--danger)' : '';
     if (!raceEnd) {
+      if(replayActive){$('cWarn').textContent='Reproducción de sesión';return;}
       $('cWarn').textContent = stay > 20 ? `Lleva ${stay.toFixed(0)} s en la misma zona: a los 30 s descalifican`
         : t > 540000 ? 'Queda menos de 1 minuto de los 10' : 'En carrera';
     }
@@ -522,6 +548,7 @@ function drawTrack() {
 
 // Clic en una celda: recolocar el raton en su centro (corrige la deriva de la odometria).
 $('track').addEventListener('click', e => {
+  if(replayActive)return;
   const r = $('track').getBoundingClientRect();
   const { pad, sc } = trackScale(r.width, r.height);
   const wx = (e.clientX - r.left - pad) / sc, wy = COMP.H * COMP.PITCH - (e.clientY - r.top - pad) / sc;
@@ -537,9 +564,9 @@ $('track').addEventListener('click', e => {
 // ---------- Supervisor y aprendizaje (corre en la pagina, el raton no gasta nada) ----------
 const hist = [];                 // ultimas muestras (30 s)
 const learn = { sides: [], contacts: [], sentWall: null, sentDead: null };
-let userSpeed = 100, curSpeed = 100, lastAction = 0, lastCalm = performance.now(), lastSpeedChange = 0;
+let userSpeed = 100, curSpeed = 100, lastAction = 0, lastCalm = viewNow(), lastSpeedChange = 0;
 const median = a => { const b = [...a].sort((p, q) => p - q); return b[Math.floor(b.length / 2)]; };
-function supAction(text) { $('supState').textContent = text; log('Supervisor: ' + text); lastAction = performance.now(); }
+function supAction(text) { $('supState').textContent = text; log('Supervisor: ' + text); lastAction = viewNow(); }
 
 function supervise(smp) {
   hist.push(smp);
@@ -607,7 +634,7 @@ function supervise(smp) {
 
 // ---------- Mapa 3D (rejilla de ocupacion probabilistica, como un LIDAR) ----------
 // Geometria del raton (mm), igual que en config.h: laseres laterales por delante del eje.
-const ROBOT_WIDTH = 90, SIDE_AHEAD = 45, FRONT_AHEAD = 50;
+const ROBOT_WIDTH = 90, SIDE_AHEAD = 56, FRONT_AHEAD = 33;
 const CELL = 10;          // casilla del mapa (mm)
 let MAP_RANGE = 160;      // alcance de los laseres (sigue al deslizador de alcance)
 const WALL_H = 50;        // altura de las paredes dibujadas (mm)
@@ -621,7 +648,7 @@ let scene, camera, renderer, controls, wallMesh, pathLine, pathPts = [], robotOb
 const MAX_WALLS = 30000;
 
 function initMap() {
-  if (!window.THREE) { $('map3d').insertAdjacentHTML('beforeend', '<p style="padding:16px">No se pudo cargar Three.js (hace falta internet la primera vez).</p>'); return; }
+  if (!window.THREE) { $('map3d').insertAdjacentHTML('beforeend', '<p style="padding:16px">Mapa 3D no disponible. Las vistas 2D y la telemetría siguen funcionando.</p>'); return; }
   const el = $('map3d');
   renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
   renderer.setPixelRatio(window.devicePixelRatio || 1);
@@ -704,6 +731,7 @@ function bump(cx, cy, delta) {
 
 // Un haz desde (ox,oy) en direccion (dx,dy): libres las casillas recorridas y, si hubo rebote, pared al final.
 function castRay(ox, oy, dx, dy, dist) {
+  if(dist<0)return;  // Ausencia de lectura no demuestra espacio libre.
   const hit = dist >= 0 && dist < MAP_RANGE;
   const len = hit ? dist : MAP_RANGE;
   const steps = Math.floor(len / (CELL * 0.7));
@@ -777,13 +805,13 @@ function clearMap() {
   robotObj.position.set(0, 0, 0); robotObj.rotation.y = 0;
 }
 
-initMap();
+try { initMap(); } catch(error) { renderer=null; scene=null; $('map3d').textContent='Mapa 3D no disponible. Las vistas 2D y la telemetría siguen funcionando.'; }
 $('cRoute').textContent = window.compRouteText;
 
 function frame() {
   drawRobot(); drawChart(); drawTrack(); compTick();
   if (renderer) {
-    if (gridDirty && performance.now() - lastRebuild > 150) { rebuildWalls(); lastRebuild = performance.now(); }
+    if (gridDirty && viewNow() - lastRebuild > 150) { rebuildWalls(); lastRebuild = viewNow(); }
     followRobot(); controls.update(); renderer.render(scene, camera);
   }
   requestAnimationFrame(frame);
@@ -801,15 +829,9 @@ function selectMode(m) {
   try { localStorage.setItem('raton-mode', m); } catch (e) {}
 }
 selectMode(mode);
-document.querySelectorAll('.mode').forEach(b => b.onclick = async () => {
+document.querySelectorAll('.mode').forEach(b => b.onclick = () => {
   selectMode(+b.dataset.mode);
-  if (!rxChar) return;
-  // En marcha: parar, cambiar de modo y volver a arrancar. Parado: solo se elige.
-  const running = last && last.state !== 'PARADO';
-  if (running) { await send('x'); await new Promise(r => setTimeout(r, 400)); }
-  await send(`m${mode}\n`);
-  if (running) await send('s\n');
-  log(`Modo ${modeName(mode)}${running ? ' (rearrancando)' : ''}`);
+  log('Modo seleccionado: '+modeName(mode)+'. Se aplicará al pulsar ARRANCAR.');
 });
 $('start').onclick = async () => {
   await send(`m${mode}\n`);
@@ -847,5 +869,6 @@ $('send').onclick = async () => {
 };
 $('ask').onclick = () => send('?\n');
 </script>
+<script src="telemetry_session.js"></script>
 </body>
 </html>

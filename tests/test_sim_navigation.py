@@ -55,6 +55,15 @@ class NavigationTests(unittest.TestCase):
         sim.predictor=lambda x:1;sim.risk_threshold=.1
         self.assertTrue(sim.action_allowed(90))
 
+    def test_ranking_predictor_cannot_veto_all_routes(self):
+        from dataclasses import replace
+        fw=replace(N.firmware_config(S),risk_rank=True)
+        sim=S.Sim(S.Case('rank',S.M_L,(2,0),(0,2),controller='neural',fw=fw))
+        sim.predictor=lambda x:1.0;sim.risk_threshold=.1
+        self.assertTrue(sim.action_allowed(0))
+        self.assertTrue(sim.action_allowed(90))
+        self.assertTrue(sim.action_allowed(-90))
+
     def test_trained_inference_matches_firmware(self):
         path=Path(__file__).resolve().parents[1]/'tools/models/risk_model.json'
         model=json.loads(path.read_text())
