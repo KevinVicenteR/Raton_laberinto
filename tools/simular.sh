@@ -20,12 +20,18 @@ fi
 
 # Arranca el servidor de tools/ en segundo plano si no esta ya en marcha.
 serve() {
-  if curl -s -o /dev/null "http://localhost:$PORT/telemetria.html"; then
+  # -f: un 404 cuenta como fallo (otro servidor en el puerto sirviendo otra carpeta).
+  if curl -sf -o /dev/null "http://localhost:$PORT/telemetria.html"; then
     return
+  fi
+  if curl -s -o /dev/null "http://localhost:$PORT/"; then
+    echo "El puerto $PORT ya lo usa otro servidor que no sirve tools/ (¿python3 -m http.server lanzado desde otra carpeta?)." >&2
+    echo "Paralo con Ctrl+C en su terminal y vuelve a ejecutar este script." >&2
+    exit 1
   fi
   (cd "$TOOLS" && nohup "$PY" -m http.server "$PORT" >/dev/null 2>&1 &)
   for _ in $(seq 1 20); do
-    curl -s -o /dev/null "http://localhost:$PORT/telemetria.html" && return
+    curl -sf -o /dev/null "http://localhost:$PORT/telemetria.html" && return
     sleep 0.2
   done
   echo "No se pudo arrancar el servidor en el puerto $PORT." >&2
