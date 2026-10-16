@@ -25,28 +25,22 @@ class MotionTests(unittest.TestCase):
         self.assertFalse(hasattr(sim, 'continued'))
         self.assertIsNone(sim.reached)
 
-    def test_corner_accounts_for_actual_diagonal_distance(self):
-        class ShortCorner(P.S.Sim):
-            def rotate(self, deg):
-                yield from ()
-            def drive(self, mm, watch, **kwargs):
-                self.travelled += 25  # el movimiento se interrumpe antes de los 75 mm pedidos
-                yield from ()
-        sim = self.make_sim(ShortCorner)
+    def test_corner_rotates_in_place_and_clears_pending(self):
+        sim = self.make_sim()
+        sim.pending = 12
+        start = sim.x, sim.y
+        target = sim.th + math.pi/2
         list(sim.turn_corner_track(90))
-        self.assertAlmostEqual(sim.pending, 25 * math.sin(math.radians(70)) + 33)
+        self.assertEqual((sim.x, sim.y), start)
+        self.assertEqual(sim.pending, 0)
+        self.assertLessEqual(abs(sim.th-target), math.radians(.5))
 
-    def test_free_navigation_diagonal_uses_corner_protection(self):
-        class Corner(P.S.Sim):
-            def rotate(self, deg):
-                yield from ()
-            def drive(self, mm, watch, **kwargs):
-                self.protected = kwargs.get('corner', False)
-                yield from ()
-        sim = self.make_sim(Corner)
-        list(sim.safe_turn(90))
-        self.assertTrue(sim.protected)
-
+    def test_real_geometry_and_legacy_preset(self):
+        robot = P.S.Robot()
+        self.assertEqual((robot.length_front, robot.length_back, robot.width), (40,40,80))
+        sim = self.make_sim()
+        self.assertAlmostEqual(sim.side_face(40/math.sin(math.pi/4)),30)
+        self.assertEqual(P.S.Robot.preset('antiguo').length_front,83)
 
     def test_precision_feedback_corrects_coarse_endpoint_error(self):
         class CoarseError(P.S.Sim):
@@ -80,7 +74,7 @@ class MotionTests(unittest.TestCase):
                 self.used_memory = (start, heading)
                 yield from ()
         sim = self.make_sim(Remember)
-        self.assertFalse(sim.c.fw.goal_grid)
+        self.assertFalse(P.S.Firmware().goal_grid)
         sim.c = replace(sim.c, use_goal=True, fw=replace(sim.c.fw, goal_grid=True))
         list(sim.mode5())
         self.assertEqual(sim.used_memory, (sim.c.start, 0))

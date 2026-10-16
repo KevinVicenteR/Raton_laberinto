@@ -56,7 +56,26 @@
     if(data.clean_arrival&&(!Number.isFinite(data.reached)||(data.events||[]).some(e=>e[1]==='choque')))throw Error('La llegada limpia contradice el registro.');
     return data;
   }
-  const api={parse,validateReplay};
+  // Protocolo de lineas (igual que lib/raton_core/src/frame.cpp): "$<seq>,<datos>*<CRC8 hex>".
+  function crc8(text) {
+    let crc=0;
+    for(let i=0;i<text.length;i++){crc^=text.charCodeAt(i)&255;for(let b=0;b<8;b++)crc=crc&128?((crc<<1)^7)&255:(crc<<1)&255;}
+    return crc;
+  }
+  function frame(seq,payload) {
+    const body=`${seq&65535},${payload}`;
+    return `$${body}*${crc8(body).toString(16).toUpperCase().padStart(2,'0')}`;
+  }
+  // {kind:'plain',payload} | {kind:'ok',seq,payload} | {kind:'bad'} (CRC malo o mal formada)
+  function unframe(line) {
+    line=String(line).trim();
+    if(line[0]!=='$')return {kind:'plain',payload:line};
+    const m=/^\$(\d{1,5}),(.*)\*([0-9A-Fa-f]{2})$/.exec(line);
+    if(!m||+m[1]>65535)return {kind:'bad'};
+    if(crc8(`${m[1]},${m[2]}`)!==parseInt(m[3],16))return {kind:'bad'};
+    return {kind:'ok',seq:+m[1],payload:m[2]};
+  }
+  const api={parse,validateReplay,crc8,frame,unframe};
   root.RatonProtocol=api;
   if(typeof module!=='undefined'&&module.exports)module.exports=api;
 })(typeof globalThis!=='undefined'?globalThis:this);

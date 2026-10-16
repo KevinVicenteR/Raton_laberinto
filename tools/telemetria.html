@@ -93,12 +93,14 @@
     <button class="primary" id="connect">Conectar</button>
     <button class="go" id="start" disabled>ARRANCAR</button>
     <button class="stop" id="stop" disabled>PARAR</button>
+    <button id="reset" disabled title="Reinicia la placa sin apagarla: para el ratón, borra el mapa y vuelve a esperar ARRANCAR">REINICIAR</button>
   </header>
 
   <div class="warn" id="nobt">Este navegador no admite Web Bluetooth. Abre la página en <b>Chrome</b> o <b>Edge</b> (en Mac, Windows o Android; en iPhone no funciona).</div>
 
   <section class="panel" style="margin-bottom:16px" aria-label="Origen y reproducción de datos">
     <div class="row"><h2 style="margin:0;flex:1">Origen: <span id="dataSource">Sin conexión</span></h2><span class="status" id="sessionResult">Sin sesión</span></div>
+    <div class="row" style="margin-top:6px"><span class="status">Enlace: <span id="linkState">sin datos</span></span><span class="status" id="modeConfirm" style="margin-left:auto">Placa: modo sin confirmar</span></div>
     <div class="row" style="margin-top:12px"><label for="replayExample">Sesión de simulación</label><select id="replayExample"><option>Cargando ejemplos…</option></select><button id="loadExample">Abrir sesión</button><label for="sessionFile">Importar registro</label><input type="file" id="sessionFile" accept=".json,.txt"></div>
     <div class="row" style="margin-top:12px"><button id="replayPlay" disabled>Reproducir</button><label for="replaySpeed">Velocidad</label><select id="replaySpeed"><option value="1">1×</option><option value="2" selected>2×</option><option value="4">4×</option></select><span id="replayTime" class="num">0.0 s</span><button id="leaveReplay" disabled>Volver a conexión</button></div>
     <label for="replaySeek" class="status">Tiempo de la sesión</label><input type="range" id="replaySeek" min="0" max="1" step="any" value="0" disabled style="width:100%">
@@ -187,7 +189,7 @@
     <section class="panel wide">
       <h2>Supervisor y aprendizaje</h2>
       <div class="row" style="margin-bottom:10px">
-        <label><input type="checkbox" id="supOn" checked> Supervisor: corrige bucles, choques y atascos</label>
+        <label><input type="checkbox" id="supOn"> Supervisor: corrige bucles, choques y atascos (en los modos 3 y 4 solo avisa)</label>
         <label><input type="checkbox" id="learnOn" checked> Aprender umbrales de la pista y enviarlos</label>
       </div>
       <div class="tiles">
@@ -238,33 +240,118 @@ function setConnected(on) {
   if(!on){rxChar=null;buffer='';}
   $('dataSource').textContent=on?'Robot conectado':replayActive?'Reproducción local':'Sin conexión';
   $('connect').textContent = on ? 'Desconectar' : 'Conectar';
-  for (const id of ['stop', 'start', 'send', 'ask', 'netCtrl', 'netLogic']) $(id).disabled = !on;
+  for (const id of ['stop', 'start', 'reset', 'send', 'ask', 'netCtrl', 'netLogic']) $(id).disabled = !on;
 }
 
 async function connect() {
   if(replayActive&&window.RatonSession)window.RatonSession.stop();
+  linkGen++;            // cancela una reconexion en curso
+  resetPending = false;
   if (device && device.gatt.connected) { device.gatt.disconnect(); return; }
   try {
-    device = await navigator.bluetooth.requestDevice({ filters: [{ services: [NUS] }] });
-    device.addEventListener('gattserverdisconnected', () => { setConnected(false); log('Desconectado'); });
-    const server = await device.gatt.connect();
-    const service = await server.getPrimaryService(NUS);
-    rxChar = await service.getCharacteristic(RX);
-    const tx = await service.getCharacteristic(TX);
-    await tx.startNotifications();
-    tx.addEventListener('characteristicvaluechanged', e => onData(new TextDecoder().decode(e.target.value)));
-    setConnected(true);
-    log('Conectado');
+    const chosen = await navigator.bluetooth.requestDevice({ filters: [{ services: [NUS] }] });
+    if (device && device !== chosen) device.removeEventListener('gattserverdisconnected', onDisconnected);
+    device = chosen;
+    device.removeEventListener('gattserverdisconnected', onDisconnected);  // nunca dos veces el mismo
+    device.addEventListener('gattserverdisconnected', onDisconnected);
+    await openLink(device);
   } catch (err) {
     log('No se pudo conectar: ' + err.message);
   }
 }
 
-async function send(text) {
-  if(replayActive)return;
-  if (!rxChar) return;
-  try { await rxChar.writeValue(new TextEncoder().encode(text)); }
-  catch (err) { log('Error al enviar: ' + err.message); }
+function onDisconnected() {
+  setConnected(false);
+  for (const res of pendingAcks.values()) res(null);  // ordenes en vuelo: sin respuesta
+  pendingAcks.clear();
+  if (resetPending) { log('La placa se está reiniciando…'); reconnectAfterReset(device); }
+  else log('Desconectado');
+}
+
+// Abre el servicio UART del dispositivo (al conectar y al volver tras REINICIAR). Las
+// caracteristicas solo se publican si todo sale bien; si algo falla se desconecta del todo.
+let txChar = null;
+async function openLink(dev) {
+  try {
+    const server = await dev.gatt.connect();
+    const service = await server.getPrimaryService(NUS);
+    const rx = await service.getCharacteristic(RX);
+    const tx = await service.getCharacteristic(TX);
+    if (txChar) txChar.removeEventListener('characteristicvaluechanged', onNotify);
+    tx.removeEventListener('characteristicvaluechanged', onNotify);
+    tx.addEventListener('characteristicvaluechanged', onNotify);
+    await tx.startNotifications();
+    txChar = tx;
+    rxChar = rx;
+    buffer = '';
+    link.lastSeq = null;  // la placa reinicia su numeracion al arrancar
+    setConnected(true);
+    log('Conectado');
+  } catch (err) {
+    rxChar = null;
+    try { if (dev.gatt.connected) dev.gatt.disconnect(); } catch (e) {}
+    setConnected(false);
+    throw err;
+  }
+}
+function onNotify(e) { onData(new TextDecoder().decode(e.target.value)); }
+
+// REINICIAR: la placa se reinicia (como apagarla y encenderla) y la web se vuelve a conectar sola
+// al mismo dispositivo, sin volver a elegirlo. Despues se elige modo y se pulsa ARRANCAR.
+let resetPending = false, linkGen = 0;
+async function reconnectAfterReset(dev) {
+  const gen = ++linkGen;  // una sola reconexion a la vez; Conectar la cancela
+  for (let i = 0; i < 10; i++) {
+    await new Promise(r => setTimeout(r, 1500));
+    if (gen !== linkGen || dev !== device) return;
+    try {
+      await openLink(dev);
+      if (gen !== linkGen) return;
+      resetPending = false;
+      clearMap();
+      log('Placa reiniciada y reconectada: elige modo y pulsa ARRANCAR.');
+      return;
+    } catch (e) { /* aun arrancando */ }
+  }
+  resetPending = false;
+  log('No se pudo reconectar tras el reinicio: pulsa Conectar.');
+}
+
+// Envio con protocolo: cada orden va como "$seq,orden*CRC" y la placa contesta ACK/NAK con ese
+// numero; sin respuesta en 300 ms se reintenta (hasta 3 veces). La 'x' de parar va suelta y al
+// momento, sin esperar a nada.
+let txSeq = 0, txBusy = Promise.resolve();
+const pendingAcks = new Map();
+async function writeRaw(text) {
+  const bytes = new TextEncoder().encode(text);
+  for (let i = 0; i < bytes.length; i += 20) await rxChar.writeValue(bytes.slice(i, i + 20));
+}
+function send(text) {
+  if (replayActive || !rxChar) return Promise.resolve(false);
+  const cmd = text.replace(/[\r\n]+$/, '');
+  if (cmd === 'x') return writeRaw('x').then(() => true).catch(err => { log('Error al enviar: ' + err.message); return false; });
+  // Las ordenes van de una en una y en orden.
+  txBusy = txBusy.then(async () => {
+    const seq = txSeq = (txSeq + 1) & 65535;
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      const reply = new Promise(res => { pendingAcks.set(seq, res); setTimeout(() => res(null), 300); });
+      try { await writeRaw(RatonProtocol.frame(seq, cmd) + '\n'); }
+      catch (err) { log('Error al enviar: ' + err.message); pendingAcks.delete(seq); return false; }
+      const r = await reply;
+      pendingAcks.delete(seq);
+      if (r === 'ACK') { link.acked++; updateLink(); return true; }
+      link.retries++; updateLink();
+    }
+    log(`Orden sin confirmar tras 3 intentos: ${cmd}`);
+    return false;
+  });
+  return txBusy;
+}
+// Calidad del enlace: lineas validas, corruptas (CRC), perdidas (huecos en la numeracion), reintentos.
+const link = { ok: 0, bad: 0, lost: 0, retries: 0, acked: 0, lastSeq: null };
+function updateLink() {
+  const el = document.getElementById('linkState');
+  if (el) el.textContent = `${link.ok} ok · ${link.lost} perdidas · ${link.bad} corruptas · ${link.acked} órdenes confirmadas · ${link.retries} reintentos`;
 }
 
 // Las notificaciones llegan en trozos de 20 bytes: se juntan hasta el salto de linea.
@@ -272,9 +359,27 @@ function onData(chunk) {
   buffer += chunk;
   let i;
   while ((i = buffer.indexOf('\n')) >= 0) {
-    const line = buffer.slice(0, i).trim();
+    const raw = buffer.slice(0, i).trim();
     buffer = buffer.slice(i + 1);
-    if (line) onLine(line);
+    if (!raw) continue;
+    const f = RatonProtocol.unframe(raw);
+    if (f.kind === 'bad') { link.bad++; updateLink(); continue; }  // corrupta: se descarta
+    if (f.kind === 'ok') {
+      if (link.lastSeq !== null) link.lost += ((f.seq - link.lastSeq - 1) & 65535) % 1000;
+      link.lastSeq = f.seq; link.ok++;
+      if (link.ok % 20 === 0) updateLink();
+    }
+    const line = f.payload;
+    const ack = /^(ACK|NAK) (\d+)$/.exec(line);
+    if (ack) { const res = pendingAcks.get(+ack[2]); if (res) res(ack[1]); continue; }
+    const mc = /^(MODE|START) ([1-5])$/.exec(line);
+    if (mc) {
+      if (+mc[2] !== mode) selectMode(+mc[2]);
+      $('modeConfirm').textContent = (mc[1] === 'START' ? 'En marcha: ' : 'Placa en modo ') + modeName(+mc[2]);
+      if (mc[1] === 'START') log('La placa arranca en ' + modeName(+mc[2]));
+      continue;
+    }
+    onLine(line);
   }
 }
 
@@ -575,7 +680,9 @@ function supervise(smp) {
   const moving = !['PARADO', 'ESPERA', 'META', 'FALLO'].includes(smp.state);
 
   // Aprendizaje 1: ancho libre del pasillo (suma de los dos laterales yendo recto con pared a ambos lados).
-  if (smp.state === 'RECTA' && smp.v > 20 && smp.I >= 0 && smp.D >= 0 && smp.I + smp.D < 400) learn.sides.push(smp.I + smp.D);
+  // Los laterales miden en diagonal: se pasa a distancia de cada costado (como RobotHW::sideMm).
+  const face = mm => mm * Math.sin(SIDE_ANGLE) + SIDE_LATERAL - ROBOT_WIDTH / 2;
+  if (smp.state === 'RECTA' && smp.v > 20 && smp.I >= 0 && smp.D >= 0 && face(smp.I) + face(smp.D) < 200) learn.sides.push(Math.max(face(smp.I), face(smp.D)));
   if (learn.sides.length > 400) learn.sides.shift();
   // Aprendizaje 2: lectura frontal al chocar o atascarse de frente (punto muerto real).
   const prev = hist[hist.length - 2];
@@ -583,7 +690,7 @@ function supervise(smp) {
   if (learn.contacts.length > 20) learn.contacts.shift();
   if (learn.sides.length >= 60) {
     // Un lateral que mide mas que todo el hueco libre del pasillo (+2 cm) ya no tiene pared.
-    const wall = Math.max(60, Math.min(155, Math.round(median(learn.sides) + 20)));
+    const wall = Math.max(40, Math.min(100, Math.round(median(learn.sides) + 20)));
     $('lWall').textContent = wall;
     if ($('learnOn').checked && rxChar && (learn.sentWall === null || Math.abs(wall - learn.sentWall) >= 10)) {
       send(`w${wall}\n`); learn.sentWall = wall; log(`Aprendido: umbral lateral ${wall} mm`);
@@ -606,6 +713,8 @@ function supervise(smp) {
   const spread = Math.max(...recent.map(h => Math.hypot(h.x - cx, h.y - cy)));
   const turning = recent.filter((h, i) => i && h.state === 'GIRO' && recent[i - 1].state !== 'GIRO').length;
   if (spread < 150 && turning >= 3) {
+    // En los modos de celdas (3 y 4) girar en una celda es normal (lee la salida girando): solo aviso.
+    if (mode === 3 || mode === 4) { supAction('muchos giros sin avanzar (solo aviso en modo ' + mode + ')'); return; }
     supAction('bucle detectado: pasa a seguir la pared derecha');
     send('x'); setTimeout(() => { send('m1\n'); send('s\n'); selectMode(1); }, 500);
     return;
@@ -634,8 +743,9 @@ function supervise(smp) {
 }
 
 // ---------- Mapa 3D (rejilla de ocupacion probabilistica, como un LIDAR) ----------
-// Geometria del raton (mm), igual que en config.h: laseres laterales por delante del eje.
-const ROBOT_WIDTH = 90, SIDE_AHEAD = 56, FRONT_AHEAD = 33;
+// Geometria del raton (mm), igual que en config.h: raton de 8 x 8 cm con el eje en el centro; los
+// laseres laterales van en las esquinas del frente (SIDE_AHEAD, SIDE_LATERAL) y miran en diagonal.
+const ROBOT_WIDTH = 80, SIDE_AHEAD = 30, SIDE_LATERAL = 30, SIDE_ANGLE = 45 * Math.PI / 180, FRONT_AHEAD = 40;
 const CELL = 10;          // casilla del mapa (mm)
 let MAP_RANGE = 160;      // alcance de los laseres (sigue al deslizador de alcance)
 const WALL_H = 50;        // altura de las paredes dibujadas (mm)
@@ -700,10 +810,10 @@ function initMap() {
   scene.add(pathLine);
 
   robotObj = new THREE.Group();
-  const body = new THREE.Mesh(new THREE.BoxGeometry(ROBOT_WIDTH * S, 30 * S, 100 * S), new THREE.MeshLambertMaterial({ color: 0x1d2330 }));
+  const body = new THREE.Mesh(new THREE.BoxGeometry(ROBOT_WIDTH * S, 30 * S, 80 * S), new THREE.MeshLambertMaterial({ color: 0x1d2330 }));
   body.position.y = 15 * S;
   const nose = new THREE.Mesh(new THREE.ConeGeometry(2.2, 4, 12), new THREE.MeshLambertMaterial({ color: 0xd9480f }));
-  nose.rotation.x = -Math.PI / 2; nose.position.set(0, 32 * S, -6.5);
+  nose.rotation.x = -Math.PI / 2; nose.position.set(0, 32 * S, -40 * S);
   robotObj.add(body, nose);
   scene.add(robotObj);
 
@@ -771,12 +881,14 @@ function addToMap(x, y, aDeg, d) {
   lastPose = [x, y, aDeg];
   const fx = -Math.sin(a), fy = Math.cos(a);      // hacia delante
   const lx = -Math.cos(a), ly = -Math.sin(a);     // hacia la izquierda
-  const half = ROBOT_WIDTH / 2;
+  const half = SIDE_LATERAL;
   // Lecturas sin filtrar si llegan (q...), si no las filtradas.
   const L = d.qI !== undefined ? d.qI : d.I, F = d.qF !== undefined ? d.qF : d.F, R = d.qD !== undefined ? d.qD : d.D;
   castRay(x + fx * FRONT_AHEAD, y + fy * FRONT_AHEAD, fx, fy, F);
-  castRay(x + fx * SIDE_AHEAD + lx * half, y + fy * SIDE_AHEAD + ly * half, lx, ly, L);
-  castRay(x + fx * SIDE_AHEAD - lx * half, y + fy * SIDE_AHEAD - ly * half, -lx, -ly, R);
+  // Rayos laterales en diagonal: mezcla de "delante" y "a un lado" segun SIDE_ANGLE.
+  const c = Math.cos(SIDE_ANGLE), s = Math.sin(SIDE_ANGLE);
+  castRay(x + fx * SIDE_AHEAD + lx * half, y + fy * SIDE_AHEAD + ly * half, fx * c + lx * s, fy * c + ly * s, L);
+  castRay(x + fx * SIDE_AHEAD - lx * half, y + fy * SIDE_AHEAD - ly * half, fx * c - lx * s, fy * c - ly * s, R);
 
   const p = pathPts[pathPts.length - 1];
   if (!p || Math.hypot(p[0] - x, p[1] - y) > 5) {
@@ -821,6 +933,14 @@ requestAnimationFrame(frame);
 
 $('connect').onclick = connect;
 $('stop').onclick = () => { send('x'); log('Orden: parar'); };
+$('reset').onclick = async () => {
+  if (!confirm('¿Reiniciar la placa? Para el ratón y borra el mapa aprendido.')) return;
+  resetPending = true;
+  log('Orden: reiniciar la placa');
+  const ok = await send('R\n');
+  // Sin ACK puede que ya se este reiniciando; si sigue conectada tras 2 s, no se reinicio.
+  if (!ok) setTimeout(() => { if (rxChar && device && device.gatt.connected && resetPending) { resetPending = false; log('La placa no confirmó el reinicio.'); } }, 2000);
+};
 let mode = 1;
 const modeName = m => document.querySelector(`.mode[data-mode="${m}"] b`).textContent;
 try { mode = +localStorage.getItem('raton-mode') || 1; } catch (e) {}
@@ -830,14 +950,17 @@ function selectMode(m) {
   try { localStorage.setItem('raton-mode', m); } catch (e) {}
 }
 selectMode(mode);
-document.querySelectorAll('.mode').forEach(b => b.onclick = () => {
+document.querySelectorAll('.mode').forEach(b => b.onclick = async () => {
   selectMode(+b.dataset.mode);
-  log('Modo seleccionado: '+modeName(mode)+'. Se aplicará al pulsar ARRANCAR.');
+  if (!rxChar) { log('Modo seleccionado: ' + modeName(mode) + '. Se aplicará al conectar y pulsar ARRANCAR.'); return; }
+  // Cambiar de modo para el ratón si iba en marcha; la placa confirma con MODE n.
+  const ok = await send(`m${mode}\n`);
+  log((ok ? 'Modo enviado: ' : 'Modo sin confirmar: ') + modeName(mode));
 });
 $('start').onclick = async () => {
-  await send(`m${mode}\n`);
-  await send('s\n');
-  log('Orden: arrancar en ' + modeName(mode));
+  // Una sola orden: arrancar en el modo elegido (si iba en otro modo, la placa lo para y cambia).
+  const ok = await send(`s${mode}\n`);
+  log((ok ? 'Orden confirmada: arrancar en ' : 'Sin confirmar: arrancar en ') + modeName(mode));
 };
 $('clearMap').onclick = clearMap;
 $('topView').onclick = topView;

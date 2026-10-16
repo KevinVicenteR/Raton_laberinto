@@ -32,7 +32,7 @@ class ObservedMapTests(unittest.TestCase):
 
     def test_whole_body_and_margin_block_an_observed_wall(self):
         sim=self.make()
-        self.assertFalse(sim.clear_observed_pose([((80,-100),(80,100))],0,0,0))
+        self.assertFalse(sim.clear_observed_pose([((42,-100),(42,100))],0,0,0))
         self.assertTrue(sim.clear_observed_pose([((100,-100),(100,100))],0,0,0))
         self.assertFalse(sim.clear_observed_pose([((-20,0),(100,0))],0,0,math.pi/2))
 

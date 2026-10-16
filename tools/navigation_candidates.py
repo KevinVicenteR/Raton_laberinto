@@ -63,37 +63,12 @@ class ObservedMapSim(S.Sim):
 
     def mapped_turn_clear(self,segments,degrees,entry):
         angle=self.th-self.nav_yaw0+math.pi/2
-        sign=1 if degrees>0 else -1
-        split=math.radians(sign*self.c.fw.split_deg)
-        x,y=self.nav_x,self.nav_y
-        def clear(dx,dy,da):return self.clear_observed_pose(segments,x+dx,y+dy,angle+da)
-        # 1 mm / 1 degree sampling plus a 3 mm envelope.
-        count=max(1,math.ceil(abs(entry)))
-        for i in range(count+1):
-            at=entry*i/count
-            if not clear(at*math.cos(angle),at*math.sin(angle),0):return False
-        ex,ey=entry*math.cos(angle),entry*math.sin(angle)
-        count=math.ceil(abs(math.degrees(split)))
-        for i in range(count+1):
-            if not clear(ex,ey,split*i/count):return False
-        advance=self.c.fw.split_advance;count=math.ceil(advance)
-        for i in range(count+1):
-            d=advance*i/count
-            if not clear(ex+d*math.cos(angle+split),ey+d*math.sin(angle+split),split):return False
-        dx,dy=ex+advance*math.cos(angle+split),ey+advance*math.sin(angle+split)
-        count=math.ceil(90-self.c.fw.split_deg)
-        for i in range(count+1):
-            da=split+math.radians(sign*(90-self.c.fw.split_deg))*i/count
-            if not clear(dx,dy,da):return False
-        return True
+        count=max(1,math.ceil(abs(degrees)))
+        return all(self.clear_observed_pose(segments,self.nav_x,self.nav_y,
+                   angle+math.radians(degrees)*i/count) for i in range(count+1))
 
     def prepare_turn(self,degrees):
         if not self.action_allowed(degrees):raise S.MotionFailure('giro rechazado por riesgo')
-        segments=self.observed_segments()
-        # Prefer nominal entry; bounds are explicit controller moves, never a pose reset.
-        entry=next((e for e in (0,-5,-10,-15,5,10,15,-20,20,-25,25,-30,30) if self.mapped_turn_clear(segments,degrees,e)),None)
-        if entry is None:raise S.MotionFailure('barrido bloqueado por paredes observadas')
-        before=self.travelled
-        if entry<0:yield from self.back(-entry)
-        elif entry>0:yield from self.drive(entry,0)
-        if abs(self.travelled-before-entry)>3:raise S.MotionFailure('ajuste de entrada incompleto')
+        if not self.mapped_turn_clear(self.observed_segments(),degrees,0):
+            raise S.MotionFailure('barrido bloqueado por paredes observadas')
+        yield from ()

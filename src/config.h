@@ -119,14 +119,15 @@ const uint8_t LASER_JUMP_CONFIRM = 2;  // lecturas seguidas para aceptar un salt
 const uint8_t LASER_MAX_MISS = 2;      // lecturas invalidas seguidas para dar el lado por libre (-1)
 
 // ---------- Paredes (CALIBRAR, en mm medidos por cada laser) ----------
-// Un solo umbral lateral (con LASER_MAX_MM = 160): lectura por debajo = pared; sin lectura o por
-// encima = libre. Con dos umbrales distintos la zona intermedia confundia paredes con huecos.
-const int SIDE_WALL_MM = 150;        // lateral por debajo de esto = hay pared
+// Un solo umbral lateral: distancia del costado del raton a la pared (ya convertida desde la lectura
+// en diagonal, ver RobotHW::sideMm). Por debajo = pared; sin lectura o por encima = libre.
+// Centrado en un pasillo de 14 cm, cada costado queda a (140 - 80) / 2 = 30 mm.
+const int SIDE_WALL_MM = 80;         // costado a menos de esto de la pared = hay pared
 const int FRONT_WALL_MM = 140;       // frontal por debajo de esto = hay pared
 // Punto muerto: lo que marca el laser frontal con el morro del raton TOCANDO la pared (la pieza de
 // delante sobresale del sensor). CALIBRAR: pegar el raton a una pared y leer "Frontal" en la web.
-const int FRONT_DEADZONE_MM = 50;
-const int FRONT_MARGIN_MM = 15;      // margen de seguridad sobre el punto muerto
+const int FRONT_DEADZONE_MM = 10;    // el laser frontal va en la nariz, casi a ras
+const int FRONT_MARGIN_MM = 25;      // margen sobre el punto muerto: para con el frontal a 35 mm (a 30 el VL53L0X falla; simulado)
 const int FRONT_STOP_MM = FRONT_DEADZONE_MM + FRONT_MARGIN_MM;  // parada ante una pared en los modos de celdas
 
 // ---------- Arranque automatico (sin arrancador) ----------
@@ -175,17 +176,24 @@ const int MAP_CONF_STEPS = 8;
 const int LOOP_TURNS = 3;                   // modo 5: giros seguidos sin avanzar = atrapado en un cruce
 const float LOOP_MIN_TRAVEL_MM = 60.0f;     // avance minimo entre giros para no contar como bucle
 const float LOOP_ESCAPE_MM = 400.0f;        // tramo siguiendo la pared derecha para salir del bucle
-// Giro en dos tiempos (simulado en tools/sim_extremos.py): con el eje de ruedas atras, girar 90 de
-// golpe en un pasillo de 14 cm hace barrer la pared con el morro. Girando 70, avanzando y girando 20 cabe.
-const bool TURN_TWO_STAGE = true;
+// Giro en dos tiempos (70, avanzar, 20): solo para un raton con el eje muy atrasado. El raton real
+// (8 x 8 cm, eje en el centro) barre como mucho ~57 mm al girar y cabe girando en el sitio en el
+// centro de una celda de 14 cm, asi que gira en el sitio.
+const bool TURN_TWO_STAGE = false;
 const float TURN_SPLIT_DEG = 70.0f;
 const float TURN_SPLIT_ADVANCE_MM = 75.0f;
 // Al girar en dos tiempos el eje avanza ~70 mm en la direccion nueva; con el raton "centrado" en una
 // celda el eje queda AXLE_BEHIND_CENTER_MM por detras del centro. El siguiente avance de celdas descuenta
 // esa diferencia para no descuadrarse respecto a la rejilla.
-const float AXLE_BEHIND_CENTER_MM = 33.0f;
-const int CELL_WALL_MM = 100;               // leyendo una celda parado: pared de esa celda si mide menos
-const int SIDE_CLOSE_MM = 60;               // lateral sin lectura tras una lectura menor que esto = demasiado
+const float AXLE_BEHIND_CENTER_MM = 0.0f;    // eje de ruedas en el centro del cuerpo
+const int CELL_WALL_MM = 100;               // leyendo una celda parado: pared delante si el frontal mide menos
+// Paredes laterales de una celda: se miden AL LLEGAR a ella, cuando el rayo en diagonal cae en el
+// centro de su costado (el raton va SIDE_LOOK_AHEAD_MM antes del centro). Parado en el centro, el
+// rayo a 45 grados apunta justo al poste de la esquina y no distingue pared de hueco.
+const int CELL_SIDE_WALL_MM = 70;           // costado a menos de esto de la pared = pared en esa celda
+const uint8_t MAX_NO_PROGRESS = 3;          // tramos seguidos sin avanzar antes de pararse (SIN_AVANCE)
+const bool SELF_CHECK_ON_START = true;      // al encender: comprobacion corta de motores (sin giros de 90)
+const int SIDE_CLOSE_MM = 40;               // lateral sin lectura tras una lectura menor que esto = demasiado
                                             // cerca (por debajo del minimo del laser), no un hueco
 const float UNSTICK_BACK_MM = 25.0f;        // atascado con el frente libre: atras...
 const float UNSTICK_DEG = 10.0f;            // ...y enderezarse hacia el lado con mas espacio
@@ -202,11 +210,20 @@ const float NUDGE_BACK_MM = 15.0f;          // al rozar un lateral: marcha atras
 const float NUDGE_DEG = 15.0f;              // ...y enderezarse estos grados hacia el otro lado
 const int SIDE_OPEN_MM = SIDE_WALL_MM;               // lateral por encima de esto (o sin lectura) = hueco
 const float OPEN_CONFIRM_MM = 5.0f;         // el hueco tiene que seguir abierto este recorrido
-// Geometria del raton (CALIBRAR con una regla)
-const float ROBOT_WIDTH_MM = 90.0f;         // entre las caras de los dos laseres laterales
-const float SIDE_SENSOR_AHEAD_MM = 56.0f;   // cuanto van los laseres laterales por delante del eje de ruedas
-const float FRONT_SENSOR_AHEAD_MM = 33.0f;  // cuanto va el laser frontal por delante del eje de ruedas
+// Geometria del raton (CALIBRAR con una regla). Raton de ~8 x 8 cm con el eje en el centro; los
+// laseres laterales van en las esquinas biseladas del frente y miran en diagonal (45 grados).
+const float BODY_LENGTH_MM = 80.0f;
+const float BODY_WIDTH_MM = 80.0f;
+const float ROBOT_WIDTH_MM = BODY_WIDTH_MM; // las distancias laterales se dan desde los costados
+const float SIDE_SENSOR_AHEAD_MM = 30.0f;   // laseres laterales: por delante del eje...
+const float SIDE_SENSOR_LATERAL_MM = 30.0f; // ...y separados 3 cm del centro hacia cada lado (medido)
+const float SIDE_SENSOR_ANGLE_DEG = 45.0f;  // angulo del rayo lateral respecto a la marcha
+const float SIDE_ANGLE_TOLERANCE_DEG = 5.0f;  // error de montaje medido (+-5): los umbrales valen de 40 a 50
+const float FRONT_SENSOR_AHEAD_MM = 40.0f;  // cuanto va el laser frontal por delante del eje de ruedas
 const float DEFAULT_CORRIDOR_MM = 140.0f;   // ancho de pasillo inicial; luego lo mide solo
+// Donde toca la pared el rayo lateral (por delante del eje) con el raton centrado: ahi es donde "mira".
+// Con el rayo a 45 grados (tan = 1) avanza lo mismo que se separa: 30 + (70 - 30) = 70 mm.
+const float SIDE_LOOK_AHEAD_MM = SIDE_SENSOR_AHEAD_MM + (0.5f * DEFAULT_CORRIDOR_MM - SIDE_SENSOR_LATERAL_MM);
 
 const float KFF_SPEED = (PWM_MAX - PWM_MIN_RUN) / 500.0f; // PWM por mm/s, sumado a PWM_MIN_RUN
 const float SPEED_FILTER = 0.85f;         // suavizado de la velocidad medida (0..1, mas = mas suave)
@@ -236,9 +253,11 @@ const float MAX_STEER = 0.12f;            // correccion maxima de PWM entre rued
 const float KP_TURN = 0.006f;
 const float KD_TURN = 0.0010f;
 const bool TURN_IN_PLACE = true;            // true = gira sobre si mismo (pista pequena), false = pivote en una rueda
-const float TURN_PWM_MAX = 0.32f;
-const float TURN_PWM_MIN = 0.28f;          // minimo para girar en el sitio
-const float TURN_TOLERANCE_DEG = 3.0f;
+const float TURN_PWM_MAX = 0.40f;
+const float TURN_PWM_MIN = 0.28f;          // minimo para ARRANCAR a girar (parado); girando ya no se fuerza
+const float TURN_TOLERANCE_DEG = 4.0f;     // giro dado por bueno
+const float TURN_ACCEPT_DEG = 8.0f;        // parado y sin poder afinar: se acepta (lo corrige el rumbo de la cuadricula)
+const float TURN_FAIL_DEG = 20.0f;         // error mayor al acabar el tiempo = giro fallido (para el modo)
 const uint32_t TURN_TIMEOUT_MS = 3000;
 
 }  // namespace cfg

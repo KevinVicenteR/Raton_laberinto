@@ -4,6 +4,9 @@
 #include <sstream>
 #include <string>
 
+#include <cstring>
+
+#include "frame.h"
 #include "maze_io.h"
 #include "motion_progress.h"
 #include "motion_safety.h"
@@ -32,6 +35,26 @@ uint16_t optimal(const raton::Maze& truth) {
   raton::FloodFill f;
   f.compute(truth, goals, n, true);
   return f.distance(C(0, 0));
+}
+
+void testFrame() {
+  CHECK(raton::crc8("123456789", 9) == 0xF4);  // valor de referencia de CRC-8 (poly 0x07)
+  char line[64], payload[32];
+  const size_t n = raton::frameLine(7, "m3", line, sizeof(line));
+  CHECK(n == strlen(line));
+  uint16_t seq = 0;
+  CHECK(raton::parseFrame(line, seq, payload, sizeof(payload)) == raton::FrameResult::Ok);
+  CHECK(seq == 7 && std::string(payload) == "m3");
+  line[3] = '4';  // "$7,m4*.." con el CRC de m3
+  CHECK(raton::parseFrame(line, seq, payload, sizeof(payload)) == raton::FrameResult::BadCrc);
+  CHECK(raton::parseFrame("m3", seq, payload, sizeof(payload)) == raton::FrameResult::Plain);
+  CHECK(raton::parseFrame("$7,m3", seq, payload, sizeof(payload)) == raton::FrameResult::Malformed);
+  CHECK(raton::parseFrame("$x,m3*00", seq, payload, sizeof(payload)) != raton::FrameResult::Ok);
+  char small[6];
+  CHECK(raton::frameLine(1, "una linea larga", small, sizeof(small)) == 0);
+  // Misma trama que tools/telemetry_protocol.js (frame(65535,'x')).
+  raton::frameLine(65535, "x", line, sizeof(line));
+  CHECK(raton::parseFrame(line, seq, payload, sizeof(payload)) == raton::FrameResult::Ok && seq == 65535);
 }
 
 void testMotionSafety() {
@@ -192,6 +215,7 @@ void testMazeFiles() {
 }  // namespace
 
 int main() {
+  testFrame();
   testMotionSafety();
   testMotionProgress();
   testMazeBasics();

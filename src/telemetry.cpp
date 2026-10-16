@@ -3,6 +3,7 @@
 #include <ArduinoBLE.h>
 
 #include "config.h"
+#include "frame.h"
 
 namespace telemetry {
 
@@ -13,6 +14,7 @@ BLECharacteristic rx("6E400002-B5A3-F393-E0A9-E50E24DCCA9E", BLEWrite | BLEWrite
 BLECharacteristic tx("6E400003-B5A3-F393-E0A9-E50E24DCCA9E", BLENotify, 20);
 bool ready = false;
 uint32_t dropped = 0;
+uint16_t seq = 0;  // numero de la siguiente linea enviada (protocolo de frame.h)
 
 char inbuf[64];
 int inHead = 0;
@@ -68,17 +70,38 @@ void poll() {
   tx.writeValue(buf, k);
 }
 
-void println(const char* line) {
+void println(const char* raw) {
   if (!ready || !BLE.connected()) return;
+  // Cada linea va con numero y CRC: la web descarta las corruptas y cuenta las perdidas.
+  char line[200];
+  if (!raton::frameLine(seq, raw, line, sizeof(line))) { ++dropped; return; }
   const int n = static_cast<int>(strlen(line)) + 1;  // con el salto de linea
-  if (outUsed() + n >= static_cast<int>(sizeof(outbuf))) { ++dropped; return; }
+  if (outUsed() + n >= static_cast<int>(sizeof(outbuf))) {
+    ++dropped;
+    ++seq;  // el hueco en la numeracion avisa a la web de la perdida
+    return;
+  }
   for (int i = 0; i < n; ++i) {
     outbuf[outHead] = i < n - 1 ? line[i] : '\n';
     outHead = (outHead + 1) % static_cast<int>(sizeof(outbuf));
   }
+  ++seq;
 }
 
 uint32_t droppedLines() { return dropped; }
+
+void flush(uint32_t ms) {
+  const uint32_t t0 = millis();
+  while (ready && BLE.connected() && outHead != outTail && millis() - t0 < ms) {
+    poll();
+    delay(3);
+  }
+  const uint32_t t1 = millis();
+  while (ready && millis() - t1 < 60) {  // que el controlador BLE llegue a mandar la ultima notificacion
+    BLE.poll();
+    delay(3);
+  }
+}
 
 int read() {
   if (inHead == inTail) return -1;

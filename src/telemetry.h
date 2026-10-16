@@ -14,6 +14,8 @@ void poll();
 void println(const char* line);
 // Whole lines dropped due to queue pressure; diagnostic capture must report loss.
 uint32_t droppedLines();
+// Envia lo que quede en la cola durante como mucho ms milisegundos (antes de reiniciar).
+void flush(uint32_t ms);
 // Siguiente caracter recibido, o -1.
 int read();
 

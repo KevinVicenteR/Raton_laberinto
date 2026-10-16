@@ -1,6 +1,7 @@
 #include "robot_hw.h"
 
 #include "config.h"
+#include "frame.h"
 #include "motion_progress.h"
 #include "risk_model.h"
 #include "telemetry.h"
@@ -243,15 +244,37 @@ void RobotHW::updateHeading() {
 void RobotHW::handleInput() {
   auto feed = [this](int c) {
     if (c < 0) return;
-    if (c == 'x' || c == 'X') {
+    // 'x' suelta (fuera de una orden) para al momento, sin esperar al salto de linea.
+    if ((c == 'x' || c == 'X') && cmdLen_ == 0) {
       aborted_ = true;
-      cmdLen_ = 0;
       return;
     }
     if (c == '\n' || c == '\r') {
       if (cmdLen_ > 0) {
         cmd_[cmdLen_] = 0;
-        runCommand(cmd_);
+        // Orden con protocolo ("$seq,orden*CRC"): se comprueba y se contesta ACK/NAK con su numero.
+        uint16_t seq = 0;
+        char payload[sizeof(cmd_)];
+        char reply[24];
+        switch (raton::parseFrame(cmd_, seq, payload, sizeof(payload))) {
+          case raton::FrameResult::Plain:
+            runCommand(cmd_);
+            break;
+          case raton::FrameResult::Ok:
+            snprintf(reply, sizeof(reply), "ACK %u", static_cast<unsigned>(seq));
+            telemetry::println(reply);
+            if (seq != lastCmdSeq_ || !cmdSeqValid_) {  // un reintento repetido no se ejecuta dos veces
+              lastCmdSeq_ = seq;
+              cmdSeqValid_ = true;
+              if ((payload[0] == 'x' || payload[0] == 'X') && payload[1] == 0) aborted_ = true;
+              else runCommand(payload);
+            }
+            break;
+          default:
+            snprintf(reply, sizeof(reply), "NAK %u", static_cast<unsigned>(seq));
+            telemetry::println(reply);
+            break;
+        }
       }
       cmdLen_ = 0;
     } else if (cmdLen_ < static_cast<int>(sizeof(cmd_)) - 1) {
@@ -282,6 +305,12 @@ void RobotHW::runCommand(const char* cmd) {
       steerMode_ = value >= 1 ? 1 : 0;
       break;
     case 's':
+      // s = arrancar en el modo elegido; s<n> = arrancar directamente en el modo n (si estaba en
+      // marcha, para el modo actual y arranca el nuevo).
+      if (value >= 1 && value <= 5) {
+        requestedMode_ = static_cast<int>(value);
+        aborted_ = true;
+      }
       startRequested_ = true;
       break;
     case 'G': {
@@ -322,8 +351,22 @@ void RobotHW::runCommand(const char* cmd) {
       lasers_.setSignalLimit(clampf(value, 0.05f, 5.0f));
       break;
     case 'm':
-      if (value >= 1 && value <= 5) requestedMode_ = static_cast<int>(value);
+      // m<n>: elegir modo. Si estaba en marcha, se para y queda esperando ARRANCAR en el modo nuevo.
+      if (value >= 1 && value <= 5) {
+        requestedMode_ = static_cast<int>(value);
+        aborted_ = true;
+      }
       break;
+    case 'R': {
+      // R: reiniciar la placa (como apagar y encender, sin tocar la bateria). Para los motores, deja
+      // salir el ACK y el aviso por Bluetooth y reinicia; la web se vuelve a conectar sola.
+      aborted_ = true;
+      motors_.coast();
+      telemetry::println("REINICIO");
+      telemetry::flush(500);  // que salgan el ACK y el aviso (sin escribir por USB: podria bloquear)
+      NVIC_SystemReset();
+      break;
+    }
     case 'N': {
       // N<c|l><0|1>: encender o apagar la red de control (c) o la de logica (l)
       const bool on = cmd[2] == '1';
@@ -336,7 +379,7 @@ void RobotHW::runCommand(const char* cmd) {
     case '?':
       break;
     default:
-      snprintf(reply, sizeof(reply), "? s x m<1-5> v p k j d r g w z n G N<c|l><0|1> ?");
+      snprintf(reply, sizeof(reply), "? s s<1-5> x R m<1-5> v p k j d r g w z n G N<c|l><0|1> ?");
       telemetry::println(reply);
       Serial.println(reply);
       return;
@@ -397,32 +440,45 @@ int RobotHW::frontMm() {
   return -1;
 }
 
+namespace {
+const float kSideSin = sinf(cfg::SIDE_SENSOR_ANGLE_DEG / 57.2958f);
+}  // namespace
+
+int RobotHW::sideMm(Lasers::Id id) const {
+  // El laser lateral mira en diagonal: lo que mide es la hipotenusa. Distancia del costado a la pared =
+  // lectura * sin(angulo) + separacion del sensor - medio ancho del cuerpo.
+  const int raw = lasers_.mm(id);
+  if (raw < 0) return -1;
+  const float v = raw * kSideSin + cfg::SIDE_SENSOR_LATERAL_MM - 0.5f * cfg::BODY_WIDTH_MM;
+  return v > 0 ? static_cast<int>(v + 0.5f) : 0;
+}
+
 raton::Walls RobotHW::readWalls() {
   lasers_.waitFresh(2);
   auto wall = [](int mm, int threshold) { return mm >= 0 && mm < threshold; };
-  return raton::Walls{wall(lasers_.mm(Lasers::LEFT), sideWall_),
+  return raton::Walls{wall(sideMm(Lasers::LEFT), sideWall_),
                       wall(frontMm(), cfg::FRONT_WALL_MM),
-                      wall(lasers_.mm(Lasers::RIGHT), sideWall_)};
+                      wall(sideMm(Lasers::RIGHT), sideWall_)};
 }
 
 bool RobotHW::lateralOffset(float& offset, float& rate, float& conf) const {
-  const int l = lasers_.mm(Lasers::LEFT);
-  const int r = lasers_.mm(Lasers::RIGHT);
+  const int l = sideMm(Lasers::LEFT);
+  const int r = sideMm(Lasers::RIGHT);
   const bool hasL = l >= 0 && l < sideWall_;
   const bool hasR = r >= 0 && r < sideWall_;
   const float center = 0.5f * (corridorMm_ - cfg::ROBOT_WIDTH_MM);
   const float cl = lasers_.confidence(Lasers::LEFT), cr = lasers_.confidence(Lasers::RIGHT);
   if (hasL && hasR) {
     offset = (l - r) * 0.5f;
-    rate = (lasers_.rate(Lasers::LEFT) - lasers_.rate(Lasers::RIGHT)) * 0.5f;
+    rate = (lasers_.rate(Lasers::LEFT) - lasers_.rate(Lasers::RIGHT)) * 0.5f * kSideSin;
     conf = fminf(cl, cr);
   } else if (hasL) {
     offset = l - center;
-    rate = lasers_.rate(Lasers::LEFT);
+    rate = lasers_.rate(Lasers::LEFT) * kSideSin;
     conf = cl;
   } else if (hasR) {
     offset = center - r;
-    rate = -lasers_.rate(Lasers::RIGHT);
+    rate = -lasers_.rate(Lasers::RIGHT) * kSideSin;
     conf = cr;
   } else {
     return false;
@@ -431,8 +487,8 @@ bool RobotHW::lateralOffset(float& offset, float& rate, float& conf) const {
 }
 
 bool RobotHW::lateralOffset(float& offset) const {
-  const int l = lasers_.mm(Lasers::LEFT);
-  const int r = lasers_.mm(Lasers::RIGHT);
+  const int l = sideMm(Lasers::LEFT);
+  const int r = sideMm(Lasers::RIGHT);
   const bool hasL = l >= 0 && l < sideWall_;
   const bool hasR = r >= 0 && r < sideWall_;
   // Con una sola pared: centrado = la mitad del hueco que deja el raton en el pasillo medido.
@@ -481,25 +537,54 @@ int RobotHW::runCells(int cells, float vmax, bool* unexpected) {
   float pos = 0;
   uint32_t movingAt = millis();  // si se atasca (empujando una pared), deja de empujar
   uint32_t next = micros();
+  // Paredes laterales de cada celda: se leen al llegar, con el rayo diagonal en el centro de su costado.
+  numCellSides_ = 0;
+  bool stuck = false;
+  const uint32_t runStart = millis();
+  int8_t bestL = -1, bestR = -1;  // lecturas mas cortas en la ventana de la celda que toca (-1 = ninguna)
+  bool windowSeen = false;
 
   while (!aborted_) {
     waitPeriod(next);
 
     pos = 0.5f * (encoders_.left() + encoders_.right()) * cfg::MM_PER_COUNT;
+    if (numCellSides_ < cells && numCellSides_ < kMaxCellSides) {
+      const float at = (numCellSides_ + 1) * cfg::CELL_MM - already - cfg::SIDE_LOOK_AHEAD_MM;
+      if (pos >= at - kSideWindowMm) {
+        const int l = sideMm(Lasers::LEFT), r = sideMm(Lasers::RIGHT);
+        if (l >= 0 && (bestL < 0 || l < bestL)) bestL = static_cast<int8_t>(l > 120 ? 120 : l);
+        if (r >= 0 && (bestR < 0 || r < bestR)) bestR = static_cast<int8_t>(r > 120 ? 120 : r);
+        windowSeen = true;
+      }
+      if (windowSeen && pos >= at + kSideWindowMm) {
+        cellSideL_[numCellSides_] = bestL >= 0 && bestL < cfg::CELL_SIDE_WALL_MM;
+        cellSideR_[numCellSides_] = bestR >= 0 && bestR < cfg::CELL_SIDE_WALL_MM;
+        numCellSides_++;
+        bestL = bestR = -1;
+        windowSeen = false;
+      }
+    }
     speed = cfg::SPEED_FILTER * speed + (1.0f - cfg::SPEED_FILTER) * (pos - lastPos) / dt;
     lastPos = pos;
     lastSpeed_ = speed;
     updateHeading();
     if (speed > 20.0f) movingAt = millis();
-    if (millis() - movingAt > cfg::STALL_MS) {
-      setState("ATASCO");
+    // Pegado contra una pared: con potencia pero sin avanzar (encoders quietos), o un golpe seco
+    // (acelerometro) yendo en marcha. Se para, se aparta y el explorador apunta la pared.
+    const bool stalled = millis() - movingAt > cfg::STALL_MS;
+    const bool bumped = speed > cfg::BUMP_MIN_SPEED && millis() - runStart > cfg::BUMP_IGNORE_MS &&
+                        gyro_.bumpG() > cfg::BUMP_G;
+    if (stalled || bumped) {
+      stuck = true;
       if (unexpected) *unexpected = true;
       break;
     }
 
     float remaining = target - pos;
     const int front = frontMm();
-    const int stop = deadzone_ + cfg::FRONT_MARGIN_MM;
+    // Parada ante una pared: con el raton centrado en la celda (frontTurnMm), nunca mas cerca que el
+    // punto muerto mas el margen.
+    const int stop = frontTurnMm();
     if (front >= 0 && front < cfg::FRONT_WALL_MM) {
       if (remaining > front + cfg::CELL_MM / 2) {
         // Pared delante mucho antes de lo esperado: el mapa no coincide. Parar ante ella.
@@ -522,6 +607,14 @@ int RobotHW::runCells(int cells, float vmax, bool* unexpected) {
   }
   ctrlActive_ = false;
   stopMotors();
+  if (stuck && !aborted_) {
+    setState("PEGADO");
+    char line[48];
+    snprintf(line, sizeof(line), "PEGADO pos=%d frente=%d", static_cast<int>(pos), frontMm());
+    telemetry::println(line);
+    backUp(cfg::UNSTICK_BACK_MM);  // apartarse recto de la pared antes de decidir (pone a cero los encoders)
+    pos += 0.5f * (encoders_.left() + encoders_.right()) * cfg::MM_PER_COUNT;
+  }
   const auto progress = raton::motionProgress(pos, already, cfg::CELL_MM, cells, false);
   const int moved = progress.cells;
   // Donde queda el centro del raton respecto al de la celda: con pared delante lo dice el laser; si no,
@@ -719,8 +812,8 @@ RobotHW::DriveEvent RobotHW::drive(float maxMm, int watchSide) {
     float remaining = maxMm - pos;
     if (remaining <= 1.0f) break;
     const int front = frontMm();
-    const int left = lasers_.mm(Lasers::LEFT);
-    const int right = lasers_.mm(Lasers::RIGHT);
+    const int left = sideMm(Lasers::LEFT);
+    const int right = sideMm(Lasers::RIGHT);
     // Rozando una pared lateral: se para para enderezarse hacia el otro lado. Si los dos laterales
     // estan cerca a la vez es un pasillo estrecho, no un roce: solo se centra (si no, se enderezaria
     // a un lado y al otro sin fin).
@@ -833,29 +926,27 @@ void RobotHW::selfCheck(char* msg) {
   }
   rotate(-yaw);  // volver al rumbo inicial (ya con los motores bien)
 
-  // 2) Laseres: tras girar 90 grados a la izquierda, lo que estaba delante queda a la derecha.
-  lasers_.waitFresh(3);
-  const int f0 = lasers_.mm(Lasers::FRONT);
-  bool lasersSwapped = false;
-  if (f0 > 0 && f0 < 1000) {
-    rotate(90.0f);
-    lasers_.waitFresh(3);
-    const int l = lasers_.mm(Lasers::LEFT);
-    const int r = lasers_.mm(Lasers::RIGHT);
-    rotate(-90.0f);
-    const int dl = l < 0 ? 10000 : abs(l - f0);
-    const int dr = r < 0 ? 10000 : abs(r - f0);
-    if (dl + 40 < dr) {
-      lasersSwapped = true;
-      lasers_.setSwapped(true);
-    }
-  }
+  // 2) Laseres: no se comprueban girando (los laterales miran en diagonal y girar 90 grados en la
+  // salida sin mirar el espacio podia rozar). Si estan cruzados, se ve en la web (I/D al reves).
+  const bool lasersSwapped = false;
   snprintf(msg, 22, "Mot %s Las %s", motorsSwapped ? "CRUZ" : "ok", lasersSwapped ? "CRUZ" : "ok");
 }
 
 void RobotHW::turnCorner(float degrees, bool trackCells) {
   if (!cfg::TURN_TWO_STAGE || fabsf(fabsf(degrees) - 90.0f) > 1.0f) {
-    rotate(degrees);
+    // Giro en el sitio (el raton real cabe girando en el centro de la celda). Con cuadricula, hasta el
+    // rumbo exacto de la pista, asi el error de cada giro no se acumula.
+    if (gridOn_) {
+      gridYaw_ += degrees;
+      float e = fmodf(gridYaw_ - gyro_.totalYaw(), 360.0f);
+      if (e > 180.0f) e -= 360.0f;
+      if (e < -180.0f) e += 360.0f;
+      rotate(e);
+    } else {
+      rotate(degrees);
+    }
+    // Girando sobre el eje (centro del cuerpo) el raton sigue centrado en la celda.
+    if (trackCells) pendingAdvance_ = 0;
     return;
   }
   if(!actionAllowed(degrees)) {
@@ -941,8 +1032,8 @@ int RobotHW::backOut(float maxMm) {
         if (since < 0) since = back;
         return back - since >= cfg::OPEN_CONFIRM_MM;
       };
-      if (check(lasers_.mm(Lasers::LEFT), sinceL)) found = 1;
-      else if (check(lasers_.mm(Lasers::RIGHT), sinceR)) found = -1;
+      if (check(sideMm(Lasers::LEFT), sinceL)) found = 1;
+      else if (check(sideMm(Lasers::RIGHT), sinceR)) found = -1;
       if (found) foundAt = back;
     } else if (back - foundAt >= 0.5f * corridorMm_) {
       break;  // el laser lateral ya esta en el centro del hueco
@@ -987,39 +1078,46 @@ void RobotHW::rotate(float degrees) {
   const uint32_t t0 = millis();
   uint32_t next = micros();
   int settled = 0;
+  float err = degrees;
 
   while (!aborted_ && millis() - t0 < cfg::TURN_TIMEOUT_MS) {
     waitPeriod(next);
-    const float err = degrees - gyro_.yaw();
+    err = degrees - gyro_.yaw();
     const float rate = gyro_.rate();
-    // Dentro de tolerancia: frenar y dar el giro por bueno en cuanto se quede casi quieto.
-    // Oscilar no demuestra que el giro se haya completado.
+    // Dentro de tolerancia y casi quieto: hecho. Se decide aqui, antes de frenar.
     if (fabsf(err) < cfg::TURN_TOLERANCE_DEG) {
       motors_.brake();
-      if (fabsf(rate) < 30.0f && ++settled > 3) break;
+      if (fabsf(rate) < 40.0f && ++settled >= 3) break;
       continue;
     }
     settled = 0;
     const int sign = err >= 0 ? 1 : -1;
+    // PD: frena solo al acercarse (la derivada resta cuando ya gira deprisa hacia el objetivo).
     float pwm = clampf(cfg::KP_TURN * err - cfg::KD_TURN * rate, -cfg::TURN_PWM_MAX, cfg::TURN_PWM_MAX);
-    // El minimo solo hace falta para arrancar: girando ya, se deja bajar y frena sin pasarse.
-    if (fabsf(rate) < 30.0f && fabsf(pwm) < cfg::TURN_PWM_MIN) pwm = sign * cfg::TURN_PWM_MIN;
+    if (fabsf(rate) < 20.0f) {
+      // Parado. Lejos del objetivo: empujon minimo para arrancar. Cerca (< TURN_ACCEPT_DEG) y parado,
+      // no se insiste (insistir a todo o nada lo hacia bailar sobre el objetivo hasta agotar el tiempo).
+      if (fabsf(err) < cfg::TURN_ACCEPT_DEG && millis() - t0 > 300) break;
+      if (fabsf(pwm) < cfg::TURN_PWM_MIN) pwm = sign * cfg::TURN_PWM_MIN;
+    }
     if (cfg::TURN_IN_PLACE) {
       motors_.set(-pwm, pwm);  // sobre si mismo: lo que menos espacio ocupa
     } else if (pwm > 0) {
-      // Pivote sobre una rueda: a la izquierda se para la izquierda y empuja la derecha.
       motors_.set(0, pwm);
     } else {
       motors_.set(-pwm, 0);
     }
   }
   stopMotors();
-  if (!aborted_ && fabsf(degrees - gyro_.yaw()) >= cfg::TURN_TOLERANCE_DEG) {
+  // Un error pequeno lo corrige el rumbo de la cuadricula en el tramo siguiente; solo un giro claramente
+  // incompleto para el modo (perderia la posicion en el mapa).
+  const bool failed = !aborted_ && fabsf(err) >= cfg::TURN_FAIL_DEG;
+  if (failed) {
     aborted_ = true;
     setState("GIRO_FALLO");
     telemetry::println("ERROR: giro incompleto; parado para no perder la posicion");
   }
-  recordMotion("rotate",degrees,{!aborted_,0,degrees-gyro_.yaw(),aborted_?
+  recordMotion("rotate",degrees,{!failed && !aborted_,0,err,failed?
     raton::MotionReason::TurnError:raton::MotionReason::Complete});
 }
 

@@ -16,3 +16,11 @@ assert.deepEqual(p.parse('CTRL dyaw=-12 vscale=85'),{kind:'CTRL',dyaw:-12,vscale
 assert.equal(p.parse('LOGIC f=120 r=-30 b=-200 l=10 pick=f').pick,'f');
 assert.equal(p.parse('NET control=1 control_trained=1 logic=0 logic_trained=0').logic,0);
 assert.equal(p.parse('CTRL dyaw=abc vscale=85'),null);
+// Protocolo de lineas con numero y CRC (igual que lib/raton_core/src/frame.cpp)
+assert.equal(p.crc8('123456789'),0xF4);
+const fr=p.frame(7,'m3');assert.equal(fr,'$7,m3*'+p.crc8('7,m3').toString(16).toUpperCase().padStart(2,'0'));
+assert.deepEqual(p.unframe(fr),{kind:'ok',seq:7,payload:'m3'});
+assert.equal(p.unframe(fr.replace('m3','m4')).kind,'bad');
+assert.equal(p.unframe('$7,m3*G1').kind,'bad');
+assert.deepEqual(p.unframe('INICIO_MAPA'),{kind:'plain',payload:'INICIO_MAPA'});
+assert.equal(p.unframe(p.frame(65535,'x')).seq,65535);

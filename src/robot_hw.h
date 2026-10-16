@@ -20,11 +20,14 @@ class RobotHW : public raton::Robot {
   RobotHW(Motors& motors, Encoders& encoders, Lasers& lasers, Gyro& gyro, Display& display);
 
   raton::Walls readWalls() override;
+  // Distancia del costado izquierdo/derecho a la pared (mm, -1 = nada), convertida desde la lectura
+  // en diagonal del laser lateral (SIDE_SENSOR_ANGLE_DEG).
+  int sideMm(Lasers::Id id) const;
   void moveForward(int cells) override;
   // Giros del solver: en dos tiempos (caben en 14 cm) y llevando la cuenta del avance para la rejilla.
   void turnLeft() override { turnCorner(90.0f, true); }
   void turnRight() override { turnCorner(-90.0f, true); }
-  void turnAround() override { rotate(180.0f); }
+  void turnAround() override { turnCorner(180.0f, true); }
   void setRunMode(raton::RunMode mode) override { mode_ = mode; }
   void onStep(const raton::Maze& maze, const raton::FloodFill& flood, raton::Cell pos, raton::Dir heading) override;
   bool aborted() override { return aborted_; }
@@ -76,6 +79,14 @@ class RobotHW : public raton::Robot {
   void setGrid(bool on) {
     gridOn_ = on;
     gridYaw_ = gyro_.totalYaw();
+  }
+  // Paredes laterales leidas en el ultimo runCells, una por celda recorrida (0 = la primera celda
+  // a la que llego). Devuelve false si esa celda no llego a medirse.
+  bool cellSides(int i, bool& left, bool& right) const {
+    if (i < 0 || i >= numCellSides_) return false;
+    left = cellSideL_[i];
+    right = cellSideR_[i];
+    return true;
   }
   // Paredes de la celda leidas parado con varias medidas (izq, delante, der respecto al rumbo).
   // Sin ninguna lectura de un lateral pero con la ultima muy corta hace nada = pegado a pared.
@@ -220,6 +231,11 @@ class RobotHW : public raton::Robot {
   int worldDir(float turnDeg) const;  // 0 norte, 1 oeste, 2 sur, 3 este
   uint8_t exits_[kGrid][kGrid][4] = {};
   float pendingAdvance_ = 0;       // cuanto va el centro del raton por delante del centro de la celda
+  static const int kMaxCellSides = 20;
+  static constexpr float kSideWindowMm = 12.0f;  // ventana de lectura alrededor del punto de cada celda
+  bool cellSideL_[kMaxCellSides] = {};
+  bool cellSideR_[kMaxCellSides] = {};
+  int numCellSides_ = 0;
   bool gridOn_ = false;
   bool cornerLeg_ = false;         // drive() es el tramo diagonal de un giro en dos tiempos
   float gridYaw_ = 0;              // totalYaw del norte de la cuadricula
@@ -242,6 +258,8 @@ class RobotHW : public raton::Robot {
   uint32_t maxLagUs_ = 0;
   bool startRequested_ = false;
   int requestedMode_ = 0;
+  uint16_t lastCmdSeq_ = 0;
+  bool cmdSeqValid_ = false;
   int goalX_ = cfg::GOAL_X;
   int goalY_ = cfg::GOAL_Y;
   float odoX_ = 0;
@@ -253,6 +271,6 @@ class RobotHW : public raton::Robot {
   float odoDist_ = 0;        // recorrido total hacia delante (mm, marcha atras resta)
   int frontMemMm_ = -1;      // ultima lectura frontal valida cercana
   float frontMemDist_ = 0;   // odoDist_ en ese momento
-  char cmd_[16] = {};
+  char cmd_[48] = {};
   int cmdLen_ = 0;
 };

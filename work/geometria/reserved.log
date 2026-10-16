@@ -1,0 +1,180 @@
+1/180 mapped maze=200 mode=3 clean=False contacts=2 reason=barrido bloqueado por paredes observadas
+2/180 mapped maze=200 mode=5 clean=False contacts=2 reason=barrido bloqueado por paredes observadas
+3/180 mapped maze=200 mode=3 clean=False contacts=2 reason=barrido bloqueado por paredes observadas
+4/180 mapped maze=200 mode=5 clean=False contacts=2 reason=barrido bloqueado por paredes observadas
+5/180 mapped maze=200 mode=3 clean=False contacts=2 reason=barrido bloqueado por paredes observadas
+6/180 mapped maze=200 mode=5 clean=False contacts=2 reason=barrido bloqueado por paredes observadas
+7/180 mapped maze=201 mode=3 clean=False contacts=1 reason=navegacion terminada sin llegada fisica
+8/180 mapped maze=201 mode=5 clean=False contacts=1 reason=navegacion terminada sin llegada fisica
+9/180 mapped maze=201 mode=3 clean=False contacts=1 reason=navegacion terminada sin llegada fisica
+10/180 mapped maze=201 mode=5 clean=False contacts=1 reason=navegacion terminada sin llegada fisica
+11/180 mapped maze=201 mode=3 clean=False contacts=1 reason=navegacion terminada sin llegada fisica
+12/180 mapped maze=201 mode=5 clean=False contacts=1 reason=navegacion terminada sin llegada fisica
+13/180 mapped maze=202 mode=3 clean=False contacts=1 reason=barrido bloqueado por paredes observadas
+14/180 mapped maze=202 mode=5 clean=False contacts=1 reason=barrido bloqueado por paredes observadas
+15/180 mapped maze=202 mode=3 clean=True contacts=0 reason=None
+16/180 mapped maze=202 mode=5 clean=True contacts=0 reason=None
+17/180 mapped maze=202 mode=3 clean=False contacts=0 reason=barrido bloqueado por paredes observadas
+18/180 mapped maze=202 mode=5 clean=False contacts=0 reason=barrido bloqueado por paredes observadas
+19/180 mapped maze=203 mode=3 clean=False contacts=2 reason=navegacion terminada sin llegada fisica
+20/180 mapped maze=203 mode=5 clean=False contacts=2 reason=navegacion terminada sin llegada fisica
+21/180 mapped maze=203 mode=3 clean=False contacts=2 reason=navegacion terminada sin llegada fisica
+22/180 mapped maze=203 mode=5 clean=False contacts=2 reason=navegacion terminada sin llegada fisica
+23/180 mapped maze=203 mode=3 clean=False contacts=2 reason=navegacion terminada sin llegada fisica
+24/180 mapped maze=203 mode=5 clean=False contacts=2 reason=navegacion terminada sin llegada fisica
+25/180 mapped maze=204 mode=3 clean=False contacts=1 reason=navegacion terminada sin llegada fisica
+26/180 mapped maze=204 mode=5 clean=False contacts=1 reason=navegacion terminada sin llegada fisica
+27/180 mapped maze=204 mode=3 clean=False contacts=0 reason=barrido bloqueado por paredes observadas
+28/180 mapped maze=204 mode=5 clean=False contacts=0 reason=barrido bloqueado por paredes observadas
+29/180 mapped maze=204 mode=3 clean=False contacts=0 reason=barrido bloqueado por paredes observadas
+30/180 mapped maze=204 mode=5 clean=False contacts=0 reason=barrido bloqueado por paredes observadas
+31/180 mapped maze=205 mode=3 clean=False contacts=2 reason=navegacion terminada sin llegada fisica
+32/180 mapped maze=205 mode=5 clean=False contacts=2 reason=navegacion terminada sin llegada fisica
+33/180 mapped maze=205 mode=3 clean=False contacts=2 reason=navegacion terminada sin llegada fisica
+34/180 mapped maze=205 mode=5 clean=False contacts=2 reason=navegacion terminada sin llegada fisica
+35/180 mapped maze=205 mode=3 clean=False contacts=1 reason=navegacion terminada sin llegada fisica
+36/180 mapped maze=205 mode=5 clean=False contacts=1 reason=navegacion terminada sin llegada fisica
+37/180 mapped maze=206 mode=3 clean=False contacts=1 reason=navegacion terminada sin llegada fisica
+38/180 mapped maze=206 mode=5 clean=False contacts=1 reason=navegacion terminada sin llegada fisica
+39/180 mapped maze=206 mode=3 clean=False contacts=1 reason=navegacion terminada sin llegada fisica
+40/180 mapped maze=206 mode=5 clean=False contacts=1 reason=navegacion terminada sin llegada fisica
+41/180 mapped maze=206 mode=3 clean=False contacts=1 reason=navegacion terminada sin llegada fisica
+42/180 mapped maze=206 mode=5 clean=False contacts=1 reason=navegacion terminada sin llegada fisica
+43/180 mapped maze=207 mode=3 clean=True contacts=0 reason=None
+44/180 mapped maze=207 mode=5 clean=True contacts=0 reason=None
+45/180 mapped maze=207 mode=3 clean=True contacts=0 reason=None
+46/180 mapped maze=207 mode=5 clean=True contacts=0 reason=None
+47/180 mapped maze=207 mode=3 clean=True contacts=0 reason=None
+48/180 mapped maze=207 mode=5 clean=True contacts=0 reason=None
+49/180 mapped maze=208 mode=3 clean=True contacts=0 reason=None
+50/180 mapped maze=208 mode=5 clean=True contacts=0 reason=None
+51/180 mapped maze=208 mode=3 clean=True contacts=0 reason=None
+52/180 mapped maze=208 mode=5 clean=True contacts=0 reason=None
+53/180 mapped maze=208 mode=3 clean=True contacts=0 reason=None
+54/180 mapped maze=208 mode=5 clean=True contacts=0 reason=None
+55/180 mapped maze=209 mode=3 clean=True contacts=0 reason=None
+56/180 mapped maze=209 mode=5 clean=True contacts=0 reason=None
+57/180 mapped maze=209 mode=3 clean=True contacts=0 reason=None
+58/180 mapped maze=209 mode=5 clean=True contacts=0 reason=None
+59/180 mapped maze=209 mode=3 clean=True contacts=0 reason=None
+60/180 mapped maze=209 mode=5 clean=True contacts=0 reason=None
+61/180 mapped maze=210 mode=3 clean=True contacts=0 reason=None
+62/180 mapped maze=210 mode=5 clean=True contacts=0 reason=None
+63/180 mapped maze=210 mode=3 clean=False contacts=0 reason=barrido bloqueado por paredes observadas
+64/180 mapped maze=210 mode=5 clean=False contacts=0 reason=barrido bloqueado por paredes observadas
+65/180 mapped maze=210 mode=3 clean=False contacts=0 reason=barrido bloqueado por paredes observadas
+66/180 mapped maze=210 mode=5 clean=False contacts=0 reason=barrido bloqueado por paredes observadas
+67/180 mapped maze=211 mode=3 clean=False contacts=1 reason=navegacion terminada sin llegada fisica
+68/180 mapped maze=211 mode=5 clean=False contacts=1 reason=navegacion terminada sin llegada fisica
+69/180 mapped maze=211 mode=3 clean=False contacts=1 reason=navegacion terminada sin llegada fisica
+70/180 mapped maze=211 mode=5 clean=False contacts=1 reason=navegacion terminada sin llegada fisica
+71/180 mapped maze=211 mode=3 clean=False contacts=1 reason=navegacion terminada sin llegada fisica
+72/180 mapped maze=211 mode=5 clean=False contacts=1 reason=navegacion terminada sin llegada fisica
+73/180 mapped maze=212 mode=3 clean=True contacts=0 reason=None
+74/180 mapped maze=212 mode=5 clean=True contacts=0 reason=None
+75/180 mapped maze=212 mode=3 clean=False contacts=0 reason=barrido bloqueado por paredes observadas
+76/180 mapped maze=212 mode=5 clean=False contacts=0 reason=barrido bloqueado por paredes observadas
+77/180 mapped maze=212 mode=3 clean=False contacts=0 reason=barrido bloqueado por paredes observadas
+78/180 mapped maze=212 mode=5 clean=False contacts=0 reason=barrido bloqueado por paredes observadas
+79/180 mapped maze=213 mode=3 clean=True contacts=0 reason=None
+80/180 mapped maze=213 mode=5 clean=True contacts=0 reason=None
+81/180 mapped maze=213 mode=3 clean=True contacts=0 reason=None
+82/180 mapped maze=213 mode=5 clean=True contacts=0 reason=None
+83/180 mapped maze=213 mode=3 clean=True contacts=0 reason=None
+84/180 mapped maze=213 mode=5 clean=True contacts=0 reason=None
+85/180 mapped maze=214 mode=3 clean=False contacts=1 reason=navegacion terminada sin llegada fisica
+86/180 mapped maze=214 mode=5 clean=False contacts=1 reason=navegacion terminada sin llegada fisica
+87/180 mapped maze=214 mode=3 clean=False contacts=1 reason=navegacion terminada sin llegada fisica
+88/180 mapped maze=214 mode=5 clean=False contacts=1 reason=navegacion terminada sin llegada fisica
+89/180 mapped maze=214 mode=3 clean=False contacts=1 reason=navegacion terminada sin llegada fisica
+90/180 mapped maze=214 mode=5 clean=False contacts=1 reason=navegacion terminada sin llegada fisica
+91/180 mapped maze=215 mode=3 clean=False contacts=1 reason=barrido bloqueado por paredes observadas
+92/180 mapped maze=215 mode=5 clean=False contacts=1 reason=barrido bloqueado por paredes observadas
+93/180 mapped maze=215 mode=3 clean=False contacts=1 reason=barrido bloqueado por paredes observadas
+94/180 mapped maze=215 mode=5 clean=False contacts=1 reason=barrido bloqueado por paredes observadas
+95/180 mapped maze=215 mode=3 clean=False contacts=1 reason=barrido bloqueado por paredes observadas
+96/180 mapped maze=215 mode=5 clean=False contacts=1 reason=barrido bloqueado por paredes observadas
+97/180 mapped maze=216 mode=3 clean=True contacts=0 reason=None
+98/180 mapped maze=216 mode=5 clean=True contacts=0 reason=None
+99/180 mapped maze=216 mode=3 clean=True contacts=0 reason=None
+100/180 mapped maze=216 mode=5 clean=True contacts=0 reason=None
+101/180 mapped maze=216 mode=3 clean=True contacts=0 reason=None
+102/180 mapped maze=216 mode=5 clean=True contacts=0 reason=None
+103/180 mapped maze=217 mode=3 clean=True contacts=0 reason=None
+104/180 mapped maze=217 mode=5 clean=True contacts=0 reason=None
+105/180 mapped maze=217 mode=3 clean=True contacts=0 reason=None
+106/180 mapped maze=217 mode=5 clean=True contacts=0 reason=None
+107/180 mapped maze=217 mode=3 clean=True contacts=0 reason=None
+108/180 mapped maze=217 mode=5 clean=True contacts=0 reason=None
+109/180 mapped maze=218 mode=3 clean=True contacts=0 reason=None
+110/180 mapped maze=218 mode=5 clean=True contacts=0 reason=None
+111/180 mapped maze=218 mode=3 clean=True contacts=0 reason=None
+112/180 mapped maze=218 mode=5 clean=True contacts=0 reason=None
+113/180 mapped maze=218 mode=3 clean=True contacts=0 reason=None
+114/180 mapped maze=218 mode=5 clean=True contacts=0 reason=None
+115/180 mapped maze=219 mode=3 clean=True contacts=0 reason=None
+116/180 mapped maze=219 mode=5 clean=True contacts=0 reason=None
+117/180 mapped maze=219 mode=3 clean=True contacts=0 reason=None
+118/180 mapped maze=219 mode=5 clean=True contacts=0 reason=None
+119/180 mapped maze=219 mode=3 clean=True contacts=0 reason=None
+120/180 mapped maze=219 mode=5 clean=True contacts=0 reason=None
+121/180 mapped maze=220 mode=3 clean=False contacts=1 reason=navegacion terminada sin llegada fisica
+122/180 mapped maze=220 mode=5 clean=False contacts=1 reason=navegacion terminada sin llegada fisica
+123/180 mapped maze=220 mode=3 clean=False contacts=1 reason=navegacion terminada sin llegada fisica
+124/180 mapped maze=220 mode=5 clean=False contacts=1 reason=navegacion terminada sin llegada fisica
+125/180 mapped maze=220 mode=3 clean=False contacts=1 reason=navegacion terminada sin llegada fisica
+126/180 mapped maze=220 mode=5 clean=False contacts=1 reason=navegacion terminada sin llegada fisica
+127/180 mapped maze=221 mode=3 clean=False contacts=1 reason=navegacion terminada sin llegada fisica
+128/180 mapped maze=221 mode=5 clean=False contacts=1 reason=navegacion terminada sin llegada fisica
+129/180 mapped maze=221 mode=3 clean=False contacts=1 reason=navegacion terminada sin llegada fisica
+130/180 mapped maze=221 mode=5 clean=False contacts=1 reason=navegacion terminada sin llegada fisica
+131/180 mapped maze=221 mode=3 clean=False contacts=1 reason=navegacion terminada sin llegada fisica
+132/180 mapped maze=221 mode=5 clean=False contacts=1 reason=navegacion terminada sin llegada fisica
+133/180 mapped maze=222 mode=3 clean=False contacts=2 reason=navegacion terminada sin llegada fisica
+134/180 mapped maze=222 mode=5 clean=False contacts=2 reason=navegacion terminada sin llegada fisica
+135/180 mapped maze=222 mode=3 clean=False contacts=1 reason=navegacion terminada sin llegada fisica
+136/180 mapped maze=222 mode=5 clean=False contacts=1 reason=navegacion terminada sin llegada fisica
+137/180 mapped maze=222 mode=3 clean=False contacts=2 reason=navegacion terminada sin llegada fisica
+138/180 mapped maze=222 mode=5 clean=False contacts=2 reason=navegacion terminada sin llegada fisica
+139/180 mapped maze=223 mode=3 clean=False contacts=1 reason=navegacion terminada sin llegada fisica
+140/180 mapped maze=223 mode=5 clean=False contacts=1 reason=navegacion terminada sin llegada fisica
+141/180 mapped maze=223 mode=3 clean=False contacts=1 reason=navegacion terminada sin llegada fisica
+142/180 mapped maze=223 mode=5 clean=False contacts=1 reason=navegacion terminada sin llegada fisica
+143/180 mapped maze=223 mode=3 clean=True contacts=0 reason=None
+144/180 mapped maze=223 mode=5 clean=True contacts=0 reason=None
+145/180 mapped maze=224 mode=3 clean=True contacts=0 reason=None
+146/180 mapped maze=224 mode=5 clean=True contacts=0 reason=None
+147/180 mapped maze=224 mode=3 clean=True contacts=0 reason=None
+148/180 mapped maze=224 mode=5 clean=True contacts=0 reason=None
+149/180 mapped maze=224 mode=3 clean=True contacts=0 reason=None
+150/180 mapped maze=224 mode=5 clean=True contacts=0 reason=None
+151/180 mapped maze=225 mode=3 clean=False contacts=2 reason=barrido bloqueado por paredes observadas
+152/180 mapped maze=225 mode=5 clean=False contacts=2 reason=barrido bloqueado por paredes observadas
+153/180 mapped maze=225 mode=3 clean=False contacts=2 reason=barrido bloqueado por paredes observadas
+154/180 mapped maze=225 mode=5 clean=False contacts=2 reason=barrido bloqueado por paredes observadas
+155/180 mapped maze=225 mode=3 clean=False contacts=1 reason=barrido bloqueado por paredes observadas
+156/180 mapped maze=225 mode=5 clean=False contacts=1 reason=barrido bloqueado por paredes observadas
+157/180 mapped maze=226 mode=3 clean=True contacts=0 reason=None
+158/180 mapped maze=226 mode=5 clean=True contacts=0 reason=None
+159/180 mapped maze=226 mode=3 clean=False contacts=0 reason=barrido bloqueado por paredes observadas
+160/180 mapped maze=226 mode=5 clean=False contacts=0 reason=barrido bloqueado por paredes observadas
+161/180 mapped maze=226 mode=3 clean=False contacts=0 reason=barrido bloqueado por paredes observadas
+162/180 mapped maze=226 mode=5 clean=False contacts=0 reason=barrido bloqueado por paredes observadas
+163/180 mapped maze=227 mode=3 clean=False contacts=1 reason=navegacion terminada sin llegada fisica
+164/180 mapped maze=227 mode=5 clean=False contacts=1 reason=navegacion terminada sin llegada fisica
+165/180 mapped maze=227 mode=3 clean=False contacts=1 reason=navegacion terminada sin llegada fisica
+166/180 mapped maze=227 mode=5 clean=False contacts=1 reason=navegacion terminada sin llegada fisica
+167/180 mapped maze=227 mode=3 clean=True contacts=0 reason=None
+168/180 mapped maze=227 mode=5 clean=True contacts=0 reason=None
+169/180 mapped maze=228 mode=3 clean=False contacts=2 reason=navegacion terminada sin llegada fisica
+170/180 mapped maze=228 mode=5 clean=False contacts=2 reason=navegacion terminada sin llegada fisica
+171/180 mapped maze=228 mode=3 clean=False contacts=1 reason=navegacion terminada sin llegada fisica
+172/180 mapped maze=228 mode=5 clean=False contacts=1 reason=navegacion terminada sin llegada fisica
+173/180 mapped maze=228 mode=3 clean=False contacts=1 reason=navegacion terminada sin llegada fisica
+174/180 mapped maze=228 mode=5 clean=False contacts=1 reason=navegacion terminada sin llegada fisica
+175/180 mapped maze=229 mode=3 clean=False contacts=0 reason=barrido bloqueado por paredes observadas
+176/180 mapped maze=229 mode=5 clean=False contacts=0 reason=barrido bloqueado por paredes observadas
+177/180 mapped maze=229 mode=3 clean=False contacts=1 reason=navegacion terminada sin llegada fisica
+178/180 mapped maze=229 mode=5 clean=False contacts=1 reason=navegacion terminada sin llegada fisica
+179/180 mapped maze=229 mode=3 clean=False contacts=2 reason=navegacion terminada sin llegada fisica
+180/180 mapped maze=229 mode=5 clean=False contacts=2 reason=navegacion terminada sin llegada fisica

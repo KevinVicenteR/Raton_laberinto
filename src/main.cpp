@@ -98,11 +98,27 @@ int waitForStart(int mode) {
   bool far = false;
   bool near = false;
   robot.setState("PARADO");
+  char conf[16];
+  snprintf(conf, sizeof(conf), "MODE %d", mode);
+  telemetry::println(conf);  // la web marca el modo cuando la placa lo confirma
+  uint32_t lastConf = millis();
   while (true) {
     robot.idle(20);
     const int m = robot.takeMode();
-    if (m) mode = m;
-    if (robot.takeStart()) return mode;
+    if (m) {
+      mode = m;
+      lastConf = 0;  // confirmar ya
+    }
+    if (millis() - lastConf > 2000) {  // y cada 2 s, por si la web se conecta despues
+      snprintf(conf, sizeof(conf), "MODE %d", mode);
+      telemetry::println(conf);
+      lastConf = millis();
+    }
+    if (robot.takeStart()) {
+      snprintf(conf, sizeof(conf), "START %d", mode);
+      telemetry::println(conf);
+      return mode;
+    }
     if (cfg::WAIT_FOR_WEB_START) {
       char l1[22];
       snprintf(l1, sizeof(l1), "Modo %d", mode);
@@ -141,8 +157,8 @@ bool frontBlocked() {
 // Atascado con el frente libre (el morro roza una esquina): atras y enderezarse hacia el lado libre.
 void unstick() {
   auto space = [](int mm) { return mm < 0 ? 10000 : mm; };
-  const int left = space(lasers.mm(Lasers::LEFT));
-  const int right = space(lasers.mm(Lasers::RIGHT));
+  const int left = space(robot.sideMm(Lasers::LEFT));
+  const int right = space(robot.sideMm(Lasers::RIGHT));
   robot.setState("DESATASCO");
   decide(left > right ? "atascado con el frente libre -> atras y endereza a la izquierda"
                       : "atascado con el frente libre -> atras y endereza a la derecha");
@@ -174,12 +190,12 @@ void followWall(int side, float maxMm) {
       // Hueco en la pared que se sigue: llevar el eje de las ruedas al centro del hueco, girar y entrar.
       // El laser lateral va SIDE_SENSOR_AHEAD_MM por delante del eje y el hueco mide como el pasillo.
       const float half = 0.5f * robot.corridorMm();
-      robot.drive(fmaxf(cfg::SIDE_SENSOR_AHEAD_MM + half - cfg::OPEN_CONFIRM_MM, 0.0f), 0);
+      robot.drive(fmaxf(cfg::SIDE_LOOK_AHEAD_MM + half - cfg::OPEN_CONFIRM_MM, 0.0f), 0);
       decide(side < 0 ? "hueco en la pared derecha -> entra" : "hueco en la pared izquierda -> entra");
       robot.turnCorner(90.0f * side);
       // Entrar hasta que el laser lateral quede dentro del pasillo nuevo.
-      robot.drive(fmaxf(half - cfg::SIDE_SENSOR_AHEAD_MM + 15.0f, 15.0f), 0);
-      robot.ignoreSidesFor(half + cfg::SIDE_SENSOR_AHEAD_MM);
+      robot.drive(fmaxf(half - cfg::SIDE_LOOK_AHEAD_MM + 15.0f, 15.0f), 0);
+      robot.ignoreSidesFor(half + cfg::SIDE_LOOK_AHEAD_MM);
     } else if (ev == RobotHW::DriveEvent::FrontWall && !frontBlocked()) {
       unstick();
     } else if (ev == RobotHW::DriveEvent::CrashLeft || ev == RobotHW::DriveEvent::CrashRight) {
@@ -205,7 +221,7 @@ void followWall(int side, float maxMm) {
       } else {
         deadEnd();
       }
-      robot.ignoreSidesFor(0.5f * robot.corridorMm() + cfg::SIDE_SENSOR_AHEAD_MM);
+      robot.ignoreSidesFor(0.5f * robot.corridorMm() + cfg::SIDE_LOOK_AHEAD_MM);
     }
   }
 }
@@ -256,7 +272,7 @@ bool freeSpace() {
     const float half = 0.5f * robot.corridorMm();
     if (ev == RobotHW::DriveEvent::SideOpen) {
       // El laser lateral va por delante del eje: avanzar hasta que el eje quede en el centro del hueco.
-      robot.drive(fmaxf(cfg::SIDE_SENSOR_AHEAD_MM + half - cfg::OPEN_CONFIRM_MM, 0.0f), 0);
+      robot.drive(fmaxf(cfg::SIDE_LOOK_AHEAD_MM + half - cfg::OPEN_CONFIRM_MM, 0.0f), 0);
     }
 
     // Parado en el cruce: leer los tres laseres con medidas nuevas.
@@ -264,9 +280,10 @@ bool freeSpace() {
     lasers.waitFresh(3);
     // Sin lectura justo despues de una lectura muy corta = demasiado cerca para el laser, no libre.
     auto side = [&](Lasers::Id id) {
-      const int mm = lasers.mm(id);
+      // Distancia del costado a la pared (convertida desde el rayo en diagonal).
+      const int mm = robot.sideMm(id);
       if (mm < 0 && lasers.lastValidMm(id) < cfg::SIDE_CLOSE_MM && lasers.lastValidAgeMs(id) < 300) {
-        return lasers.lastValidMm(id);
+        return 0;  // sin lectura justo tras una muy corta: pegado a la pared
       }
       return space(mm);
     };
@@ -313,7 +330,7 @@ bool freeSpace() {
     if (turn == 0) {
       decide(why);
       // Recto: pasar el hueco sin volver a detectarlo.
-      robot.drive(half + cfg::SIDE_SENSOR_AHEAD_MM, 0);
+      robot.drive(half + cfg::SIDE_LOOK_AHEAD_MM, 0);
       robot.ignoreSidesFor(half);
       continue;
     }
@@ -331,9 +348,9 @@ bool freeSpace() {
     }
     if (turn != 180) {
       // Entrar en el pasillo nuevo hasta que los laterales vean sus paredes.
-      robot.drive(fmaxf(half - cfg::SIDE_SENSOR_AHEAD_MM + 15.0f, 15.0f), 0);
+      robot.drive(fmaxf(half - cfg::SIDE_LOOK_AHEAD_MM + 15.0f, 15.0f), 0);
     }
-    robot.ignoreSidesFor(half + cfg::SIDE_SENSOR_AHEAD_MM);
+    robot.ignoreSidesFor(half + cfg::SIDE_LOOK_AHEAD_MM);
   }
   return robot.goalReached();
 }
@@ -413,12 +430,37 @@ void flood(raton::Cell goal) {
 
 uint8_t distAt(raton::Cell c) { return inside(c) ? gDist[c.x][c.y] : 255; }
 
+// Paredes de una celda en la que el raton esta parado y centrado sin haber llegado por un tramo (la
+// salida, o tras algo inesperado): parado, el rayo lateral en diagonal apunta al poste de la esquina y
+// no distingue pared de hueco, asi que cada lado se mira girando y leyendo con el laser frontal.
 void senseHere(raton::Cell pos, raton::Dir heading) {
-  const raton::Walls w = robot.senseCell();
-  setMapWall(pos, heading, w.front);
-  setMapWall(pos, raton::leftOf(heading), w.left);
-  setMapWall(pos, raton::rightOf(heading), w.right);
+  setMapWall(pos, heading, robot.senseCell().front);
+  robot.turnCorner(90.0f, true);
+  if (robot.aborted()) return;
+  setMapWall(pos, raton::leftOf(heading), robot.senseCell().front);
+  robot.turnCorner(-180.0f, true);
+  if (robot.aborted()) return;
+  setMapWall(pos, raton::rightOf(heading), robot.senseCell().front);
+  robot.turnCorner(90.0f, true);
   gSeen[pos.x][pos.y] = true;
+  decide("celda leida girando");
+}
+
+// Tras un tramo: paredes laterales de cada celda recorrida (medidas al llegar a ella) y la de delante
+// de la ultima (con el frontal, ya parado y centrado).
+void applyRun(raton::Cell from, raton::Dir dir, int moved) {
+  raton::Cell c = from;
+  for (int i = 0; i < moved; ++i) {
+    c = raton::step(c, dir);
+    bool left = false, right = false;
+    if (robot.cellSides(i, left, right)) {
+      setMapWall(c, raton::leftOf(dir), left);
+      setMapWall(c, raton::rightOf(dir), right);
+      gSeen[c.x][c.y] = true;
+    }
+    if (i + 1 < moved) setMapWall(c, dir, false);  // la atraveso
+  }
+  if (moved > 0) setMapWall(c, dir, robot.senseCell().front);
 }
 
 // Red de logica: entre las direcciones que la inundacion permite (abiertas y que acercan a la meta), elige
@@ -464,8 +506,10 @@ int logicChoice(raton::Cell pos, raton::Dir heading, raton::Cell goal, int fallb
 // Va a la meta por celdas: lee las paredes de cada celda nueva, recalcula la inundacion y avanza por
 // tramos rectos (los ya vistos de una vez). Devuelve true al llegar.
 bool exploreTo(raton::Cell& pos, raton::Dir& heading, raton::Cell goal) {
+  int noProgress = 0;
   while (!robot.aborted() && !(pos.x == goal.x && pos.y == goal.y)) {
     if (!gSeen[pos.x][pos.y]) senseHere(pos, heading);
+    if (robot.aborted()) return false;
     if (gVisits[pos.x][pos.y] < 255) gVisits[pos.x][pos.y]++;
     flood(goal);
     const uint8_t here = gDist[pos.x][pos.y];
@@ -473,7 +517,7 @@ bool exploreTo(raton::Cell& pos, raton::Dir& heading, raton::Cell goal) {
       decide("no hay camino a la meta con las paredes vistas");
       return false;
     }
-    // Siguiente direccion: baja la distancia; en empate recto, luego giro, y marcha atras lo ultimo;
+    // Siguiente direccion: baja la distancia; en empate recto, luego giro, y media vuelta lo ultimo;
     // entre iguales, la celda menos visitada.
     int best = -1, bestKey = 1 << 30;
     for (int d = 0; d < 4; ++d) {
@@ -491,19 +535,6 @@ bool exploreTo(raton::Cell& pos, raton::Dir& heading, raton::Cell goal) {
     best = logicChoice(pos, heading, goal, best);
     const raton::Dir dir = static_cast<raton::Dir>(best);
     const int diff = (dir - heading + 4) & 3;
-    if (diff == 2) {
-      // Callejon: marcha atras una celda (parando antes si la de llegada tiene pared detras).
-      const raton::Cell next = raton::step(pos, dir);
-      bool stuck = false;
-      const float shortMm = mapWall(next, dir) ? cfg::REVERSE_SHORT_MM : 0.0f;
-      if (robot.reverseCells(1, shortMm, &stuck) > 0) {
-        pos = next;
-      } else if (stuck) {
-        setMapWall(pos, dir, true);
-      }
-      decide("callejon: marcha atras una celda");
-      continue;
-    }
     // Celdas seguidas por terreno ya visto (de una vez, mas rapido).
     int cells = 1;
     raton::Cell c = raton::step(pos, dir);
@@ -512,17 +543,31 @@ bool exploreTo(raton::Cell& pos, raton::Dir& heading, raton::Cell goal) {
       c = raton::step(c, dir);
       cells++;
     }
-    if (diff == 1 || diff == 3) robot.turnCorner(diff == 1 ? -90.0f : 90.0f, true);
+    // Giro en el sitio (el raton cabe en el centro de la celda); en un callejon, media vuelta.
+    if (diff != 0) robot.turnCorner(diff == 1 ? -90.0f : (diff == 3 ? 90.0f : 180.0f), true);
     if (robot.aborted()) return false;
     heading = dir;
     bool unexpected = false;
+    const raton::Cell from = pos;
     const int moved = robot.runCells(cells, cfg::EXPLORE_SPEED, &unexpected);
     for (int i = 0; i < moved; ++i) pos = raton::step(pos, dir);
+    applyRun(from, dir, moved);
     char line[64];
     snprintf(line, sizeof(line), "%d celdas al %c -> %d,%d (dist %d)", moved, raton::dirChar(dir), pos.x, pos.y,
              gDist[pos.x][pos.y]);
     decide(line);
-    if (unexpected) gSeen[pos.x][pos.y] = false;  // algo no cuadra: volver a leer esta celda
+    if (moved == 0) {
+      // No avanzo: hay algo delante que el mapa no tenia. Se apunta y, si se repite, se para en vez
+      // de girar sin fin.
+      setMapWall(pos, dir, true);
+      if (++noProgress >= cfg::MAX_NO_PROGRESS) {
+        robot.setState("SIN_AVANCE");
+        decide("no consigue avanzar: parado");
+        return false;
+      }
+    } else {
+      noProgress = 0;
+    }
   }
   return !robot.aborted();
 }
@@ -548,27 +593,20 @@ bool runRoute(raton::Cell& pos, raton::Dir& heading, raton::Cell goal, float vma
     }
     const int diff = (dir - heading + 4) & 3;
     if (diff == 2) return false;  // la ruta mas corta nunca da media vuelta
-    if (diff == 1 || diff == 3) {
-      // Antes de girar, comprobar que ese lado esta abierto de verdad.
-      const raton::Walls w = robot.senseCell();
-      if (diff == 1 ? w.right : w.left) {
-        setMapWall(pos, dir, true);
-        return false;
-      }
-      robot.turnCorner(diff == 1 ? -90.0f : 90.0f, true);
-    }
+    // El lado al que gira ya se midio al llegar a esta celda (applyRun): si era pared, mapWall lo
+    // habria descartado arriba. Gira en el sitio.
+    if (diff == 1 || diff == 3) robot.turnCorner(diff == 1 ? -90.0f : 90.0f, true);
     if (robot.aborted()) return false;
     heading = dir;
     bool unexpected = false;
+    const raton::Cell from = pos;
     const int moved = robot.runCells(cells, vmax, &unexpected);
     for (int i = 0; i < moved; ++i) pos = raton::step(pos, dir);
+    applyRun(from, dir, moved);
     char line[64];
     snprintf(line, sizeof(line), "tramo de %d celdas al %c -> celda %d,%d", moved, raton::dirChar(dir), pos.x, pos.y);
     decide(line);
-    if (unexpected || moved < cells) {
-      gSeen[pos.x][pos.y] = false;
-      return false;
-    }
+    if (unexpected || moved < cells) return false;  // el mapa no coincide: sigue explorando desde aqui
   }
   return gDist[pos.x][pos.y] == 0;
 }
@@ -692,7 +730,7 @@ void loop() {
   robot.clearAbort();
   robot.takeStart();  // descarta un 's' repetido
   waitAutoStart(kModeNames[mode], cfg::START_DELAY_MS);
-  if (firstRun) {
+  if (firstRun && cfg::SELF_CHECK_ON_START) {
     // La revision (motores/laseres cruzados, distancia entre ruedas) solo al encender.
     char check[22];
     robot.selfCheck(check);
@@ -703,6 +741,8 @@ void loop() {
     display.show(kModeNames[mode], check, eje);
     firstRun = false;
   }
+  firstRun = false;
+  robot.clearAbort();     // un fallo de la revision no debe dejar el modo parado antes de empezar
   robot.resetOdometry();  // el mapa empieza donde arranca
   robot.clearGoal();      // cada modo pone su meta si la necesita
   telemetry::println("INICIO_MAPA");

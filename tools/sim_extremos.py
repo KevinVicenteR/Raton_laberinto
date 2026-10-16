@@ -2,7 +2,7 @@
 """Simulador 2D de casos extremos del raton (sin dependencias).
 
 Reproduce la logica del firmware de los modos 1 (seguir pared derecha) y 5 (espacio libre) con:
-  - la geometria del raton (eje de ruedas atras, laseres por delante del eje),
+  - cuerpo de 80 x 80 mm, eje central y laterales diagonales a 45 grados,
   - un modelo de VL53L0X (cono de 25 grados, minimo fiable 30 mm, alcance maximo, ruido, perdidas),
   - laberintos de prueba en el mismo formato de dibujo que src/competition_maze.h.
 
@@ -23,13 +23,22 @@ from dataclasses import dataclass, field, replace
 
 @dataclass
 class Robot:
-    length_front: float = 83.0   # del eje de ruedas al morro (mm)
-    length_back: float = 17.0    # del eje de ruedas a la trasera
-    width: float = 92.0          # ancho total
-    side_ahead: float = 56.0     # laseres laterales por delante del eje (real, medido en la foto)
-    side_inset: float = 0.0      # cuanto van hundidos los laterales hacia dentro del borde
-    front_ahead: float = 33.0    # laser frontal por delante del eje (real)
-    deadzone: float = 50.0       # lectura frontal con el morro tocando (FRONT_DEADZONE_MM)
+    length_front: float = 40.0
+    length_back: float = 40.0
+    width: float = 80.0
+    side_ahead: float = 30.0
+    side_inset: float = 10.0
+    side_angle: float = 45.0
+    front_ahead: float = 40.0
+    deadzone: float = 10.0
+
+    @classmethod
+    def preset(cls, name="real"):
+        if name == "antiguo":
+            return cls(83, 17, 92, 56, 0, 90, 33, 50)
+        if name != "real":
+            raise ValueError(name)
+        return cls()
 
 
 @dataclass
@@ -45,13 +54,16 @@ class Sensor:
 
 @dataclass
 class Firmware:
+    geometry: object = None
+    cell_side_wall: float = 70.0
+    side_look_ahead: float = 70.0
     speed: float = 100.0
     side_wall: float = 150.0     # SIDE_WALL_MM = SIDE_OPEN_MM
     front_wall: float = 140.0    # FRONT_WALL_MM
     front_margin: float = 15.0
-    cfg_side_ahead: float = 45.0  # lo que cree el firmware (SIDE_SENSOR_AHEAD_MM)
-    cfg_front_ahead: float = 50.0
-    robot_width_cfg: float = 90.0
+    cfg_side_ahead: float = 30.0  # lo que cree el firmware (SIDE_SENSOR_AHEAD_MM)
+    cfg_front_ahead: float = 40.0
+    robot_width_cfg: float = 80.0
     kp_wall: float = 0.08
     max_wall_deg: float = 4.0
     deadband: float = 5.0
@@ -172,6 +184,8 @@ class Sim:
     DT = 0.005
 
     def __init__(self, case, seed=1):
+        if case.fw.geometry is not None and case.robot == Robot():
+            case = replace(case, robot=case.fw.geometry)
         self.c = case
         self.rnd = random.Random(seed)
         self.segs, self.pitch, self.rows, self.cols = build_walls(case)
@@ -309,13 +323,13 @@ class Sim:
         half = r.width / 2 - r.side_inset
         mounts = {
             "F": (self.x + r.front_ahead * c, self.y + r.front_ahead * s, self.th),
-            "L": (self.x + r.side_ahead * c - half * s, self.y + r.side_ahead * s + half * c, self.th + math.pi / 2),
-            "R": (self.x + r.side_ahead * c + half * s, self.y + r.side_ahead * s - half * c, self.th - math.pi / 2),
+            "L": (self.x + r.side_ahead * c - half * s, self.y + r.side_ahead * s + half * c, self.th + math.radians(r.side_angle)),
+            "R": (self.x + r.side_ahead * c + half * s, self.y + r.side_ahead * s - half * c, self.th - math.radians(r.side_angle)),
         }
         for key, (ox, oy, a) in mounts.items():
             d = self.raycast(ox, oy, a)
             # El frontal va por detras del morro: su lectura incluye el punto muerto calibrado.
-            if d is not None and key == "F":
+            if d is not None and key == "F" and r.side_angle == 90:
                 d += r.deadzone - (r.length_front - r.front_ahead)
             val = -1
             if d is not None and d <= sn.max_mm and not (key == "L" and sn.blind_left):
@@ -384,7 +398,7 @@ class Sim:
     def prepare_turn(self, degrees):
         if not self.action_allowed(degrees):
             raise MotionFailure("giro rechazado por riesgo")
-        if self.c.controller=="baseline" or not self.c.sweep_guard:
+        if self.c.robot.side_angle != 90 or self.c.controller=="baseline" or not self.c.sweep_guard:
             return
         entry=self.native.turn(self.observation(),self.c.robot,self.c.fw,degrees)
         if entry is None:
@@ -787,6 +801,8 @@ class Sim:
         # Final de pared lateral (poste): el laser lateral pasa por el borde de la celda en una
         # posicion conocida -> corrige el error acumulado de los encoders.
         shift, edge, last_n, last_pos = 0.0, {"L": None, "R": None}, self.nsamples, 0.0
+        self.approach_sides = {}
+        next_sample = 1
         lead = fw.cfg_side_ahead - axle_back           # laser lateral por delante del centro
         while True:
             yield
@@ -825,17 +841,21 @@ class Sim:
                     if st[1] + 1 >= need:
                         self.edge_prev[k] = cls
             pos += shift
+            while not reverse and next_sample <= n and pos + ofs >= next_sample * cell - fw.side_look_ahead:
+                self.approach_sides[next_sample] = tuple(
+                    self.readings[k] >= 0 and self.side_face(self.readings[k]) < fw.cell_side_wall for k in ("L", "R"))
+                next_sample += 1
             remaining = target - pos
             F = self.readings["F"]
             stop = r.deadzone + fw.front_margin
             if not reverse and 0 <= F < fw.front_wall:
                 if remaining > F + cell / 2:
-                    unexpected, remaining = True, F - max(stop, fw.corner_front)
+                    unexpected, remaining = True, F - max(stop, self.c.corridor / 2 - fw.cfg_front_ahead)
                 elif remaining < cell:
                     # Ultima celda con pared: mitad encoders, mitad laser (el cono del laser ve cosas
                     # de lado y acorta), y nunca mas cerca que la zona muerta.
                     remaining = (min(0.5 * remaining + 0.5 * (F - fw.corner_front), F - stop) if fw.fused_stop
-                                 else F - max(stop, fw.corner_front))
+                                 else F - max(stop, self.c.corridor / 2 - fw.cfg_front_ahead))
             if remaining <= 1:
                 break
             v = min(v + 800 * self.DT, vmax, max(math.sqrt(max(0, 2 * 800 * remaining)), 40))
@@ -882,11 +902,17 @@ class Sim:
         self.along = self.pending - axle_back
         return min(moved, n), unexpected
 
+    def side_face(self, raw):
+        r = self.c.robot
+        return raw * math.sin(math.radians(r.side_angle)) - r.side_inset if raw >= 0 else -1
+
     def lateral(self, L, R):
         """Desviacion lateral (+ = hay que ir a la izquierda). Muy cerca (<30 mm) el VL53L0X mide de
         mas: si las dos paredes no suman el ancho del pasillo, solo se cree la lectura mas corta."""
         fw = self.c.fw
-        hasL, hasR = 0 <= L < fw.side_wall, 0 <= R < fw.side_wall
+        validL, validR = L >= 0, R >= 0
+        L, R = self.side_face(L), self.side_face(R)
+        hasL, hasR = validL and L < fw.side_wall, validR and R < fw.side_wall
         center = (140.0 - fw.robot_width_cfg) / 2
         if not fw.robust_lateral:
             center = (self.corridor_est - fw.robot_width_cfg) / 2
@@ -936,47 +962,10 @@ class Sim:
     @N.instrument
     def turn_corner_track(self, deg):
         yield from self.prepare_turn(deg)
-        fw = self.c.fw
-        sgn = 1 if deg > 0 else -1
-        axle_back = (self.c.robot.length_front - self.c.robot.length_back) / 2
-        if fw.align_front:
-            yield from self.align_front()
-        # Angulo del primer tiempo segun donde esta el eje en la celda: el tramo recto lo desplaza
-        # adv*cos(angulo) en el rumbo viejo, y tiene que acabar centrado en el pasillo nuevo.
-        along = self.along if self.along is not None else -axle_back
-        split = math.degrees(math.acos(max(-1.0, min(1.0, (fw.turn_lateral - along) / fw.split_advance))))
-        split = max(55.0, min(88.0, split)) if fw.adaptive_split else fw.split_deg
-        # Descentrado lateral medido con la pared del lado contrario al giro: si esta pegado a ella,
-        # le falta camino en la direccion nueva y el tramo recto del giro se alarga (y al reves).
-        h = [v for v in self.hist["R" if sgn > 0 else "L"] if v >= 0]
-        far = min(h) if len(h) >= 2 else -1     # la basura de muy cerca siempre mide de mas
-        nominal = (140.0 - fw.robot_width_cfg) / 2
-        reach = fw.split_advance * math.sin(math.radians(fw.split_deg))   # avance nominal en la direccion nueva
-        lat = max(-15.0, min(15.0, far - nominal)) if fw.turn_lat_comp and 0 <= far < fw.side_wall else 0.0
-        adv = (reach - lat) / math.sin(math.radians(split))
-        self.along = None
-        heading=self.grid_th if self.grid_th is not None else self.th
-        if fw.precision_turns:
-            yield from self.rotate_precise_to(heading+math.radians(sgn*split))
-        else:
-            yield from self.rotate(sgn * split)
-        corner_start = self.travelled
-        yield from self.drive(adv, 0, corner=fw.corner_leg)
-        corner_distance = self.travelled - corner_start
-        if self.grid_th is not None:
-            # Segundo tiempo hasta el rumbo exacto de la cuadricula, no un angulo fijo.
-            self.grid_th += math.radians(sgn * 90)
-            err = (self.grid_th - self.th + math.pi) % (2 * math.pi) - math.pi
-            if fw.precision_turns:
-                yield from self.rotate_precise_to(self.grid_th)
-            else:
-                yield from self.rotate(math.degrees(err))
-        else:
-            if fw.precision_turns:
-                yield from self.rotate_precise_to(heading+math.radians(sgn*90))
-            else:
-                yield from self.rotate(sgn * (90 - split))
-        self.pending = corner_distance * math.sin(math.radians(split)) + axle_back
+        target = (self.grid_th if self.grid_th is not None else self.th) + math.radians(deg)
+        yield from self.rotate_precise_to(target)
+        self.grid_th = target
+        self.pending = self.along = 0.0
 
     def mode4(self):
         known = self.c.known or self.c.maze
@@ -996,7 +985,7 @@ class Sim:
                 n = (c[0] + mv[d][0], c[1] + mv[d][1])
                 if not wall(c[0], c[1], d) and 0 <= n[0] < cols and 0 <= n[1] < rows and n not in dist:
                     dist[n] = dist[c] + 1; q.append(n)
-        pos, heading, mismatch, stuck_tries = tuple(self.c.start), 0, False, 0
+        pos, heading, mismatch = tuple(self.c.start), 0, False
         self.grid_th = self.th
         while dist.get(pos, 99) != 0:
             d = next(d for d in range(4) if not wall(pos[0], pos[1], d)
@@ -1011,26 +1000,17 @@ class Sim:
                 for _ in range(10):          # parado: lecturas nuevas (como readWalls en el firmware)
                     yield
                     self.tick()
-                side = self.readings["R"] if diff == 1 else self.readings["L"]
-                if 0 <= side < self.c.fw.side_wall:
-                    mismatch = True; break
                 yield from self.turn_corner_track(-90 if diff == 1 else 90)
             elif diff == 2:
-                mismatch = True; break
+                yield from self.turn_corner_track(180)
             heading = d
             moved, unexpected = yield from self.run_cells(cells, self.c.fw.comp_speed)
             for _ in range(moved):
                 pos = (pos[0] + mv[d][0], pos[1] + mv[d][1])
+            if moved:
+                self.cell_sides = self.approach_sides.get(moved, (False, False))
             F = self.readings["F"]
             real_wall = unexpected and 0 <= F < self.c.fw.front_wall
-            if unexpected and not real_wall and stuck_tries < 3:
-                # Atasco (roce), no pared: atras, enderezarse hacia el lado libre y seguir la ruta.
-                stuck_tries += 1
-                L, R = self.readings["L"], self.readings["R"]
-                yield from self.back(25)
-                yield from self.rotate(10 if (10000 if L < 0 else L) > (10000 if R < 0 else R) else -10)
-                continue
-            stuck_tries = 0
             if real_wall or moved < cells:
                 mismatch = True; break
         if mismatch:
@@ -1043,8 +1023,7 @@ class Sim:
 
     # --- modo 3: explorar por celdas con inundacion (igual que exploreCells del firmware)
     def explore(self, pos, heading, prior=None):
-        """Va a la meta por celdas: lee paredes en cada celda nueva, recalcula la inundacion (lo
-        desconocido cuenta como abierto) y sale de los callejones marcha atras (no cabe girar 180)."""
+        """Exploracion por celdas, anticipacion lateral y giros en el centro de 90/180 grados."""
         fw = self.c.fw
         cols, rows = self.cols, self.rows
         mv = [(0, 1), (1, 0), (0, -1), (-1, 0)]
@@ -1064,30 +1043,40 @@ class Sim:
         goal = tuple(self.c.goal)
         seen = set()
         visits = {}
+        no_progress = 0
+        blocked_front = None
         self.grid_th = self.th if self.grid_th is None else self.grid_th
         while pos != goal:
             if pos not in seen:
-                got = {"L": [], "F": [], "R": []}
-                for _ in range(fw.survey_samples):  # fresh stationary observations, no true walls
-                    for _ in range(4):
+                def front_sample():
+                    values = []
+                    for _ in range(fw.survey_samples * 4):
                         yield
                         self.tick()
-                    for k in got:
-                        got[k].append(self.raw_readings[k] if fw.raw_survey else self.readings[k])
-                def is_wall(k, thr):
-                    valid = [v for v in got[k] if v >= 0]
-                    if valid:
-                        return min(valid) < thr
-                    # Sin ninguna lectura: si la ultima valida era muy corta, esta pegado a la pared.
-                    # (en un hueco de verdad, la ultima lectura fue hace casi una celda de recorrido).
-                    val, _ = self.last_valid[k]
-                    return val < fw.close_mm and abs(self.travelled - self.last_valid_at[k]) < 40
-                self.sensed.append((round(self.t, 1), pos, heading, is_wall("L", 100), is_wall("F", 100),
-                                    is_wall("R", 100), got, (int((self.x + 33 * math.cos(self.th)) // self.pitch),
-                                                             int((self.y + 33 * math.sin(self.th)) // self.pitch))))
-                setw(pos[0], pos[1], heading, is_wall("F", 100))
-                setw(pos[0], pos[1], (heading + 3) % 4, is_wall("L", 100))
-                setw(pos[0], pos[1], (heading + 1) % 4, is_wall("R", 100))
+                        if self.readings["F"] >= 0:
+                            values.append(self.readings["F"])
+                    return bool(values) and sorted(values)[len(values)//2] < 100
+                front = yield from front_sample()
+                if not hasattr(self, "cell_sides"):
+                    yield from self.turn_corner_track(90)
+                    left = yield from front_sample()
+                    yield from self.turn_corner_track(-180)
+                    right = yield from front_sample()
+                    yield from self.turn_corner_track(90)
+                else:
+                    left, right = self.cell_sides
+                if blocked_front is not None:
+                    # No nueva aproximacion: las laterales almacenadas pertenecen
+                    # al rumbo de llegada, no al rumbo del intento que fallo.
+                    left = wall(*pos, (heading+3)%4)
+                    right = wall(*pos, (heading+1)%4)
+                    front = True
+                self.sensed.append((round(self.t, 1), pos, heading, left, front, right, {}, ()))
+                for d, value in ((heading, front), ((heading+3)%4, left), ((heading+1)%4, right)):
+                    setw(*pos, d, value)
+                if blocked_front is not None:
+                    setw(*pos, blocked_front, True)
+                    blocked_front = None
                 seen.add(pos)
             visits[pos] = visits.get(pos, 0) + 1
             dist, q = {goal: 0}, [goal]
@@ -1130,29 +1119,25 @@ class Sim:
                     dist.get((c[0] + mv[d][0], c[1] + mv[d][1]), 999) < dist[c]:
                 c, cells = (c[0] + mv[d][0], c[1] + mv[d][1]), cells + 1
             if diff == 2:
-                # Callejon: marcha atras celda a celda hasta poder girar hacia el camino.
-                nxt = (pos[0] + mv[d][0], pos[1] + mv[d][1])
-                short = fw.reverse_short if wall(nxt[0], nxt[1], d) else 0.0
-                moved, stuck = yield from self.run_cells(1, fw.comp_speed, reverse=True, short=short)
-                if moved:
-                    pos = (pos[0] + mv[d][0], pos[1] + mv[d][1])
-                elif stuck:
-                    # No puede ir atras: hay algo detras que no estaba en el mapa.
-                    setw(pos[0], pos[1], d, True)
-                continue
-            if diff in (1, 3):
+                yield from self.turn_corner_track(180)
+            elif diff in (1, 3):
                 yield from self.turn_corner_track(-90 if diff == 1 else 90)
-                heading = d
+            heading = d
             moved, unexpected = yield from self.run_cells(cells, fw.comp_speed)
             for _ in range(moved):
                 pos = (pos[0] + mv[d][0], pos[1] + mv[d][1])
+            if moved:
+                no_progress = 0
+                self.cell_sides = self.approach_sides.get(moved, (False, False))
+            else:
+                no_progress += 1
+                blocked_front = heading
+                setw(*pos, heading, True)
+                seen.discard(pos)
+                if no_progress >= 3:
+                    raise MotionFailure("sin avance")
             if unexpected:
-                F = self.readings["F"]
-                if not (0 <= F < fw.front_wall):
-                    L, R = self.readings["L"], self.readings["R"]
-                    yield from self.back(25)
-                    yield from self.rotate(10 if (10000 if L < 0 else L) > (10000 if R < 0 else R) else -10)
-                seen.discard(pos)        # volver a leer las paredes de esta celda
+                setw(*pos, heading, True)
         return True
 
     def mode3(self):

@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "telemetria",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": ["-m", "http.server", "8000", "--bind", "127.0.0.1", "--directory", "tools"],
+      "port": 8000
+    }
+  ]
+}

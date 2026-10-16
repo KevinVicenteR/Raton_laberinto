@@ -14,11 +14,30 @@ ROOT = Path(__file__).resolve().parents[1]
 def firmware_config(sim_module):
     from dataclasses import replace
     text = (ROOT / 'src/config.h').read_text()
-    def number(name):
-        match = re.search(r'const\s+(?:float|int|uint32_t)\s+' + name + r'\s*=\s*(-?[\d.]+)f?\s*;', text)
-        if not match:
-            raise ValueError(f'configuration not a numeric literal: {name}')
-        return float(match[1])
+    def number(name, default=None):
+        # Resolve the small arithmetic expressions used by geometry constants,
+        # without executing config.h or accepting arbitrary Python code.
+        import ast
+        import operator
+        declarations = dict(re.findall(
+            r'const\s+(?:float|int|uint32_t)\s+(\w+)\s*=\s*([^;]+);', text))
+        ops = {ast.Add:operator.add, ast.Sub:operator.sub,
+               ast.Mult:operator.mul, ast.Div:operator.truediv}
+        def value(node, active):
+            if isinstance(node, ast.Constant) and type(node.value) in (int,float):return node.value
+            if isinstance(node, ast.Name):return resolve(node.id, active)
+            if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.USub):return -value(node.operand, active)
+            if isinstance(node, ast.BinOp) and type(node.op) in ops:
+                return ops[type(node.op)](value(node.left,active),value(node.right,active))
+            raise ValueError('unsupported constant expression')
+        def resolve(key, active):
+            if key in active or key not in declarations:raise ValueError(key)
+            expression = re.sub(r'(?<=\d)f\b', '', declarations[key])
+            return value(ast.parse(expression, mode='eval').body, active | {key})
+        try:return float(resolve(name, set()))
+        except (ValueError, SyntaxError, ZeroDivisionError):
+            if default is not None:return default
+            raise ValueError(f'configuration not numeric: {name}')
     mapping = dict(speed='SEARCH_SPEED', side_wall='SIDE_WALL_MM', front_wall='FRONT_WALL_MM',
                    cfg_side_ahead='SIDE_SENSOR_AHEAD_MM', cfg_front_ahead='FRONT_SENSOR_AHEAD_MM',
                    robot_width_cfg='ROBOT_WIDTH_MM', kp_wall='KP_WALL', deadband='LATERAL_DEADBAND_MM',
@@ -27,8 +46,21 @@ def firmware_config(sim_module):
                    close_mm='SIDE_CLOSE_MM', comp_speed='COMP_SPEED', reverse_short='REVERSE_SHORT_MM',
                    w_goal='W_GOAL', w_exit='W_EXIT', front_margin='FRONT_MARGIN_MM')
     extra = {"turn_timeout":number("TURN_TIMEOUT_MS")/1000} if hasattr(sim_module.Firmware(), "turn_timeout") else {}
-    return replace(sim_module.Firmware(), **extra, **{k:number(v) for k,v in mapping.items()},
-                   turn_mode='dos_tiempos', unstick=True, weighted=True, edge_fix=False,
+    length=number('BODY_LENGTH_MM',80)
+    width=number('BODY_WIDTH_MM',80)
+    axle=number('AXLE_BEHIND_CENTER_MM',0)
+    geometry=replace(sim_module.Robot(), length_front=length/2+axle,
+        length_back=length/2-axle, width=width, side_ahead=number('SIDE_SENSOR_AHEAD_MM',30),
+        side_inset=width/2-number('SIDE_SENSOR_LATERAL_MM',30),
+        side_angle=number('SIDE_SENSOR_ANGLE_DEG',45), front_ahead=number('FRONT_SENSOR_AHEAD_MM',40),
+        deadzone=number('FRONT_DEADZONE_MM',10))
+    values = {k:number(v, {'cfg_side_ahead':30,'cfg_front_ahead':40,'robot_width_cfg':width}.get(k)) for k,v in mapping.items()}
+    front_stop = float(os.environ.get('RATON_CELL_FRONT_STOP_MM',0))
+    values['front_margin'] = max(values['front_margin'], front_stop-geometry.deadzone)
+    return replace(sim_module.Firmware(), geometry=geometry, **extra, **values,
+                   cell_side_wall=float(os.environ.get('RATON_CELL_SIDE_WALL_MM',number('CELL_SIDE_WALL_MM',70))),
+                   side_look_ahead=float(os.environ.get('RATON_SIDE_LOOK_AHEAD_MM',number('SIDE_LOOK_AHEAD_MM',70))),
+                   corner_front=30, turn_mode='sitio', unstick=True, weighted=True, edge_fix=False,
                    w=tuple(number(n) for n in ('W_FREE','W_NOVEL','W_TURN','B_STRAIGHT')))
 
 

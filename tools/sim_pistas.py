@@ -19,7 +19,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import sim_extremos as S  # noqa: E402
 
 from navigation import firmware_config
-FW = firmware_config(S)
+FW = replace(firmware_config(S), goal_grid=True, precision_turns=True)
 START, GOAL = (18, 0), (4, 2)
 
 
