@@ -11,3 +11,8 @@ assert.equal(p.parse('OBS age=NaN'),null);assert.equal(p.parse('OBS raw=1,2'),nu
 
 assert.throws(()=>p.validateReplay({trace:[frame],clean_arrival:true,reached:null,events:[]}));
 assert.throws(()=>p.validateReplay({trace:[frame],clean_arrival:true,reached:1,events:[[.5,'choque',1,2]]}));
+// Redes neuronales
+assert.deepEqual(p.parse('CTRL dyaw=-12 vscale=85'),{kind:'CTRL',dyaw:-12,vscale:85});
+assert.equal(p.parse('LOGIC f=120 r=-30 b=-200 l=10 pick=f').pick,'f');
+assert.equal(p.parse('NET control=1 control_trained=1 logic=0 logic_trained=0').logic,0);
+assert.equal(p.parse('CTRL dyaw=abc vscale=85'),null);

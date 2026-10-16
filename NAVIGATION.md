@@ -190,3 +190,50 @@ En las variantes con `goal_grid`, los modos 3 y 5 con meta comparten el explorad
 pueden repetir exactamente la trayectoria con la misma semilla. Los bancos cuentan ambas
 entradas de modo, no 180 trayectorias estadísticamente independientes. La deduplicación del
 conjunto de entrenamiento evita contar de nuevo los ejemplos exactos compartidos.
+
+## Redes de control y de lógica (`tools/nets.py`)
+
+Dos redes pequeñas, además de la de riesgo:
+
+- **Control** (`43 → H1 → H2 → 2`, salida `tanh`). Actúa en cada lectura nueva durante los tramos por
+  celdas (`runCells`/`reverseCells` en el firmware, `run_cells` en el simulador).
+  - Suma una corrección de ±4° al rumbo objetivo del centrado y da un factor de velocidad de 0,3 a 1.
+  - El control en cascada sigue de respaldo: si la red está apagada, sin entrenar o da un valor no
+    numérico, no cambia nada.
+  - Las etiquetas salen de un maestro del simulador que conoce la posición real: rumbo que centra el
+    cuerpo y velocidad según la holgura real. La red solo ve láseres, giroscopio y encoders.
+- **Lógica** (`36 → H1 → H2 → 4`). En cada celda del explorador (`exploreTo`) puntúa las cuatro
+  direcciones relativas al ratón.
+  - Solo puede elegir entre las que la inundación ya permite (abiertas y que acercan a la meta).
+  - Las etiquetas son la dirección de menor tiempo real hasta la meta con el mapa completo
+    (recto 0,9 s, giro +1,9 s, marcha atrás 1,1 s).
+  - Los datos se generan sin física con el mismo algoritmo del explorador, con lecturas de pared
+    erróneas y exploración aleatoria para variar.
+
+Datos y entrenamiento (25 000 muestras por red; laberintos 1000–1079 entrenamiento y 1100–1119
+validación; los de prueba, 100–107, 200–229 y 400–429, nunca entran):
+
+```bash
+export RATON_NATIVE_LIB=$PWD/build/libraton_navigation.dylib
+python3 tools/nets.py collect-logic   --samples 25000 --out work/logic-data.json
+python3 tools/nets.py collect-control --samples 25000 --out work/control-data.json
+python3 tools/nets.py train --kind logic   --data work/logic-data.json   --hidden 24,12 \
+  --out tools/models/logic_model.json   --export lib/raton_core/src/logic_model.h
+python3 tools/nets.py train --kind control --data work/control-data.json --hidden 32,16 \
+  --out tools/models/control_model.json --export lib/raton_core/src/control_model.h
+python3 tools/nets.py eval-logic --model tools/models/logic_model.json
+python3 tools/navigation_experiments.py evaluate --baseline tools/sim_extremos.py \
+  --controllers mapped,mapped-ctrl,mapped-logic,mapped-both --suite reserved --out work/eval-nets.json
+```
+
+`--export` deja la red cargada pero apagada (`k*ModelEnabled = false`). Para que arranque encendida:
+`python3 tools/nets.py export --model tools/models/<red>.json --out lib/raton_core/src/<red>.h --enabled`.
+Si no hay CMake, la biblioteca nativa se compila con:
+`clang++ -std=c++17 -O2 -shared -fPIC -Ilib/raton_core/src sim/navigation_bridge.cpp lib/raton_core/src/{motion_safety,risk_predictor,nets}.cpp -o build/libraton_navigation.dylib`.
+
+En la placa: orden `Nc1`/`Nc0` (red de control) y `Nl1`/`Nl0` (red de lógica). `?` devuelve
+`NET control=.. control_trained=.. logic=.. logic_trained=..`. Con la red encendida, la placa envía
+`CTRL dyaw=<décimas de grado> vscale=<%>` y `LOGIC f=.. r=.. b=.. l=.. pick=<f|r|b|l>`. La página de
+telemetría tiene un botón por red y las muestra en vivo. Pruebas: `tests/test_sim_nets.py` comprueba
+que entradas e inferencia coinciden entre Python y C++, que la lógica solo elige direcciones
+permitidas y que los laberintos no se mezclan.

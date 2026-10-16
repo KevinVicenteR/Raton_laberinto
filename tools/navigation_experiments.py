@@ -48,9 +48,9 @@ def run_job(job):
         sys.modules['nav_original']=module
         spec.loader.exec_module(module)
     fw=firmware_config(module)
-    if controller in ('precision','precision-guard','precision-neural','precision-guard-neural','hybrid','hybrid-neural','survey','ranked','mapped','mapped-raw','mapped-ranked'):
+    if controller in ('precision','precision-guard','precision-neural','precision-guard-neural','hybrid','hybrid-neural','survey','ranked','mapped','mapped-raw','mapped-ranked','mapped-ctrl','mapped-logic','mapped-both'):
         fw=replace(fw,precision_turns=True)
-    if controller in ('hybrid','hybrid-neural','survey','ranked','mapped','mapped-raw','mapped-ranked'):
+    if controller in ('hybrid','hybrid-neural','survey','ranked','mapped','mapped-raw','mapped-ranked','mapped-ctrl','mapped-logic','mapped-both'):
         fw=replace(fw,goal_grid=True,risk_rank=controller in ('hybrid-neural','ranked','mapped-ranked'),risk_reverse_last=controller in ('ranked','mapped-ranked'))
     if controller in ('survey','mapped-raw'):fw=replace(fw,survey_samples=20,raw_survey=controller=='mapped-raw')
     known=None
@@ -72,11 +72,19 @@ def run_job(job):
         kind='neural' if controller in ('neural','precision-neural','precision-guard-neural','hybrid-neural','ranked','mapped-ranked') else ('baseline' if controller=='original' else 'corrected')
         opts.update(controller=kind,trace=trace,sweep_guard=controller not in ('precision','precision-neural','unguarded'))
     simulator=module.Sim
-    if controller in ('mapped','mapped-raw','mapped-ranked'):
+    if controller in ('mapped','mapped-raw','mapped-ranked','mapped-ctrl','mapped-logic','mapped-both'):
         from navigation_candidates import ObservedMapSim
         simulator=ObservedMapSim
         if mode==4:opts['known']=S.comp_maze()
     sim=simulator(module.Case(str(maze_seed),maze,P.START,P.GOAL,**opts),seed=noise_seed)
+    if controller in ('mapped-ctrl','mapped-both'):
+        import nets
+        sim.ctrl_net=nets.load(os.environ.get('RATON_CONTROL_MODEL',str(Path(__file__).parent/'models/control_model.json')))
+        if sim.ctrl_net is None:raise RuntimeError('falta el modelo de control')
+    if controller in ('mapped-logic','mapped-both'):
+        import nets
+        sim.logic_net=nets.load(os.environ.get('RATON_LOGIC_MODEL',str(Path(__file__).parent/'models/logic_model.json')))
+        if sim.logic_net is None:raise RuntimeError('falta el modelo de logica')
     if model_path and module is S:
         model=json.loads(Path(model_path).read_text())
         sim.predictor=Predictor(model)
@@ -95,7 +103,7 @@ def run_job(job):
              precision_turns=fw.precision_turns if hasattr(fw,'precision_turns') else False,
              survey_samples=fw.survey_samples if hasattr(fw,'survey_samples') else 5,
              raw_survey=fw.raw_survey if hasattr(fw,'raw_survey') else False,
-             mapped_guard=controller in ('mapped','mapped-raw','mapped-ranked'),
+             mapped_guard=controller in ('mapped','mapped-raw','mapped-ranked','mapped-ctrl','mapped-logic','mapped-both'),
              goal_position_error_mm=math.hypot(body_center[0]-(P.GOAL[0]+.5)*sim.pitch,
                                                body_center[1]-(P.GOAL[1]+.5)*sim.pitch))
     if suite=='data' or trace:
@@ -105,7 +113,7 @@ def run_job(job):
             sim.trace.append(dict(t=sim.t,raw=sim.raw_readings.copy(),filtered=sim.readings.copy(),
                 sensors=sim.observation(),encoder_mm=sim.travelled,heading_deg=math.degrees(sim.th),
                 truth=(sim.x,sim.y,sim.th)))
-        out.update(trace=sim.trace,trail=sim.trail,events=sim.events)
+        out.update(trace=sim.trace,trail=sim.trail,events=sim.events,ctrl_trace=sim.ctrl_trace,logic_trace=sim.logic_trace)
     return out
 
 
@@ -114,7 +122,7 @@ def evaluate(args):
     if args.model and args.threshold is None:
         args.threshold=json.loads(Path(args.model).read_text())['threshold']
     controllers=tuple(args.controllers.split(',')) if args.controllers else (('original','corrected','neural') if args.model else ('original','corrected'))
-    allowed={'original','corrected','neural','precision','precision-guard','precision-neural','precision-guard-neural','unguarded','hybrid','hybrid-neural','survey','ranked','mapped','mapped-raw','mapped-ranked'}
+    allowed={'original','corrected','neural','precision','precision-guard','precision-neural','precision-guard-neural','unguarded','hybrid','hybrid-neural','survey','ranked','mapped','mapped-raw','mapped-ranked','mapped-ctrl','mapped-logic','mapped-both'}
     if not set(controllers)<=allowed:raise ValueError('unknown controller')
     for controller in controllers:
         if args.suite in ('21','all'):

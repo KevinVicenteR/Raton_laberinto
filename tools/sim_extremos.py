@@ -15,6 +15,7 @@ import os
 import random
 from collections import deque
 import navigation as N
+import nets as N2
 from dataclasses import dataclass, field, replace
 
 # ---------------------------------------------------------------- parametros (como config.h)
@@ -219,6 +220,14 @@ class Sim:
         self.motions = []
         self.risk_scores = []
         self.predictor = None
+        # Redes de control y logica (tools/nets.py). ctrl_log: lista donde guardar ejemplos del maestro.
+        self.ctrl_net = None
+        self.logic_net = None
+        self.ctrl_log = None
+        self.ctrl_every = 4
+        self.ctrl_out = (0.0, 1.0)
+        self.ctrl_trace = []
+        self.logic_trace = []
         self.risk_threshold = None
         self.native = N.NativeNavigation() if case.controller != "baseline" else None
         self.observed_speed = self.observed_yaw = 0.0
@@ -774,6 +783,7 @@ class Sim:
         target = max(n * cell + ofs - short if reverse else n * cell - ofs, 0.0)
         start, v, moving_at, unexpected = self.travelled, 0.0, self.t, False
         th0, yaw_t = (self.grid_th if self.grid_th is not None else self.th), 0.0
+        ctrl_last, self.ctrl_out = -1, (0.0, 1.0)
         # Final de pared lateral (poste): el laser lateral pasa por el borde de la celda en una
         # posicion conocida -> corrige el error acumulado de los encoders.
         shift, edge, last_n, last_pos = 0.0, {"L": None, "R": None}, self.nsamples, 0.0
@@ -834,11 +844,24 @@ class Sim:
             if offset is not None and abs(offset) > fw.deadband:
                 offset -= math.copysign(fw.deadband, offset)
                 target_deg = max(-fw.max_wall_deg, min(fw.max_wall_deg, fw.kp_wall * offset))
+            if (self.ctrl_net is not None or self.ctrl_log is not None) and self.nsamples != ctrl_last:
+                ctrl_last = self.nsamples
+                x = N2.control_features(self, target_deg, remaining, reverse)
+                if self.ctrl_log is not None and self.nsamples % self.ctrl_every == 0:
+                    self.ctrl_log.append(dict(x=x, y=N2.control_teacher(self, target_deg)))
+                if self.ctrl_net is not None:
+                    self.ctrl_out = N2.control_apply(self.ctrl_net(x))
+                    if self.c.trace and self.nsamples % 5 == 0:
+                        self.ctrl_trace.append((round(self.t, 2), round(self.ctrl_out[0], 2), round(self.ctrl_out[1], 2)))
+            if self.ctrl_net is not None:
+                target_deg = max(-1.5 * N2.CTRL_YAW_MAX, min(1.5 * N2.CTRL_YAW_MAX, target_deg + self.ctrl_out[0]))
             yaw_t += 0.1 * (sgn * target_deg - yaw_t)   # marcha atras: la correccion va al reves
             err = math.radians(yaw_t) - (self.th - th0)
             omega = max(-1.5, min(1.5, 6 * err)) + math.radians(self.c.drift_dps)
             nth = self.th + omega * self.DT
             vs = sgn * (v if not reverse else min(v, 150))
+            if self.ctrl_net is not None:
+                vs *= self.ctrl_out[1]
             if self.try_move(self.x + vs * self.DT * math.cos(nth), self.y + vs * self.DT * math.sin(nth), nth) and v > 20:
                 moving_at = self.t
             if self.t - moving_at > 0.6:
@@ -1091,6 +1114,13 @@ class Sim:
                 return round(risk,2) if math.isfinite(risk) else 0
             d = min(opts, key=lambda d: (int(fw.risk_reverse_last and (d-heading)%4==2), risk_key(d), 0 if d == heading else (2 if (d - heading) % 4 == 2 else 1),
                                          visits.get((pos[0] + mv[d][0], pos[1] + mv[d][1]), 0)))
+            if self.logic_net is not None and len(opts) > 1:
+                # Red de logica: solo reordena las direcciones que la inundacion ya permite.
+                known = lambda x, y, k: (x, y, k) in walls or not (0 <= x + mv[k][0] < cols and 0 <= y + mv[k][1] < rows)
+                out = self.logic_net(N2.logic_features(pos, heading, wall, known, seen, visits, dist, goal, cols, rows))
+                if out is not None:
+                    d = N2.logic_pick(out, heading, opts)
+                    self.logic_trace.append((round(self.t, 1), pos, heading, d, [round(v, 2) for v in out]))
             diff = (d - heading) % 4
             self.decisions.append((round(self.t, 1), pos, heading, d, {k: round(v) for k, v in self.readings.items()},
                                    (int(self.x // self.pitch), int((self.y + 33) // self.pitch)), self.collisions))

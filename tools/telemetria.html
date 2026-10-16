@@ -104,7 +104,7 @@
     <label for="replaySeek" class="status">Tiempo de la sesión</label><input type="range" id="replaySeek" min="0" max="1" step="any" value="0" disabled style="width:100%">
     <p class="status" id="sessionMessage" role="status">Puedes revisar sensores y maniobras sin conectar el robot. La reproducción mantiene desactivadas las órdenes al hardware.</p>
     <details style="margin-top:12px"><summary style="cursor:pointer">Detalle de sensores y maniobras</summary>
-    <div class="tiles" style="margin-top:12px"><div class="tile"><div class="label">Fase de maniobra</div><div class="value" id="motionPhase" style="font-size:18px">—</div></div><div class="tile"><div class="label">Último resultado</div><div class="value" id="motionResult" style="font-size:18px">—</div></div><div class="tile"><div class="label">Red neuronal</div><div class="value" id="riskState" style="font-size:18px">Sin datos</div></div><div class="tile"><div class="label">Edad láseres (ms)</div><div class="value" id="sensorAge" style="font-size:18px">—</div></div><div class="tile"><div class="label">Lecturas adquiridas</div><div class="value" id="rawSensors" style="font-size:18px">—</div></div><div class="tile"><div class="label">Líneas perdidas</div><div class="value" id="droppedLines" style="font-size:18px">—</div></div><div class="tile"><div class="label">Error angular</div><div class="value" id="motionAngle" style="font-size:18px">—</div></div><div class="tile"><div class="label">Encoders / avance</div><div class="value" id="encoderTicks" style="font-size:18px">—</div></div><div class="tile"><div class="label">Barrido observado</div><div class="value" id="sweepState" style="font-size:18px">Sin datos</div></div></div>
+    <div class="tiles" style="margin-top:12px"><div class="tile"><div class="label">Fase de maniobra</div><div class="value" id="motionPhase" style="font-size:18px">—</div></div><div class="tile"><div class="label">Último resultado</div><div class="value" id="motionResult" style="font-size:18px">—</div></div><div class="tile"><div class="label">Red neuronal</div><div class="value" id="riskState" style="font-size:18px">Sin datos</div></div><div class="tile"><div class="label">Edad láseres (ms)</div><div class="value" id="sensorAge" style="font-size:18px">—</div></div><div class="tile"><div class="label">Lecturas adquiridas</div><div class="value" id="rawSensors" style="font-size:18px">—</div></div><div class="tile"><div class="label">Líneas perdidas</div><div class="value" id="droppedLines" style="font-size:18px">—</div></div><div class="tile"><div class="label">Error angular</div><div class="value" id="motionAngle" style="font-size:18px">—</div></div><div class="tile"><div class="label">Encoders / avance</div><div class="value" id="encoderTicks" style="font-size:18px">—</div></div><div class="tile"><div class="label">Barrido observado</div><div class="value" id="sweepState" style="font-size:18px">Sin datos</div></div><div class="tile"><div class="label">Red de control</div><div class="value" id="ctrlState" style="font-size:18px">—</div></div><div class="tile"><div class="label">Red de lógica</div><div class="value" id="logicState" style="font-size:18px">—</div></div></div>
     </details>
   </section>
   <div class="grid">
@@ -179,6 +179,7 @@
         <div class="row"><label for="range">Alcance láseres</label><input type="range" id="range" min="60" max="400" step="10" value="160"><span class="num" id="rangeV">160 mm</span></div>
         <div class="row"><label for="sig">Eco mínimo (ve menos →)</label><input type="range" id="sig" min="0.1" max="3" step="0.1" value="0.6"><span class="num" id="sigV">0.6</span></div>
         <div class="row"><label for="goal">Meta (modo laberinto)</label><input id="goal" placeholder="x,y  (ej. 4,2)" style="font:inherit;padding:7px 10px;border-radius:8px;border:1px solid var(--border);background:var(--panel);color:var(--text);width:140px"><span class="status">celda contando desde abajo a la izquierda</span></div>
+        <div class="row"><label>Redes neuronales</label><button id="netCtrl" disabled>Red de control: ?</button><button id="netLogic" disabled>Red de lógica: ?</button><span class="status" id="netInfo">control corrige rumbo y velocidad · lógica elige el camino en cada celda</span></div>
         <div class="row"><button id="send" disabled>Enviar ajustes</button><button id="ask" disabled>Ver valores</button></div>
       </div>
     </section>
@@ -237,7 +238,7 @@ function setConnected(on) {
   if(!on){rxChar=null;buffer='';}
   $('dataSource').textContent=on?'Robot conectado':replayActive?'Reproducción local':'Sin conexión';
   $('connect').textContent = on ? 'Desconectar' : 'Conectar';
-  for (const id of ['stop', 'start', 'send', 'ask']) $(id).disabled = !on;
+  for (const id of ['stop', 'start', 'send', 'ask', 'netCtrl', 'netLogic']) $(id).disabled = !on;
 }
 
 async function connect() {
@@ -868,6 +869,16 @@ $('send').onclick = async () => {
   log(`Ajustes enviados: velocidad ${$('speed').value} mm/s, dirección ${$('steer').value === '1' ? `PID Kp ${$('pidKp').value} Kd ${$('pidKd').value}` : `cascada ${$('kp').value}`}, alcance ${$('range').value} mm, eco ${$('sig').value}`);
 };
 $('ask').onclick = () => send('?\n');
+// Redes neuronales: el robot responde con NET control=.. logic=.. tras cada orden (y con "?").
+const netState={control:null,logic:null};
+window.setNetState=d=>{
+  netState.control=!!d.control;netState.logic=!!d.logic;
+  const label=(name,on,trained)=>name+': '+(on?'encendida':'apagada')+(trained?'':' (sin entrenar)');
+  $('netCtrl').textContent=label('Red de control',d.control,d.control_trained);
+  $('netLogic').textContent=label('Red de lógica',d.logic,d.logic_trained);
+};
+$('netCtrl').onclick=()=>send('Nc'+(netState.control?'0':'1')+'\n');
+$('netLogic').onclick=()=>send('Nl'+(netState.logic?'0':'1')+'\n');
 </script>
 <script src="telemetry_session.js"></script>
 </body>

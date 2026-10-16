@@ -4,7 +4,7 @@
   function parse(line) {
     line=String(line).trim().replace(/^\d+(?:\.\d+)?\t/,'');
     const head=line.split(/\s+/,1)[0];
-    if(!['OBS','MOTION','RISK','SWEEP'].includes(head)) return null;
+    if(!['OBS','MOTION','RISK','SWEEP','CTRL','LOGIC','NET'].includes(head)) return null;
     const fields={};
     for(const match of line.matchAll(/([a-zA-Z_]+)=([^\s]+)/g)) {
       const parts=match[2].split(',');
@@ -19,7 +19,7 @@
       if(key in fields && (!Array.isArray(fields[key]) || fields[key].length!==(key==='enc'?2:3)))return null;
     }
     for(const [key,value] of Object.entries(fields)) {
-      if(key!=='phase'&&!Array.isArray(value)&&typeof value!=='number')return null;
+      if(key!=='phase'&&key!=='pick'&&!Array.isArray(value)&&typeof value!=='number')return null;
     }
     return {kind:head,...fields};
   }

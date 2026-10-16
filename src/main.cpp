@@ -352,6 +352,7 @@ const int MH = cfg::MAZE_HEIGHT;
 static_assert(competition::WIDTH <= cfg::MAZE_WIDTH && competition::HEIGHT <= cfg::MAZE_HEIGHT,
               "el mapa de la competencia no cabe en MAZE_WIDTH x MAZE_HEIGHT");
 uint8_t gWalls[MW][MH];
+uint8_t gKnown[MW][MH];  // bit d = esa pared se ha leido (o viene del mapa previo)
 bool gSeen[MW][MH];
 uint8_t gVisits[MW][MH];
 uint8_t gDist[MW][MH];
@@ -368,7 +369,11 @@ void setMapWall(raton::Cell c, int d, bool on) {
   const raton::Cell n = raton::step(c, static_cast<raton::Dir>(d));
   const uint8_t bit = 1 << d, back = 1 << ((d + 2) & 3);
   gWalls[c.x][c.y] = on ? (gWalls[c.x][c.y] | bit) : (gWalls[c.x][c.y] & ~bit);
-  if (inside(n)) gWalls[n.x][n.y] = on ? (gWalls[n.x][n.y] | back) : (gWalls[n.x][n.y] & ~back);
+  gKnown[c.x][c.y] |= bit;
+  if (inside(n)) {
+    gWalls[n.x][n.y] = on ? (gWalls[n.x][n.y] | back) : (gWalls[n.x][n.y] & ~back);
+    gKnown[n.x][n.y] |= back;
+  }
 }
 
 // Vacia el mapa; con prior, parte de ese dibujo (lo que se vea en cada celda manda sobre el).
@@ -376,6 +381,7 @@ void clearMap(bool (*prior)(int, int, int)) {
   memset(gWalls, 0, sizeof(gWalls));
   memset(gSeen, 0, sizeof(gSeen));
   memset(gVisits, 0, sizeof(gVisits));
+  memset(gKnown, prior ? 0x0F : 0, sizeof(gKnown));
   if (!prior) return;
   for (int x = 0; x < MW; ++x) {
     for (int y = 0; y < MH; ++y) {
@@ -415,6 +421,46 @@ void senseHere(raton::Cell pos, raton::Dir heading) {
   gSeen[pos.x][pos.y] = true;
 }
 
+// Red de logica: entre las direcciones que la inundacion permite (abiertas y que acercan a la meta), elige
+// la de mayor puntuacion. Con la red apagada, sin entrenar, o con una sola opcion, deja la eleccion normal.
+int logicChoice(raton::Cell pos, raton::Dir heading, raton::Cell goal, int fallback) {
+  if (!robot.logicNetOn()) return fallback;
+  const uint8_t here = gDist[pos.x][pos.y];
+  raton::LogicDir dirs[4];
+  int allowed = 0, seen = 0;
+  const float gx = goal.x - pos.x, gy = goal.y - pos.y;
+  const float gn = (gx == 0 && gy == 0) ? 1.0f : sqrtf(gx * gx + gy * gy);
+  for (int k = 0; k < 4; ++k) {
+    const raton::Dir d = static_cast<raton::Dir>((heading + k) & 3);
+    const raton::Cell n = raton::step(pos, d);
+    const bool open = !mapWall(pos, d);
+    const int dn = open && distAt(n) != 255 ? distAt(n) : 999;
+    const bool boundary = !inside(n);
+    dirs[k] = raton::LogicDir{open, boundary || ((gKnown[pos.x][pos.y] >> d) & 1), !boundary && gSeen[n.x][n.y],
+                              open && dn < here, dn, boundary ? 0 : gVisits[n.x][n.y],
+                              (raton::deltaX(d) * gx + raton::deltaY(d) * gy) / gn};
+    if (dirs[k].allowed) allowed++;
+  }
+  if (allowed < 2) return fallback;
+  for (int x = 0; x < MW; ++x)
+    for (int y = 0; y < MH; ++y) seen += gSeen[x][y];
+  const int fx = raton::deltaX(heading), fy = raton::deltaY(heading);
+  float in[raton::kLogicInputs], out[4];
+  raton::logicFeatures(dirs, here, static_cast<float>(seen) / (MW * MH), (fx * gx + fy * gy) / MW,
+                       (fy * gx - fx * gy) / MH, heading, in);
+  if (!raton::mlpForward(raton::kLogicModel, in, out)) return fallback;
+  int pick = -1;
+  for (int k = 0; k < 4; ++k) {
+    if (dirs[k].allowed && (pick < 0 || out[k] > out[pick])) pick = k;
+  }
+  char line[72];
+  snprintf(line, sizeof(line), "LOGIC f=%d r=%d b=%d l=%d pick=%c", static_cast<int>(out[0] * 100),
+           static_cast<int>(out[1] * 100), static_cast<int>(out[2] * 100), static_cast<int>(out[3] * 100),
+           "frbl"[pick]);
+  telemetry::println(line);
+  return (heading + pick) & 3;
+}
+
 // Va a la meta por celdas: lee las paredes de cada celda nueva, recalcula la inundacion y avanza por
 // tramos rectos (los ya vistos de una vez). Devuelve true al llegar.
 bool exploreTo(raton::Cell& pos, raton::Dir& heading, raton::Cell goal) {
@@ -442,6 +488,7 @@ bool exploreTo(raton::Cell& pos, raton::Dir& heading, raton::Cell goal) {
       }
     }
     if (best < 0) return false;
+    best = logicChoice(pos, heading, goal, best);
     const raton::Dir dir = static_cast<raton::Dir>(best);
     const int diff = (dir - heading + 4) & 3;
     if (diff == 2) {

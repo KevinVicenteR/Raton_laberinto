@@ -47,6 +47,32 @@ void RobotHW::sampleRiskHistory() {
   for(int i=0;i<3;++i)riskHistory_[2].sensor[i]=sensorObservation(i);
 }
 
+void RobotHW::controlNetStep(float remaining, bool reverse) {
+  if (!controlNetOn()) {
+    ctrlYaw_ = 0;
+    ctrlScale_ = 1;
+    return;
+  }
+  if (ctrlSampleCount_ == riskSampleCount_) return;  // solo con lecturas nuevas (como en el simulador)
+  ctrlSampleCount_ = riskSampleCount_;
+  float x[raton::kControlInputs], out[2];
+  raton::controlFeatures(riskHistory_, lastSpeed_, gyro_.rate(), gridOn_ ? gridError() : 0, remaining,
+                         wallTarget_, reverse, x);
+  if (raton::mlpForward(raton::kControlModel, x, out)) {
+    raton::controlOutputs(out, ctrlYaw_, ctrlScale_);
+  } else {
+    ctrlYaw_ = 0;  // entrada o salida invalida: control normal
+    ctrlScale_ = 1;
+  }
+  if (millis() - lastCtrlTelemetry_ >= 200) {
+    lastCtrlTelemetry_ = millis();
+    char line[48];
+    snprintf(line, sizeof(line), "CTRL dyaw=%d vscale=%d", static_cast<int>(ctrlYaw_ * 10),
+             static_cast<int>(ctrlScale_ * 100));
+    telemetry::println(line);
+  }
+}
+
 bool RobotHW::actionAllowed(float degrees) {
   if(!raton::kRiskModelTrained || fabsf(degrees)==180) return true;
   float x[43];
@@ -237,7 +263,7 @@ void RobotHW::handleInput() {
 }
 
 void RobotHW::runCommand(const char* cmd) {
-  char reply[112];
+  char reply[160];
   const float value = atof(cmd + 1);
   switch (cmd[0]) {
     case 'v':
@@ -298,10 +324,19 @@ void RobotHW::runCommand(const char* cmd) {
     case 'm':
       if (value >= 1 && value <= 5) requestedMode_ = static_cast<int>(value);
       break;
+    case 'N': {
+      // N<c|l><0|1>: encender o apagar la red de control (c) o la de logica (l)
+      const bool on = cmd[2] == '1';
+      const bool trained = cmd[1] == 'c' ? raton::kControlModelTrained : raton::kLogicModelTrained;
+      if (cmd[1] == 'c') ctrlNetOn_ = on;
+      else if (cmd[1] == 'l') logicNetOn_ = on;
+      if (on && !trained) telemetry::println("NET aviso: esa red no esta entrenada, no hara nada");
+      break;
+    }
     case '?':
       break;
     default:
-      snprintf(reply, sizeof(reply), "? s x m<1-5> v p k j d r g w z n G ?");
+      snprintf(reply, sizeof(reply), "? s x m<1-5> v p k j d r g w z n G N<c|l><0|1> ?");
       telemetry::println(reply);
       Serial.println(reply);
       return;
@@ -310,6 +345,10 @@ void RobotHW::runCommand(const char* cmd) {
            static_cast<int>(speed_), steerMode_ ? "PID" : "cascada", static_cast<int>(kpWall_ * 1000),
            static_cast<int>(kpSteer_ * 10000), static_cast<int>(kdSteer_ * 100), lasers_.maxMm(), static_cast<int>(lasers_.signalLimit() * 100),
            sideWall_, deadzone_, goalX_, goalY_);
+  telemetry::println(reply);
+  Serial.println(reply);
+  snprintf(reply, sizeof(reply), "NET control=%d control_trained=%d logic=%d logic_trained=%d", ctrlNetOn_ ? 1 : 0,
+           raton::kControlModelTrained ? 1 : 0, logicNetOn_ ? 1 : 0, raton::kLogicModelTrained ? 1 : 0);
   telemetry::println(reply);
   Serial.println(reply);
 }
@@ -477,8 +516,11 @@ int RobotHW::runCells(int cells, float vmax, bool* unexpected) {
     const float brakeSpeed = sqrtf(2.0f * cfg::ACCEL * remaining);
     v = fminf(fminf(v + cfg::ACCEL * dt, vmax), fmaxf(brakeSpeed, cfg::MIN_SPEED));
 
-    controlStep(v, speed, integral, dt);
+    ctrlActive_ = true;
+    controlNetStep(remaining, false);
+    controlStep(fmaxf(v * ctrlScale_, cfg::MIN_SPEED), speed, integral, dt);
   }
+  ctrlActive_ = false;
   stopMotors();
   const auto progress = raton::motionProgress(pos, already, cfg::CELL_MM, cells, false);
   const int moved = progress.cells;
@@ -521,8 +563,12 @@ int RobotHW::reverseCells(int cells, float shortMm, bool* stuck) {
     }
     updateHeading();
     // Mantener el rumbo de la cuadricula; sin centrar con los laterales (marcha atras se corrige al reves).
-    const float steer = cfg::KP_YAW * -heading_ - cfg::KD_YAW * gyro_.rate();
-    const float pwm = (target - back) < 30.0f ? cfg::PWM_MIN_MOVE : cfg::BACKUP_PWM;
+    // La red de control, si esta encendida, ajusta ese rumbo (con el signo de marcha atras) y la potencia.
+    wallTarget_ = 0;
+    controlNetStep(target - back, true);
+    const float steer = cfg::KP_YAW * (-ctrlYaw_ - heading_) - cfg::KD_YAW * gyro_.rate();
+    const float pwm = (target - back) < 30.0f ? cfg::PWM_MIN_MOVE
+                                              : fmaxf(cfg::PWM_MIN_MOVE, cfg::BACKUP_PWM * ctrlScale_);
     motors_.set(-pwm - steer, -pwm + steer);
   }
   stopMotors();
@@ -596,6 +642,11 @@ void RobotHW::controlStep(float v, float speed, float& integral, float dt, bool 
     float target = 0;
     if (walls) {
       target = clampf(conf * kpWall_ * offset, -cfg::MAX_WALL_CORRECTION_DEG, cfg::MAX_WALL_CORRECTION_DEG);
+    }
+    wallTarget_ = target;
+    if (ctrlActive_) {
+      const float lim = 1.5f * cfg::MAX_WALL_CORRECTION_DEG;
+      target = clampf(target + ctrlYaw_, -lim, lim);
     }
     yawTarget_ += cfg::YAW_TARGET_SMOOTH * (target - yawTarget_);
     steer = cfg::KP_YAW * (yawTarget_ - heading_) - cfg::KD_YAW * gyro_.rate();

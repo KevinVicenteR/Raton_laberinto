@@ -13,6 +13,19 @@ from navigation_experiments import run_job
 LABELS={'precision':'Giro preciso sin barrido (prueba)','unguarded':'Sin barrido (prueba)','original':'Control anterior','corrected':'Barrido observado','precision-guard':'Barrido + corrección angular',
         'hybrid':'Control con memoria y corrección angular','hybrid-neural':'Control con memoria + red de ronda 2','mapped':'Barrido con memoria de paredes','mapped-raw':'Memoria de paredes + lecturas crudas','survey':'20 observaciones por celda','ranked':'Red de ronda 2 con reversa como último recurso'}
 
+LABELS.update({'mapped-ctrl':'Memoria de paredes + red de control','mapped-logic':'Memoria de paredes + red de lógica',
+               'mapped-both':'Memoria de paredes + redes de control y lógica'})
+
+
+def nets_metadata():
+    out={}
+    for kind in ('control','logic'):
+        path=Path(__file__).parent/f'models/{kind}_model.json'
+        if path.exists():
+            out[kind]={k:v for k,v in json.loads(path.read_text()).items() if k[0] not in 'wb' or k=='architecture'}
+    return out
+
+
 def main():
     parser=argparse.ArgumentParser()
     parser.add_argument('--evaluation',required=True)
@@ -50,6 +63,7 @@ def main():
         objective_met=all(r['clean_arrival'] for r in selected),default_controller=args.controller,controller_labels=LABELS,results=rows,replays=replays,
         model_metadata={k:v for k,v in json.loads(Path(args.model).read_text()).items() if k not in ('w1','w2','w3','b1','b2','b3')},complete=True,model_enabled=False,scope='Simulación experimental; firmware sin activar estos candidatos')
     catalog['model_validation']=evaluation.get('model_validation')
+    catalog['nets']=nets_metadata()
     if args.latest_model:catalog['latest_training']={k:v for k,v in json.loads(Path(args.latest_model).read_text()).items() if k not in ('w1','w2','w3','b1','b2','b3')}
     (out/'dashboard.json').write_text(json.dumps(catalog,separators=(',',':')))
     print(json.dumps(dict(cases=len(rows),replays=len(replays),objective_met=catalog['objective_met'])))

@@ -11,6 +11,9 @@
 #include "robot.h"
 #include "motion_safety.h"
 #include "risk_predictor.h"
+#include "nets.h"
+#include "control_model.h"
+#include "logic_model.h"
 
 class RobotHW : public raton::Robot {
  public:
@@ -58,6 +61,9 @@ class RobotHW : public raton::Robot {
   void turnCorner(float degrees, bool trackCells = false);
   const raton::MotionResult& lastMotion() const { return lastMotion_; }
   bool actionAllowed(float degrees);  // risk predictor is observational until promoted
+  // Redes neuronales (tools/nets.py). Se encienden/apagan con la orden N (Nc1, Nc0, Nl1, Nl0).
+  bool controlNetOn() const { return ctrlNetOn_ && raton::kControlModelTrained; }
+  bool logicNetOn() const { return logicNetOn_ && raton::kLogicModelTrained; }
 
   // Avanza celdas completas a vmax. Si aparece una pared delante antes de lo esperado, se para ante ella
   // y pone *unexpected a true. Devuelve las celdas avanzadas de verdad.
@@ -146,6 +152,16 @@ class RobotHW : public raton::Robot {
  private:
   void recordMotion(const char* phase, float requested, const raton::MotionResult& result);
   void sampleRiskHistory();
+  // Red de control: con cada lectura nueva calcula la correccion de rumbo y el factor de velocidad.
+  void controlNetStep(float remaining, bool reverse);
+  bool ctrlNetOn_ = raton::kControlModelEnabled;
+  bool logicNetOn_ = raton::kLogicModelEnabled;
+  bool ctrlActive_ = false;       // solo en los tramos por celdas
+  float ctrlYaw_ = 0;             // grados que suma al rumbo objetivo del centrado
+  float ctrlScale_ = 1;           // factor de velocidad
+  float wallTarget_ = 0;          // rumbo objetivo del centrado (entrada de la red)
+  uint32_t ctrlSampleCount_ = 0;
+  uint32_t lastCtrlTelemetry_ = 0;
   raton::SensorObservation sensorObservation(int i) const;
   raton::RiskFrame riskHistory_[3];
   uint32_t riskSampleCount_ = 0;
