@@ -1,4 +1,24 @@
+# Compilacion
 .pio/
-.vscode/
 build/
 out/
+
+# Entornos
+.venv/
+node_modules/
+__pycache__/
+*.pyc
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+
+# Salidas generadas del simulador y de la web
+simulator/results/
+web/dist/
+
+# Editor y sistema
+.vscode/
+.DS_Store
+
+# Metadatos de instalación editable de Python
+*.egg-info/
