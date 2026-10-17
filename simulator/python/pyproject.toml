@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "raton-sim"
+version = "0.1.0"
+description = "Simulador físico del micromouse"
+requires-python = ">=3.11"
+dependencies = []
+
+[project.optional-dependencies]
+training = ["numpy"]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["raton_sim*"]
+
+[tool.pytest.ini_options]
+testpaths = ["../../tests/python"]

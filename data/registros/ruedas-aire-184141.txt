@@ -1,0 +1,37 @@
+1.56	BT estado 5
+1.66	encontrado Arduino rssi -65
+3.16	conectado
+4.70	$83,MODE 1*EB
+5.05	$84,PARADO I-1 F-1 D-1 v0 r0 p140 x70 y43 a-47 t0 q-1,-1,-1 c99,99,98 g100*08
+5.14	$85,MODE 1*81
+5.67	$86,PARADO I-1 F-1 D-1 v0 r0 p140 x70 y43 a-47 t0 q-1,-1,-1 c99,99,98 g100*66
+6.16	$87,PARADO I-1 F-1 D-1 v0 r0 p140 x70 y43 a-47 t0 q-1,-1,-1 c99,99,99 g100*78
+6.54	>>> $57710,T*7A
+11.08	$88,OBS t=128091 raw=-1,-1,-1 filtered=-1,-1,-1 age=42959,42952,22622 conf=99,99,99 enc=2668,1651 yaw=-4772 phase=PARADO drops=205*A5
+11.17	$89,ACK 57710*0B
+11.49	$90,PRUEBA izq adelante: izq=0 der=3272 giro=0*2D
+11.86	$91,PRUEBA izq atras: izq=0 der=-3394 giro=0*87
+12.16	$92,PRUEBA der adelante: izq=3511 der=0 giro=0*8B
+12.40	$93,PRUEBA der atras: izq=-3478 der=0 giro=0*46
+12.70	$94,PRUEBA las dos adelante: izq=3364 der=3280 giro=0*B5
+13.17	$95,v=100 dir=cascada k=150/1000 j=13/10000 d=100/100 r=220 g=60/100 w=80 z=50 meta=-1,-1*67
+13.39	$96,GEOM pasillo=140 celda=155*A4
+13.74	$97,NET control=0 control_trained=1 logic=0 logic_trained=1*03
+13.86	$98,MODE 1*3F
+14.01	$99,MODE 1*2C
+14.41	$100,PARADO I-1 F-1 D-1 v0 r0 p140 x163 y127 a-47 t0 q-1,-1,-1 c99,99,99 g100*58
+14.92	$101,PARADO I-1 F-1 D-1 v0 r0 p140 x163 y127 a-47 t0 q-1,-1,-1 c99,99,99 g100*CA
+15.81	$102,OBS t=137085 raw=-1,-1,-1 filtered=-1,-1,-1 age=51953,51946,31616 conf=99,99,99 enc=6065,4809 yaw=-4772 phase=PARADO drops=238*4E
+15.85	$103,MODE 1*F3
+16.68	$104,PARADO I-1 F-1 D-1 v0 r0 p140 x163 y127 a-47 t0 q-1,-1,-1 c99,99,99 g100*1E
+17.35	$105,OBS t=138818 raw=-1,-1,-1 filtered=-1,-1,-1 age=53686,53679,33349 conf=99,99,99 enc=6065,4809 yaw=-4772 phase=PARADO drops=248*6C
+17.43	$106,MODE 1*AC
+18.25	$107,OBS t=139447 raw=-1,-1,-1 filtered=-1,-1,-1 age=54315,54308,33978 conf=99,99,99 enc=6065,4809 yaw=-4772 phase=PARADO drops=253*D6
+18.81	$108,PARADO I-1 F-1 D-1 v0 r0 p140 x163 y127 a-47 t0 q-1,-1,-1 c99,99,99 g100*D4
+19.29	$109,PARADO I-1 F-1 D105 v0 r0 p140 x163 y127 a-47 t0 q-1,-1,111 c99,99,91 g100*BD
+19.42	$110,MODE 1*BF
+19.98	$111,PARADO I-1 F-1 D153 v0 r0 p140 x163 y127 a-47 t0 q-1,-1,150 c99,99,93 g100*75
+20.04	>>> x
+20.54	>>> x
+20.74	$112,PARADO I219 F-1 D161 v0 r0 p140 x163 y127 a-47 t0 q-1,-1,160 c90,99,94 g100*BD
+21.03	>>> x

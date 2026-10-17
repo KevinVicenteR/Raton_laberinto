@@ -1,0 +1,7 @@
+# Estilo del codigo Python (simulador y sus pruebas). Se aplica desde la raiz del repositorio.
+line-length = 110
+target-version = "py311"
+
+[lint]
+select = ["E4", "E7", "E9", "F", "I"]
+ignore = ["E741"]

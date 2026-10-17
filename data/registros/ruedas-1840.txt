@@ -1,0 +1,42 @@
+0.03	BT estado 5
+0.10	encontrado Arduino rssi -62
+1.00	conectado
+2.59	$0,MODE 1*97
+2.67	$1,MODE 1*84
+3.13	$2,PARADO I162 F-1 D115 v0 r0 p140 x-2 y-5 a-45 t0 q162,-1,115 c99,98,98 g100*6B
+3.78	$3,OBS t=21544 raw=162,-1,119 filtered=162,-1,122 age=117,16765,108 conf=99,99,98 enc=-165,-162 yaw=-4509 phase=PARADO drops=0*CD
+4.26	$4,PARADO I160 F-1 D114 v0 r0 p140 x-2 y-5 a-45 t0 q160,-1,114 c99,99,98 g100*1B
+4.47	>>> $1,T*73
+9.46	$5,PARADO I161 F-1 D119 v0 r0 p140 x-2 y-5 a-45 t0 q161,-1,119 c99,99,99 g100*44
+9.63	$6,ACK 1*36
+10.05	$7,PRUEBA izq adelante: izq=0 der=1904 giro=-55*03
+10.33	$8,PRUEBA izq atras: izq=0 der=-2588 giro=108*03
+10.65	$9,PRUEBA der adelante: izq=2339 der=-9 giro=40*73
+10.89	$10,PRUEBA der atras: izq=-1709 der=3 giro=-71*3D
+11.19	$11,PRUEBA las dos adelante: izq=2294 der=2547 giro=-44*B9
+11.89	$12,v=100 dir=cascada k=150/1000 j=13/10000 d=100/100 r=220 g=60/100 w=80 z=50 meta=-1,-1*70
+12.15	$13,GEOM pasillo=140 celda=155*87
+12.57	$14,NET control=0 control_trained=1 logic=0 logic_trained=1*01
+12.66	$15,MODE 1*39
+12.79	$16,MODE 1*0C
+13.39	$17,OBS t=31084 raw=-1,-1,73 filtered=-1,-1,72 age=2246,26305,170 conf=97,99,97 enc=2759,1695 yaw=-6799 phase=PARADO drops=34*08
+13.45	$18,MODE 1*FE
+13.95	$19,PARADO I-1 F-1 D74 v0 r0 p140 x73 y44 a-67 t0 q-1,-1,74 c98,99,98 g100*92
+14.40	$20,PARADO I-1 F-1 D71 v0 r0 p140 x73 y44 a-67 t0 q-1,-1,70 c98,99,98 g100*E7
+15.24	$21,OBS t=32788 raw=-1,-1,71 filtered=-1,-1,71 age=3950,28009,88 conf=99,99,99 enc=2759,1695 yaw=-6799 phase=PARADO drops=46*FE
+15.33	$22,MODE 1*CB
+15.70	$23,PARADO I-1 F-1 D72 v0 r0 p140 x73 y44 a-67 t0 q-1,-1,72 c99,99,99 g100*E5
+16.50	$24,OBS t=33996 raw=-1,-1,69 filtered=-1,-1,69 age=5158,29217,98 conf=99,99,99 enc=2759,1695 yaw=-6799 phase=PARADO drops=54*FC
+16.98	$25,PARADO I-1 F-1 D72 v0 r0 p140 x73 y44 a-67 t0 q-1,-1,72 c99,99,99 g100*57
+17.38	$26,PARADO I-1 F-1 D72 v0 r0 p140 x73 y44 a-68 t0 q-1,-1,72 c99,99,99 g100*BC
+17.41	$27,MODE 1*94
+18.07	$28,OBS t=35690 raw=-1,50,-1 filtered=-1,57,76 age=6852,267,265 conf=99,95,99 enc=2668,1651 yaw=-5263 phase=PARADO drops=64*1E
+18.55	$29,OBS t=36198 raw=-1,48,-1 filtered=-1,52,-1 age=7360,179,773 conf=99,96,95 enc=2668,1651 yaw=-5238 phase=PARADO drops=67*B1
+18.91	$30,PARADO I-1 F50 D-1 v0 r0 p140 x70 y43 a-54 t0 q-1,50,-1 c99,97,97 g100*E0
+19.30	$31,PARADO I-1 F50 D-1 v0 r0 p140 x70 y43 a-58 t0 q-1,50,-1 c99,97,97 g100*14
+19.81	$32,PARADO I134 F75 D115 v0 r0 p140 x70 y43 a-56 t0 q138,73,118 c96,98,94 g100*E2
+19.90	$33,MODE 1*A1
+20.01	>>> x
+20.51	>>> x
+20.64	$34,PARADO I163 F69 D111 v0 r0 p140 x70 y43 a-54 t0 q162,69,111 c97,98,96 g100*1C
+21.01	>>> x
