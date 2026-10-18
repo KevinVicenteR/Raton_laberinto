@@ -16,6 +16,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Herramientas de compilacion
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq cmake g++ >/dev/null
       - name: Compilar con sanitizers
         run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DRATON_SANITIZE=ON && cmake --build build --parallel
       - name: Pruebas por funcionalidad (entrada única)
@@ -37,6 +39,8 @@ jobs:
         run: |
           grep -v '^platformio' requirements-dev.txt > /tmp/req.txt
           pip install -r /tmp/req.txt -e simulator/python
+      - name: Herramientas de compilacion
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq cmake g++ >/dev/null
       - name: Biblioteca nativa
         run: cmake -S . -B build && cmake --build build --target raton_navigation --parallel
       - name: Estilo
