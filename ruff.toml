@@ -1,4 +1,4 @@
-# Estilo del codigo Python (simulador y sus pruebas). Se aplica desde la raiz del repositorio.
+# Estilo de todos los paquetes funcionales del simulador y tests/python/<funcion>/.
 line-length = 110
 target-version = "py311"
 

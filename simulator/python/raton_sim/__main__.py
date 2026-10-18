@@ -3,7 +3,7 @@
 import argparse
 from pathlib import Path
 
-from .native import ROOT
+from raton_sim.giros.native import ROOT
 
 
 def main(argv=None):
@@ -25,27 +25,27 @@ def main(argv=None):
         sub.add_argument(
             "--out", type=Path, default=ROOT / "simulator/results/casos", help="directorio de salida"
         )
-        from .simulator import main as run
+        from raton_sim.simulacion.simulator import main as run
 
         run(sub.parse_args(rest).out)
     elif args.command == "pistas":
-        from .tracks import main as run
+        from raton_sim.exploracion.tracks import main as run
 
         run(rest)
     elif args.command == "evaluar":
-        from .evaluation import main as run
+        from raton_sim.entrenamiento.evaluation import main as run
 
         run(rest)
     elif args.command == "publicar":
-        from .publish import main as run
+        from raton_sim.publicacion.publish import main as run
 
         run(rest)
     elif args.command == "pesos":
-        from .weights import main as run
+        from raton_sim.entrenamiento.weights import main as run
 
         run(rest)
     else:
-        from .training.train import main as run
+        from raton_sim.entrenamiento.train import main as run
 
         run(rest)
 

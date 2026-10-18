@@ -1,7 +1,7 @@
 # Diagnóstico de exploración — 17 de octubre de 2026
 
 Se trabajó sin red, sin commit/push y sin subir firmware a la placa. No se cambió
-`firmware/app/competition_maze.h`. El repositorio ya tenía una reorganización extensa
+`firmware/mapa/competition_maze.h`. El repositorio ya tenía una reorganización extensa
 con cambios preparados y sin preparar; se conservaron esos cambios.
 
 ## Causas y evidencia
@@ -95,10 +95,10 @@ No se reescribió ninguna de estas misiones.
   geometría configurada, también al medir el pasillo; fórmulas del núcleo C++.
 - `simulator/python/raton_sim/evaluation.py`: 1200 s para modo 3 de mapeo completo;
   publica `simulation_limit_s`, `mapping_complete` y `cells_mapped`.
-- `lib/raton_core/src/maze/cell_map.cpp`: prueba optimista de ruta sin excluir
+- `lib/raton_core/src/mapa/cell_map.cpp`: prueba optimista de ruta sin excluir
   callejones podados para objetivos anteriores.
-- `lib/raton_core/src/exploration/cell_explorer.cpp`: carrera sin esa exclusión.
-- `tests/cpp/test_core.cpp`: competencia desde la salida correcta, lectura directa
+- `lib/raton_core/src/exploracion/cell_explorer.cpp`: carrera sin esa exclusión.
+- `tests/cpp/test_main.cpp`: competencia desde la salida correcta, lectura directa
   del header, `checkSolve`, `mapTrack`, ruta mínima, paredes y regresión de falsa prueba.
 - `tests/python/test_sim_cells.py`: geometría por ancho y tras medición.
 - `web/public/sim/`: mismas 20 sesiones, regeneradas localmente con `publicar`.

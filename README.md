@@ -40,11 +40,11 @@ del laberinto del reglamento · 5. Espacio libre · 6. Aprender pista (mapear, v
 ## Estructura
 
 ```
-firmware/        firmware del robot (PlatformIO): app/, robot/, comms/, hw/, hw_test/, config.h
-lib/raton_core/  núcleo portable: mapa, geometría, explorador, orquestadores, protocolo
-simulator/       simulador Python (raton_sim) y biblioteca nativa
-web/             telemetría y laboratorio de simulación (React + TypeScript)
-tests/           pruebas del núcleo (C++), del simulador (Python) y laberintos
+firmware/        <función>/{lógica de placa, params.h, README.md}; config.h agrega pines y parámetros
+lib/raton_core/  src/<función>/ (C++ portable, sin Arduino)
+simulator/       python/raton_sim/<función>/ y biblioteca nativa de giros
+web/             src/<función>/ (componentes, hooks, lógica y pruebas)
+tests/           cpp/<función>/ y python/<función>/; laberintos en mazes/
 data/registros/  registros reales de telemetría por Bluetooth
 docs/            arquitectura, protocolo, entrenamiento y fuentes
 scripts/         setup.sh y run.sh

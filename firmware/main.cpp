@@ -5,7 +5,7 @@
 // (web/) o Monitor Serie: x = parar, s = arrancar, m1..m5 = modo, ? = ver valores.
 #include <Arduino.h>
 
-#include "app/app.h"
+#include "modos/app.h"
 
 namespace {
 App app;

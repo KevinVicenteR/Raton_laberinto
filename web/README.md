@@ -11,10 +11,11 @@ Abre http://127.0.0.1:5173. Web Bluetooth UART Nordic requiere Chrome/Edge compa
 
 ## Capas
 
-- `src/domain`: protocolo/CRC, validación de sesiones, pose, flood fill, ocupación y supervisor puros.
-- `src/infrastructure`: BLE, cola serial ACK/NAK (800 ms, envío inicial + tres reintentos, misma secuencia), registros, catálogo y sesión de reproducción.
-- `src/application`: reducer y hooks de telemetría, órdenes y reproducción.
-- `src/ui`: componentes React, mapas SVG/Three.js, controles y páginas.
+- `src/conexion`: BLE, protocolo, cola de órdenes, hooks y pruebas.
+- `src/telemetria`: muestras, reducer, registros, sensores y componentes.
+- `src/mapa`: ocupación, inundación, mapas SVG/3D y pruebas.
+- `src/simulacion`: catálogo, sesiones, reproducción, hooks y pruebas.
+- `src/parametros`, `src/seguridad`, `src/modos`: ajustes, diagnóstico y navegación.
 
 Telemetría permite registrar TXT con segundos desde el inicio, importar TXT/JSON, pausar, buscar y cambiar velocidad. La reproducción reconstruye el estado desde el inicio y bloquea órdenes y supervisor. Three.js y sus controles se empaquetan desde npm.
 

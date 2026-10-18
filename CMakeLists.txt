@@ -27,8 +27,10 @@ add_library(raton_core STATIC ${RATON_CORE_SOURCES})
 target_include_directories(raton_core PUBLIC lib/raton_core/src)
 
 enable_testing()
-add_executable(raton_tests tests/cpp/test_core.cpp)
+add_executable(raton_tests tests/cpp/test_main.cpp)
 target_link_libraries(raton_tests PRIVATE raton_core)
+# Params numericos de placa para probar los controladores portables con los valores reales.
+target_include_directories(raton_tests PRIVATE firmware)
 target_compile_definitions(raton_tests PRIVATE RATON_MAZES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/mazes")
 if(RATON_SANITIZE AND NOT MSVC)
   target_compile_options(raton_core PRIVATE -fsanitize=address,undefined -fno-omit-frame-pointer)

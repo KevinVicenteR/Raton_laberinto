@@ -35,6 +35,7 @@ export RATON_NATIVE_LIB="${RATON_NATIVE_LIB:-$(native_lib)}"
 
 nucleo() {
   paso "Nucleo C++"
+  cmake -S . -B build
   cmake --build build --parallel
   ctest --test-dir build --output-on-failure
 }

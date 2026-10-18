@@ -18,7 +18,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: Compilar con sanitizers
         run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DRATON_SANITIZE=ON && cmake --build build --parallel
-      - name: Pruebas
+      - name: Pruebas por funcionalidad (entrada única)
         run: ctest --test-dir build --output-on-failure
 
   simulador:
@@ -41,7 +41,7 @@ jobs:
         run: cmake -S . -B build && cmake --build build --target raton_navigation --parallel
       - name: Estilo
         run: ruff check simulator/python tests/python && ruff format --check simulator/python tests/python
-      - name: Pruebas
+      - name: Pruebas por funcionalidad (entrada única)
         env:
           RATON_NATIVE_LIB: ${{ github.workspace }}/build/libraton_navigation.so
         run: pytest tests/python -q

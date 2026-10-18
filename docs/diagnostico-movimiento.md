@@ -61,13 +61,17 @@ entregas, no por una actualización de cualquiera de los tres láseres.
 
 ## Comparación reproducible de simulación
 
+Esta sección conserva la primera auditoría de 275b705. Sus JSON son históricos;
+el lector actual ya importa los límites reales de recuperación. La repetición
+con ese modelo y la comparación nueva se documentan al final de este archivo.
+
 Comandos desde la raíz:
 
 ```sh
-.venv/bin/python -m raton_sim.motion_audit /tmp/before.json --legacy
-.venv/bin/python -m raton_sim.motion_audit /tmp/after.json
-.venv/bin/python -m raton_sim.motion_audit /tmp/before-margins.json --legacy --margins
-.venv/bin/python -m raton_sim.motion_audit /tmp/after-margins.json --margins
+.venv/bin/python -m raton_sim.seguridad.motion_audit /tmp/before.json --legacy
+.venv/bin/python -m raton_sim.seguridad.motion_audit /tmp/after.json
+.venv/bin/python -m raton_sim.seguridad.motion_audit /tmp/before-margins.json --legacy --margins
+.venv/bin/python -m raton_sim.seguridad.motion_audit /tmp/after-margins.json --margins
 ```
 
 Ambos controladores usan la misma planta angular: fricción PWM_MIN_RUN, 900°/s por PWM útil,
@@ -116,7 +120,7 @@ el camino profiled_turn ya usa la tolerancia del firmware, sin ese refinamiento 
 | 168 / aleatorio1 | 0.93 → 0.59 |
 | 168 / aleatorio2 | no estimable → 0.64 |
 
-### Ensayo adverso: no aprobado
+### Ensayo adverso de 275b705: no aprobado
 
 `--margins` combina salida 12 mm descentrada, 2° de error inicial, deriva 3°/s, ruido 6 mm,
 8 % de dropout, motor al 75 % y tau=80 ms. Resultado: **10 → 11 contactos; 7/10 → 3/10 llegadas**.
@@ -141,3 +145,101 @@ Los límites de memoria se informan explícitamente: una pista arbitrariamente g
 microcontrolador finito. No se guardan aprendizajes incompletos ni se marcan fronteras fallidas como
 vistas. La supervivencia ante apagado está implementada con TDBStore transaccional; no se ha probado
 físicamente un corte de alimentación porque no se ha subido firmware ni se ha escrito a la placa.
+
+## Recuperación de robustez después de 275b705
+
+La referencia de aceptación es el mismo banco `motion_audit --margins` que produjo
+7/10 → 3/10: diez misiones en 192/168 mm, salida 12 mm desplazada y 2° torcida,
+deriva 3°/s, ruido 6 mm, dropout 8 %, ganancia angular 0.75 y tau 80 ms.
+La validación reservada cambia tanto las semillas sensoriales como las de los tres
+laberintos aleatorios; los dos casos de competencia conservan su geometría.
+No se confunde este banco con el dominio ampliado de `training/benchmark.py`,
+que además puede destruir un lateral y combinar pérdidas de encoder y ecos retenidos.
+La deriva angular de estos bancos actúa sobre la planta; no existe todavía un
+canal IMU independiente con sesgo identificable. La etiqueta `gyro` del benchmark
+no demuestra por sí sola rechazo de un sesgo puro de medida del giroscopio.
+
+### Ablación y causa
+
+`simulator/results/motion-audit/robust/ablation-original-model.json` conserva la
+reproducción inicial, incluidas las ocho últimas maniobras de cada misión. Todas
+las celdas siguientes son **llegadas/contactos** sobre diez casos; no son tiempos
+ni una afirmación de seguridad física.
+
+| Factor aislado | ea39fae | 275b705 |
+|---|---:|---:|
+| Nominal | 10/0 | 10/0 |
+| Combinado original | 7/10 | 3/11 |
+| Ruido | 10/0 | 10/0 |
+| Dropout | 10/0 | 10/0 |
+| Fantasmas | 5/2 | 8/0 |
+| Lateral izquierdo muerto | 10/0 | 10/0 |
+| Lateral derecho muerto | 10/0 | 10/0 |
+| Asimetría de ruedas | 9/3 | 1/0 |
+| Patinaje | 10/0 | 10/0 |
+| Pérdida de encoder | 2/0 | 2/0 |
+| Deriva | 10/0 | 10/0 |
+| Error de giro (inyección anterior) | 10/0 | 4/0 |
+| Motor angular lento | 10/0 | 10/0 |
+| Batería 70 % | 10/0 | 10/0 |
+| Ángulo físico lateral 23–38° (modelo anterior) | 10/0 | 10/0 |
+| Offsets de sensores | 10/0 | 9/0 |
+| Frontal retenido después del giro | 0/0 | 0/0 |
+| Inicio desplazado | 9/4 | 7/7 |
+
+La regresión principal es la autoridad de centrado bajo perturbación, no el
+zigzag nominal. A 180 mm/s, el factor `132/v` reduce KP_WALL=0.12 a 0.088,
+menos de la mitad del 0.185 anterior, además de aumentar KD_YAW. Una asimetría
+continua requiere un error de rumbo permanente para que el proporcional la
+compense. El pequeño límite lateral y la banda muerta dejan crecer el desplazamiento
+hasta que el siguiente giro ya no cabe. Los abortos preventivos por barrido
+observado explican que asimetría tenga menos llegadas aun sin contactos.
+
+Ejemplo reproducible: combinado, 168 mm, competencia modo 3, semilla sensorial 1.
+En 275b705 el tramo termina a 13.935 s con lateral izquierdo bruto 32.51 mm
+(aproximadamente 6.75 mm desde la cara del cuerpo) y frontal 92.42 mm; todavía
+no hay contacto. Los dos intentos de giro consumen hasta 20.020 s, producen dos
+contactos y dejan 75.64° sin completar. No se arregla aceptando ese rumbo:
+se conserva el fallo a 3°. Una prueba dirigida con velocidad de exploración
+180, KP_WALL=0.30, límite 8° y banda 4 mm ya lleva el combinado original a
+8/10 llegadas y 4 contactos, antes de añadir adaptación.
+
+La retirada de factores del combinado confirma la interacción. En 275b705,
+sin ruido da 4/10 y 11 contactos; sin dropout, 3/10 y 10; sin deriva, 6/10 y 10;
+sin motor lento, 4/10 y 12. **Sin desplazamiento inicial: 10/10 y 0 contactos**,
+igual que ea39fae en esa variante. El archivo `robust/ablate.json` conserva las
+maniobras completas y las instantáneas de configuración de esta primera ablación.
+
+También había dos sesgos del banco. `side_face` convertía los rayos con el ángulo
+físico real, información inaccesible al controlador: ahora utiliza el ángulo
+configurado. El fallo de giro se sumaba al objetivo entregado al controlador,
+por lo que cada reintento perseguía otra referencia equivocada. Ahora perturba
+la ganancia del actuador durante el giro, conservando la referencia de la
+cuadrícula y la realimentación del giroscopio. Ambos contratos tienen pruebas.
+Los resultados de la inyección anterior se conservan, no se reetiquetan como
+resultados del modelo corregido.
+
+La importación de configuración también omitía RUB_MS y MAX_RUBS: el modelo usaba
+100 ms y tres roces aunque el firmware declaraba 60 ms y dos. Ahora importa esos
+límites, el umbral de rumbo y los reintentos; una prueba cambia la configuración
+de entrada y comprueba que no reaparecen valores predeterminados silenciosos.
+El entrenamiento definitivo se ejecuta después de esta corrección de paridad.
+En la repetición corregida, ea39fae conserva 7/10 llegadas y pasa de diez a seis
+contactos: el caso competencia modo 4 de 168 mm se detiene por PEGADO a 32.405 s,
+después de un retroceso, antes de los cuatro contactos del giro bloqueado anterior.
+No es una mejora de llegadas. La serie original permanece intacta para no mezclar
+ese cambio de modelo con la mejora del controlador.
+
+### Control y velocidad
+
+`control/AdaptiveSpeed` es lógica pura probada en C++; Python reproduce su contrato
+numérico. Calcula una consigna según confianza frontal/lateral, error de rumbo,
+celda conocida, distancia frontal libre y distancia cauta pendiente. Las transiciones
+suben y bajan con ACCEL. Todo giro y recuperación reactiva una distancia cauta;
+retroceder no la consume. Las celdas conocidas se consultan antes de comenzar el
+tramo, para que observar una celda durante la aproximación no la convierta
+prematuramente en terreno de carrera. La ruta conocida conserva COMP_SPEED.
+
+Se mantienen la amortiguación lateral, el filtro de objetivo, el PI que permite
+frenar y la tolerancia angular estricta. La corrección recupera fuerza de centrado
+sin restaurar los mínimos PWM y esperas que causaban la oscilación y las pausas.

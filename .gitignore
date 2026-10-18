@@ -1,25 +1,47 @@
-# Compilacion
+# Compilacion (PlatformIO, CMake)
 .pio/
 build/
 out/
+*.o
+*.a
+*.so
+*.dylib
+*.dll
+*.elf
+*.hex
+*.bin
 
-# Entornos
+# Entornos y dependencias
 .venv/
+venv/
 node_modules/
+*.egg-info/
+
+# Caches de herramientas
 __pycache__/
 *.pyc
 .mypy_cache/
 .pytest_cache/
 .ruff_cache/
+.eslintcache
+*.tsbuildinfo
 
-# Salidas generadas del simulador y de la web
-simulator/results/*
-!simulator/results/motion-audit/
+# Salidas generadas (se regeneran con scripts/run.sh sim ...)
+simulator/results/
 web/dist/
+coverage/
+
+# Registros temporales
+*.log
+npm-debug.log*
+
+# Secretos y configuracion local
+.env
+.env.*
+*.local
 
 # Editor y sistema
 .vscode/
+.idea/
 .DS_Store
-
-# Metadatos de instalación editable de Python
-*.egg-info/
+Thumbs.db

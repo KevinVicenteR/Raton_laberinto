@@ -119,6 +119,7 @@ fi
 paso "Web (React)"
 (cd web && npm ci --no-audit --no-fund)
 
+# CMake descubre los fuentes por funcionalidad en lib/raton_core/src/.
 # ---------------------------------------------------------------- nucleo C++
 paso "Nucleo C++ y biblioteca nativa del simulador"
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release >/dev/null

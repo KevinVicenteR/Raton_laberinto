@@ -32,15 +32,15 @@ actual con el control histórico básico, sin cargar versiones por rutas.
 `mapped` usa únicamente paredes observadas, encoders y giroscopio; la geometría
 real se emplea para simular contactos y para medir los resultados.
 
-La configuración se lee de `firmware/config.h`; se mantienen los valores antiguos
+La configuración se lee de `firmware/config.h` expandiendo los `params.h` por función; se mantienen los valores antiguos
 70°, 75 mm y 25 mm de giro dividido y retroceso, y los valores de respaldo de
 geometría y umbrales que ya no existen en el firmware. La biblioteca nativa solo
 necesita `raton_turn`. No se cargan redes ni modelos de riesgo.
 
-Entrenamiento: `training/benchmark.py` define los dominios aleatorizados;
+Entrenamiento: `entrenamiento/benchmark.py` define los dominios aleatorizados;
 `cmaes.py` contiene CMA-ES con covarianza completa y el currículo de cuatro
 etapas; `knowledge.py` añade búsqueda, regreso y carrera con mapa observado;
-`train.py` ejecuta el currículo de cinco etapas y conserva validación y test
+`entrenamiento/train.py` ejecuta el currículo de cinco etapas y conserva validación y test
 separados. Conserva en `train.INITIAL_PARAMS` los parámetros del checkpoint inicial histórico,
 sin depender de resultados de ejecuciones anteriores.
 `--generations` limita el total y `--per-stage` el máximo por etapa. El humo
