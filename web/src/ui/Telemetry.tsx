@@ -233,6 +233,7 @@ export function Telemetry() {
                       'Explora o recorre el mapa aprendido',
                       'Ruta mínima del reglamento',
                       'Elige el mayor espacio libre',
+                      'Mapea, vuelve a la salida y guarda en flash',
                     ][i]
                   }
                 </span>
@@ -240,9 +241,9 @@ export function Telemetry() {
             ))}
           </div>
           <p className="status">
-            Elegir modo envía m1–m5 si está conectado. ARRANCAR envía el modo seleccionado.
+            Elegir modo envía m1–m6 si está conectado. ARRANCAR envía el modo seleccionado.
           </p>
-          {(commands.mode === 3 || Object.keys(state.cells).length > 0) && (
+          {(commands.mode === 3 || commands.mode === 6 || Object.keys(state.cells).length > 0) && (
             <>
               <h2>Mapa aprendido en vivo</h2>
               <div className="row">
@@ -253,7 +254,7 @@ export function Telemetry() {
                     void run(commands.train);
                   }}
                 >
-                  Entrenar: mapear pista
+                  Aprender pista y guardar
                 </button>
                 <button
                   disabled={!canSend || busy || !learnGoal || !Object.keys(state.cells).length}
@@ -262,6 +263,17 @@ export function Telemetry() {
                   Ruta más corta a la meta
                 </button>
               </div>
+              <button disabled={!canSend || busy || active} onClick={() => void run(commands.loadMap)}>
+                Cargar mapa guardado
+              </button>
+              <button disabled={!canSend || busy || active} onClick={() => void run(commands.eraseMap)}>
+                Borrar mapa guardado
+              </button>
+              <p className="status">
+                MAPA_GUARDADO: disponible tras reiniciar. MAPA_CARGADO: listo para ruta con meta.
+                MAPA_INCOMPLETO / MAPA_LIMITE: no se guarda. MAPA_ERROR_FLASH: fallo de memoria. Coloca el
+                ratón en la salida original mirando al norte antes de recorrer el mapa.
+              </p>
               <LearnedMap
                 cells={state.cells}
                 robot={state.learnRobot}

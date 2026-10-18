@@ -1,6 +1,7 @@
 #include "app/maze_mission.h"
 
 #include "app/competition_maze.h"
+#include "app/map_storage.h"
 #include "comms/telemetry.h"
 #include "config.h"
 
@@ -53,15 +54,13 @@ void MazeMission::solveUnknown() {
   const raton::Cell center = raton::makeCell(raton::CellMap::kMax / 2, raton::CellMap::kMax / 2);
   const OperatorRequests& req = robot_.requests();
   if (req.goalX < 0) {
-    // ENTRENAR: recorrer y mapear la pista desconocida. El mapa se guarda para la ruta mas corta.
-    map_.clear(nullptr, raton::CellMap::kMax, raton::CellMap::kMax);
-    learnedFrame_ = true;
-    raton::Cell pos = center;
-    display_.show("LABERINTO", "Mapeando pista", "desconocida");
-    telemetry::println("MAPA_NUEVO");
-    if (explorer_.mapTrack(pos, heading)) reachedGoal("mapa completo");
-    robot_.setGrid(false);
+    learnTrack();  // compatibilidad: modo 3 sin meta
     return;
+  }
+  if (mapStorage::load(map_, robot_.geometry())) {
+    learnedFrame_ = true;
+    telemetry::println("MAPA_CARGADO");
+
   }
   if (learnedFrame_) {
     // RUTA MAS CORTA sobre el mapa aprendido: desde la salida (centro de la rejilla) hasta la celda
@@ -132,4 +131,61 @@ void MazeMission::runCompetition() {
   log_.decide(line);
   if (explorer_.exploreTo(pos, heading, goal)) reachedGoal("explorando");
   robot_.setGrid(false);
+}
+
+void MazeMission::learnTrack() {
+  robot_.setGrid(true);
+  // Una nueva pista debe medirse de nuevo, aunque se hubiera cargado otra.
+  robot_.geometry().setManual(false);
+  map_.clear(nullptr, raton::CellMap::kMax, raton::CellMap::kMax);
+  learnedFrame_ = false;
+  mapReady_ = false;
+  raton::Cell pos = raton::makeCell(raton::CellMap::kMax / 2, raton::CellMap::kMax / 2);
+  raton::Dir heading = raton::NORTH;
+  display_.show("APRENDER PISTA", "Mapeando y volviendo");
+  telemetry::println("MAPA_NUEVO");
+  if (explorer_.mapTrack(pos, heading)) {
+    const int diff = (raton::NORTH - heading + 4) & 3;
+    if (diff) robot_.turnInCell(diff == 3 ? 90.0f : -90.0f * diff);
+    if (!robot_.aborted()) {
+      learnedFrame_ = true;
+      telemetry::println(mapStorage::save(map_, robot_.geometry()) ? "MAPA_GUARDADO" : "MAPA_ERROR_FLASH");
+      reachedGoal("vuelta a salida");
+    }
+  } else {
+    telemetry::println("MAPA_INCOMPLETO");
+  }
+  robot_.setGrid(false);
+}
+
+void MazeMission::eraseMap() {
+  learnedFrame_ = false;
+  mapReady_ = false;
+  map_.clear(nullptr, raton::CellMap::kMax, raton::CellMap::kMax);
+  telemetry::println(mapStorage::erase() ? "MAPA_BORRADO" : "MAPA_ERROR_FLASH");
+}
+
+void MazeMission::showSavedMap() {
+  if (!mapStorage::load(map_, robot_.geometry())) {
+    telemetry::println("MAPA_NO_DISPONIBLE");
+    return;
+  }
+  learnedFrame_ = true;
+  telemetry::println("MAPA_NUEVO");
+  telemetry::println("MAPA_CARGADO");
+  display_.show("MAPA GUARDADO", "Descargando...");
+  for (int x = 0; x < map_.width(); ++x) for (int y = 0; y < map_.height(); ++y) {
+    const raton::Cell cell = raton::makeCell(x, y);
+    if (!map_.seen(cell)) continue;
+    // Solo se descarga parado y por peticion; nunca inundar la cola al decidir.
+    while (telemetry::pendingPriorityBytes() > 512) {
+      robot_.idle(1);
+      if (robot_.requests().start || robot_.requests().eraseMap) return;
+    }
+    char line[56];
+    snprintf(line, sizeof(line), "CELL x=%d y=%d w=%d d=0", x, y, map_.wallBits(cell));
+    telemetry::println(line);
+    robot_.idle(1);
+  }
+  telemetry::println("MAPA_LISTO");
 }

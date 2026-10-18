@@ -17,7 +17,9 @@ struct Tuning {
 // Ordenes recibidas que el bucle principal consume (arrancar, modo, meta).
 struct OperatorRequests {
   bool start = false;
-  int mode = 0;               // 1..5, 0 = sin cambio
+  bool eraseMap = false;
+  bool readMap = false;
+  int mode = 0;               // 1..6, 0 = sin cambio
   int goalX = cfg::GOAL_X;    // celda meta pedida desde la web, -1 = ninguna
   int goalY = cfg::GOAL_Y;
 };

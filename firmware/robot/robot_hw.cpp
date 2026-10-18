@@ -172,7 +172,7 @@ void RobotHW::resetHeading() {
 void RobotHW::resetHeadingToGrid() {
   resetHeading();
   // Con cuadricula, el rumbo cero es el de la pista, no hacia donde mira ahora.
-  if (gridOn_) heading_ = headingBase_ = -gridError();
+  if (gridOn_) heading_ = headingBase_ = gridError();
 }
 
 void RobotHW::setGrid(bool on) {

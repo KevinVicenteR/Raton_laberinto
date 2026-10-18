@@ -1,7 +1,7 @@
 // Ordenes por Bluetooth o Monitor Serie. Una orden es una linea; con protocolo ("$seq,orden*CRC") se
 // comprueba y se contesta ACK/NAK con su numero (un reintento repetido no se ejecuta dos veces).
-//   s / s<1-5>  arrancar (en el modo n)      x  parar           R  reiniciar la placa
-//   m<1-5>      elegir modo                  G<x>,<y>  celda meta
+//   s / s<1-6>  arrancar (en el modo n)      x  parar           R  reiniciar la placa
+//   m<1-6>      elegir modo                  G<x>,<y>  celda meta
 //   v k j d p   velocidad y control          w z r g   umbrales y laseres
 //   n<a>,<b>,<c>,<d> pesos del modo 5        c<mm> celda   K<mm> calibrar laterales   T prueba de ruedas
 //   ?           ver valores

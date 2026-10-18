@@ -34,6 +34,7 @@ class Lasers {
   void setSwapped(bool swapped) { swapped_ = swapped; }
 
   // Espera hasta tener n medidas nuevas de los tres sensores (para leer paredes parado).
+  void invalidateFilters();
   void waitFresh(int n);
 
   uint32_t sampleCount(Id id) const { return samples_[map(id)]; }

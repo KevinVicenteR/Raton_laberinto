@@ -83,9 +83,12 @@ void CellExplorer::senseStill(Cell pos, Dir heading) {
   int left, right, front;
   bool measured = robot_.calibrateStill(left, right, front);
   // Salida descentrada a lo largo: se centra con la pared de delante (si la hay) y vuelve a leer.
-  robot_.alignToFront();
-  if (robot_.aborted()) return;
-  measured = robot_.calibrateStill(left, right, front) || measured;
+  if (front >= 0 && front < geo.frontTurnMm() + static_cast<int>(0.75f * geo.cellMm()) &&
+      abs(front - geo.frontTurnMm()) > 5) {
+    robot_.alignToFront();
+    if (robot_.aborted()) return;
+    measured = robot_.calibrateStill(left, right, front) || measured;
+  }
   char line[80];
   snprintf(line, sizeof(line), "GEOM pasillo=%d celda=%d (quieto I%d F%d D%d%s)", static_cast<int>(geo.corridorMm()),
            static_cast<int>(geo.cellMm()), left, front, right, measured ? "" : " sin medir");
@@ -143,7 +146,7 @@ bool CellExplorer::onCellSides(int index, bool leftWall, bool rightWall, int fro
   map_.pruneDeadEnds();
   map_.setAvoidDead(true);
   map_.flood(runGoal_);
-  const uint8_t here = map_.dist(c);
+  const uint16_t here = map_.dist(c);
   if (here == CellMap::kUnreached || map_.dead(next)) return false;
   return map_.dist(next) < here;
 }
@@ -163,7 +166,7 @@ bool CellExplorer::exploreTo(Cell& pos, Dir& heading, Cell goal) {
       map_.setAvoidDead(false);
       map_.flood(goal);
     }
-    const uint8_t here = map_.dist(pos);
+    const uint16_t here = map_.dist(pos);
     if (here == CellMap::kUnreached) {
       log_.decide("no hay camino a la meta con las paredes vistas");
       return false;
@@ -227,7 +230,7 @@ bool CellExplorer::runRoute(Cell& pos, Dir& heading, Cell goal, float vmax) {
   map_.setAvoidDead(false);
   map_.flood(goal);
   while (!robot_.aborted() && map_.dist(pos) != 0 && map_.dist(pos) != CellMap::kUnreached) {
-    const uint8_t here = map_.dist(pos);
+    const uint16_t here = map_.dist(pos);
     int best = -1;
     for (int d = 0; d < 4 && best < 0; ++d) {
       if (!map_.wall(pos, d) && map_.dist(step(pos, static_cast<Dir>(d))) + 1 == here) best = d;
@@ -292,7 +295,8 @@ bool CellExplorer::mapTrack(Cell& pos, Dir& heading) {
     }
     if (act == AccionMision::Recuperar) {
       // Demasiados fallos con el mismo objetivo: se da por inalcanzable (de momento) y se sigue.
-      if (map_.inside(target)) map_.markSeen(target);
+      log_.event("MAPA_INCOMPLETO: frontera inalcanzable");
+      return false;
       decidef("celda %d,%d inalcanzable tras %d intentos", target.x, target.y, failures);
       failures = 0;
       continue;
@@ -314,7 +318,13 @@ bool CellExplorer::mapTrack(Cell& pos, Dir& heading) {
       failures = 0;
     }
   }
-  if (robot_.aborted()) return false;
+  if (robot_.aborted() || steps > CellMap::kMax * CellMap::kMax) return false;
+  for (int x = 0; x < map_.width(); ++x) for (int y = 0; y < map_.height(); ++y) {
+    if ((x == 0 || y == 0 || x == map_.width() - 1 || y == map_.height() - 1) && map_.seen(makeCell(x, y))) {
+      log_.event("MAPA_LIMITE: pista fuera de la rejilla");
+      return false;
+    }
+  }
   char line[40];
   snprintf(line, sizeof(line), "MAPA COMPLETO celdas=%d", map_.seenCount());
   log_.event(line);

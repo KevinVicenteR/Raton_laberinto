@@ -13,7 +13,8 @@ __pycache__/
 .ruff_cache/
 
 # Salidas generadas del simulador y de la web
-simulator/results/
+simulator/results/*
+!simulator/results/motion-audit/
 web/dist/
 
 # Editor y sistema

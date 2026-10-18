@@ -16,6 +16,9 @@
 class MazeMission {
  public:
   MazeMission(RobotHW& robot, Reporter& log, Display& display);
+  void learnTrack();
+  void eraseMap();
+  void showSavedMap();
   void solveUnknown();    // modo 3
   void runCompetition();  // modo 4
 

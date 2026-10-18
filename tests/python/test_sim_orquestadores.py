@@ -1,5 +1,6 @@
 import unittest
 
+from raton_sim import native as N
 from raton_sim import orchestrators as O
 from raton_sim import simulator as S
 
@@ -19,12 +20,12 @@ class OrchestratorTests(unittest.TestCase):
         self.assertTrue(m.confirmed_front(70, 4))
         self.assertFalse(m.confirmed_front(-1, 5))
 
-    def test_stale_wait_uses_raw_and_eight_deliveries(self):
-        s = S.Sim(S.Case("fresh", S.M_L, (2, 0), (0, 2)))
+    def test_stale_wait_requires_new_deliveries_without_fixed_delay(self):
+        s = S.Sim(S.Case("fresh", S.M_L, (2, 0), (0, 2), fw=N.firmware_config(S)))
         s.readings["F"] = 45
         list(s.wait_fresh_front())
-        self.assertGreaterEqual(s.nsamples, 8)
-        self.assertGreaterEqual(s.t, 0.24)
+        self.assertGreaterEqual(s.nsamples, 2)
+        self.assertLess(s.t, 0.1)
         self.assertEqual(s.readings["F"], s.raw_readings["F"])
 
     def test_start_wall_chooses_and_verifies_side(self):

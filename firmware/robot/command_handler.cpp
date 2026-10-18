@@ -86,7 +86,7 @@ void CommandHandler::run(const char* cmd) {
     case 's':
       // s = arrancar en el modo elegido; s<n> = arrancar directamente en el modo n (si estaba en marcha,
       // para el modo actual y arranca el nuevo).
-      if (value >= 1 && value <= 5) {
+      if (value >= 1 && value <= 6) {
         req.mode = static_cast<int>(value);
         robot_.abort();
       }
@@ -94,9 +94,15 @@ void CommandHandler::run(const char* cmd) {
       break;
     case 'm':
       // m<n>: elegir modo. Si estaba en marcha, se para y queda esperando ARRANCAR en el modo nuevo.
-      if (value >= 1 && value <= 5) {
+      if (value >= 1 && value <= 6) {
         req.mode = static_cast<int>(value);
         robot_.abort();
+      }
+      break;
+    case 'E':
+      if (strcmp(cmd, "ERASE_MAP") == 0) {
+        robot_.abort();
+        req.eraseMap = true;
       }
       break;
     case 'G': {
@@ -122,6 +128,12 @@ void CommandHandler::run(const char* cmd) {
       }
       break;
     }
+    case 'L':
+      if (strcmp(cmd, "LOAD_MAP") == 0) {
+        robot_.abort();
+        req.readMap = true;
+      }
+      break;
     case 'R':
       // Reiniciar la placa (como apagar y encender). Para los motores, deja salir el ACK y el aviso por
       // Bluetooth y reinicia; la web se vuelve a conectar sola.

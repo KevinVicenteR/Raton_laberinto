@@ -70,9 +70,9 @@ class MotionOrchestrator:
 
     def tick(self, offset, fw, speed, maximum, remaining, dt, brake):
         w = self.gate.weights_for([remaining / 300, speed / 300], 2)
-        return centring(offset, fw.kp_wall, fw.deadband, fw.max_wall_deg) * w[0], braking(
-            speed, maximum, remaining, dt, brake
-        ) * min(1, w[1])
+        limit = max(40, math.sqrt(max(0, 2 * fw.accel * remaining))) if brake else maximum
+        velocity = min(speed + fw.accel * dt, maximum, limit)
+        return centring(offset, fw.kp_wall, fw.deadband, fw.max_wall_deg) * w[0], velocity * min(1, w[1])
 
     def safety(self, *args, **kwargs):
         return safety(*args, **kwargs)

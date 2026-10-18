@@ -87,8 +87,10 @@ export function supervise(
   ).length;
   if (Math.max(...recent.map((h) => Math.hypot(h.x - cx, h.y - cy))) < 150 && turning >= 3) {
     state.message =
-      mode === 3 || mode === 4 ? 'Muchos giros sin avanzar (solo aviso)' : 'Bucle: pasa a pared derecha';
-    if (mode !== 3 && mode !== 4) commands.push('x', 'm1', 's1');
+      mode === 3 || mode === 4 || mode === 6
+        ? 'Muchos giros sin avanzar (solo aviso)'
+        : 'Bucle: pasa a pared derecha';
+    if (mode !== 3 && mode !== 4 && mode !== 6) commands.push('x', 'm1', 's1');
     state.lastAction = s.t;
   } else if (hits >= 3 && state.speed > 50) {
     state.speed = Math.max(50, Math.round(state.speed * 0.8));

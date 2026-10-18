@@ -58,6 +58,22 @@ class Sensor:
 @dataclass
 class Firmware:
     geometry: object = None
+    accel: float = 800.0
+    yaw_smooth: float = 0.1
+    kd_yaw: float = 0.0006
+    wall_rate_damp: float = 0.0
+    turn_rate: float = 180.0
+    turn_accel: float = 900.0
+    turn_pwm_max: float = 0.4
+    turn_pwm_min: float = 0.28
+    pwm_min_run: float = 0.18
+    kd_turn: float = 0.001
+    legacy_turn: bool = False
+    profiled_turn: bool = False
+    calibration_samples: int = 15
+    front_stable_samples: int = 9
+    fresh_samples: int = 8
+    stop_seconds: float = 0.1
     cell_side_wall: float = 96.0
     side_look_ahead: float = 139.84
     explore_speed: float = 150.0
@@ -125,6 +141,8 @@ class Case:
     mode: int = 5
     off_x: float = 0.0  # descentrado inicial (mm)
     off_deg: float = 0.0  # torcido inicial (grados)
+    turn_motor_gain: float = 1.0  # margen físico N20, separado de la consigna
+    turn_tau_s: float = 0.05
     drift_dps: float = 0.0  # deriva del rumbo (rueda mas floja), grados/s
     robot: Robot = field(default_factory=Robot)
     sensor: Sensor = field(default_factory=Sensor)
@@ -134,6 +152,7 @@ class Case:
     known: list = None  # mapa que cree conocer el raton (modo 4); None = el real
     controller: str = "baseline"  # baseline, corrected
     sweep_guard: bool = True
+    learned_path: str | None = None  # archivo que emula la flash entre ejecuciones
     trace: bool = False
     use_goal: bool = False  # modo 5 con meta (direccion hacia la meta + memoria de cruces)
 
@@ -513,6 +532,33 @@ class Sim:
         )
 
     # --- primitivas del firmware (generadores: un paso por yield)
+    def steering(self, target, yaw_target, heading_error, speed):
+        fw = self.c.fw
+        yaw_target += fw.yaw_smooth * (target - yaw_target)
+        error = (math.radians(yaw_target) - heading_error + math.pi) % (2 * math.pi) - math.pi
+        rate = getattr(self, "_steer_rate", 0.0)
+        desired = self.motion.turn(error, fw.kp_yaw) / (1 + 6 / 0.014 * fw.kd_yaw)
+        rate += min(1, self.DT / 0.04) * (desired - rate)
+        self._steer_rate = rate
+        return yaw_target, rate + math.radians(self.c.drift_dps)
+
+    def lateral_target(self, target, offset, speed):
+        fw = self.c.fw
+        previous = getattr(self, "_lateral_previous", None)
+        if previous is None or self.nsamples != previous[0]:
+            derivative = (
+                0
+                if previous is None or offset is None or previous[1] is None
+                else (offset - previous[1]) / max(self.t - previous[2], self.DT)
+            )
+            self._lateral_rate = 0.7 * getattr(self, "_lateral_rate", 0) + 0.3 * max(-40, min(40, derivative))
+            self._lateral_previous = (self.nsamples, offset, self.t)
+        if fw.wall_rate_damp == 0:
+            return target
+        scale = max(0.5, min(1, 132 / max(speed, 80)))
+        value = scale * (target + fw.wall_rate_damp * self._lateral_rate) if offset is not None else 0
+        return max(-fw.max_wall_deg, min(fw.max_wall_deg, value))
+
     @N.instrument
     def drive(self, max_mm, watch, ignore=0.0, corner=False):
         """corner=True: tramo recto en mitad de un giro (en diagonal): sin roces ni centrado."""
@@ -567,7 +613,7 @@ class Sim:
             if F >= 0:
                 remaining = min(remaining, F - self.front_turn())
             vmax = min(fw.speed, 60) if front_near else fw.speed
-            v = min(v + 800 * self.DT, vmax, max(40, math.sqrt(max(0, 1600 * remaining))))
+            v = min(v + fw.accel * self.DT, vmax, max(40, math.sqrt(max(0, 2 * fw.accel * remaining))))
             # centrado
             offset = None
             hasL, hasR = 0 <= L < fw.side_wall, 0 <= R < fw.side_wall
@@ -583,9 +629,8 @@ class Sim:
             if offset is not None and abs(offset) > fw.deadband:
                 offset -= math.copysign(fw.deadband, offset)
                 target = max(-fw.max_wall_deg, min(fw.max_wall_deg, fw.kp_wall * offset))
-            yaw_t += 0.1 * (target - yaw_t)
-            err = (math.radians(yaw_t) - (self.th - th0) + math.pi) % (2 * math.pi) - math.pi
-            omega = self.motion.turn(err, fw.kp_yaw) + math.radians(self.c.drift_dps)
+            target = self.lateral_target(target, offset, v)
+            yaw_t, omega = self.steering(target, yaw_t, self.th - th0, v)
             nth = self.th + omega * self.DT
             nx = self.x + v * self.DT * math.cos(nth)
             ny = self.y + v * self.DT * math.sin(nth)
@@ -600,6 +645,9 @@ class Sim:
 
     @N.instrument
     def rotate(self, deg):
+        if self.c.fw.profiled_turn:
+            yield from self.rotate_profiled(deg)
+            return
         self.turns += 1
         target = self.th + math.radians(deg) + math.radians(self.rnd.gauss(0, 1.5))
         t0, blocked_since, retries = self.t, None, 0
@@ -626,6 +674,61 @@ class Sim:
                     yield from self.back(15)
 
         if abs(target - self.th) > math.radians(3):
+            raise MotionFailure("giro incompleto")
+
+    def rotate_profiled(self, degrees):
+        """Misma consigna/PWM del firmware; N20 aproximado con friccion e inercia.
+
+        900 dps/PWM sobre PWM_MIN_RUN y tau=50 ms son supuestos, no una
+        identificacion del robot. La aceleracion disponible se limita a 900 dps2.
+        """
+        self.turns += 1
+        fw = self.c.fw
+        target = math.degrees(self.th) + degrees
+        start, rate, settled = self.t, 0.0, 0
+        while self.t - start < fw.turn_timeout:
+            yield
+            self.tick()
+            error = target - math.degrees(self.th)
+            if abs(error) < 3:
+                rate -= math.copysign(min(abs(rate), 2 * fw.turn_accel * self.DT), rate)
+                settled = settled + 1 if abs(rate) < 8 else 0
+                if settled >= 3:
+                    break
+            else:
+                settled = 0
+                sign = math.copysign(1, error)
+                desired = sign * min(fw.turn_rate, math.sqrt(2 * fw.turn_accel * max(0, abs(error) - 1)))
+                pwm = (
+                    desired / 900
+                    + sign * fw.pwm_min_run * min(1, abs(error) / 6)
+                    + fw.kd_turn * (desired - rate)
+                )
+                if fw.legacy_turn:
+                    if abs(error) < 5 and abs(rate) < 20 and self.t - start > 0.3:
+                        break
+                    pwm = 0.006 * error - fw.kd_turn * rate
+                pwm = max(-fw.turn_pwm_max, min(fw.turn_pwm_max, pwm))
+                if (
+                    (fw.legacy_turn or (self.t - start < 0.2 and abs(error) > 12))
+                    and abs(rate) < 20
+                    and abs(pwm) < fw.turn_pwm_min
+                ):
+                    pwm = sign * fw.turn_pwm_min
+                equilibrium = self.c.turn_motor_gain * math.copysign(
+                    max(0, abs(pwm) - fw.pwm_min_run) * 900, pwm
+                )
+                available = fw.turn_accel * self.c.turn_motor_gain
+                acceleration = max(-available, min(available, (equilibrium - rate) / self.c.turn_tau_s))
+                rate += acceleration * self.DT
+            self.try_move(self.x, self.y, self.th + math.radians(rate) * self.DT)
+        stop_until = self.t + fw.stop_seconds
+        while self.t < stop_until:
+            yield
+            self.tick()
+            rate -= math.copysign(min(abs(rate), 2 * fw.turn_accel * self.DT), rate)
+            self.try_move(self.x, self.y, self.th + math.radians(rate) * self.DT)
+        if abs(target - math.degrees(self.th)) >= (10 if fw.legacy_turn else 3):
             raise MotionFailure("giro incompleto")
 
     def rotate_precise_to(self, target):
@@ -879,7 +982,9 @@ class Sim:
         # pending: cuanto va el centro del raton por delante del centro de la celda (en su rumbo).
         ofs = self.pending
         target = max(n * cell + ofs - short if reverse else n * cell - ofs, 0.0)
-        start, v, moving_at, unexpected = self.travelled, self.explore_v, self.t, False
+        start, v, moving_at, unexpected = self.travelled, 0.0, self.t, False
+        self._steer_rate = 0.0
+        self._lateral_previous = None
         th0, yaw_t = (self.grid_th if self.grid_th is not None else self.th), 0.0
         # Final de pared lateral (poste): el laser lateral pasa por el borde de la celda en una
         # posicion conocida -> corrige el error acumulado de los encoders.
@@ -995,9 +1100,8 @@ class Sim:
                 break
             offset = None if reverse else self.lateral(self.readings["L"], self.readings["R"])
             target_deg, v = self.motion.tick(offset, fw, v, vmax, remaining, self.DT, brake_cell)
-            yaw_t += 0.1 * (sgn * target_deg - yaw_t)  # marcha atras: la correccion va al reves
-            err = (math.radians(yaw_t) - (self.th - th0) + math.pi) % (2 * math.pi) - math.pi
-            omega = self.motion.turn(err, fw.kp_yaw) + math.radians(self.c.drift_dps)
+            target_deg = self.lateral_target(target_deg, offset, v)
+            yaw_t, omega = self.steering(sgn * target_deg, yaw_t, self.th - th0, v)
             nth = self.th + omega * self.DT
             vs = sgn * (v if not reverse else min(v, 150))
             if (
@@ -1013,7 +1117,11 @@ class Sim:
             ):
                 unexpected = True
                 break
-        self.explore_v = v
+        self.explore_v = 0
+        stop_until = self.t + fw.stop_seconds
+        while self.t < stop_until:
+            yield
+            self.tick()
         done = sgn * (self.travelled - start) + shift
         self.edge_prev = {}
         moved = max(0, min(n, int(math.floor((done - ofs if reverse else done + ofs) / cell + 0.5))))
@@ -1096,8 +1204,8 @@ class Sim:
         self.pending = self.along = 0.0
 
     def wait_fresh_front(self):
-        # Eight independent deliveries AND 240 ms: delayed/held values must expire.
-        count, until = self.nsamples + 8, self.t + 0.24
+        # Solo entregas nuevas; no se añade una espera fija al tiempo del sensor.
+        count, until = self.nsamples + self.c.fw.fresh_samples, self.t
         while self.nsamples < count or self.t < until:
             yield
             self.tick()
@@ -1110,6 +1218,20 @@ class Sim:
         yield from self.wait_fresh_front()
 
     def _cell_rotate_to(self, target):
+        if self.c.fw.profiled_turn:
+            threshold = 5 if self.c.fw.legacy_turn else 3
+            attempts = 3 if self.c.fw.legacy_turn else 2
+            for _ in range(attempts):
+                try:
+                    yield from self.rotate(math.degrees(target - self.th))
+                except MotionFailure:
+                    pass
+                error = abs(math.degrees(target - self.th))
+                if error <= threshold:
+                    break
+            if error >= (10 if self.c.fw.legacy_turn else 3):
+                raise MotionFailure("giro incompleto")
+            return
         if not self.c.fw.cell_turn_retry:
             # Legacy acceptance: a stopped turn within twenty degrees proceeds.
             try:
@@ -1243,7 +1365,8 @@ class Sim:
         """Exploracion por celdas, anticipacion lateral y giros en el centro de 90/180 grados."""
         fw = self.c.fw
         cols, rows = self.cols, self.rows
-        full_map = self.c.mode == 3 and not self.c.use_goal
+        full_map = self.c.mode == 6 or (self.c.mode == 3 and not self.c.use_goal)
+        learning = full_map
         mv = [(0, 1), (1, 0), (0, -1), (-1, 0)]
         walls = {}  # (x, y, d) -> bool ; d 0 N, 1 E, 2 S, 3 W
 
@@ -1255,7 +1378,7 @@ class Sim:
         def wall(x, y, d):
             n = (x + mv[d][0], y + mv[d][1])
             inside = (
-                (-128 <= n[0] - self.c.start[0] < 128 and -128 <= n[1] - self.c.start[1] < 128)
+                (-20 < n[0] - self.c.start[0] < 19 and -20 < n[1] - self.c.start[1] < 19)
                 if full_map
                 else (0 <= n[0] < cols and 0 <= n[1] < rows)
             )
@@ -1263,11 +1386,13 @@ class Sim:
                 return True
             return walls.get((x, y, d), False)
 
+        self.learned_walls = walls
         if prior:
             for (x, y, d), v in prior.items():
                 walls[(x, y, d)] = v
         goal = tuple(self.c.goal)
-        seen = set()
+        seen = set(getattr(self, "loaded_seen", set()))
+        self.learned_seen = seen
         visits = {}
         pruned = self.mission.pruned
         no_progress = 0
@@ -1279,7 +1404,8 @@ class Sim:
                 if mission_action == "read_start":
                     # Only the start is surveyed stationary; later reads use the
                     # samples delivered during motion, without advancing time.
-                    for _ in range(fw.survey_samples * 4):
+                    deliveries = self.nsamples + fw.calibration_samples + fw.front_stable_samples
+                    while self.nsamples < deliveries:
                         yield
                         self.tick()
                 front_value = self.raw_readings["F"] if self.fresh_front else self.readings["F"]
@@ -1318,12 +1444,14 @@ class Sim:
                             reachable.add(neighbor)
                             frontier.append(neighbor)
                 if goal is None:
-                    self.mapping_complete = True
-                    self.mission.decide(finished=True)
-                    return True
-            dist, q = {goal: 0}, [goal]
+                    # Volver a la salida antes de declarar completo y guardar.
+                    goal = tuple(self.c.start)
+                    full_map = False
+                    if pos == goal:
+                        break
+            dist, q = {goal: 0}, deque([goal])
             while q:
-                c = q.pop(0)
+                c = q.popleft()
                 for d in range(4):
                     n = (c[0] + mv[d][0], c[1] + mv[d][1])
                     if (
@@ -1407,7 +1535,8 @@ class Sim:
                 return not forward_wall and arriving != goal
 
             cell_distance = self.cell_mm if self.c.mode == 3 else self.pitch
-            moved, unexpected = yield from self.run_cells(cells, fw.explore_speed, on_cell=on_cell)
+            route_speed = fw.comp_speed if getattr(self, "loaded_seen", None) else fw.explore_speed
+            moved, unexpected = yield from self.run_cells(cells, route_speed, on_cell=on_cell)
             for _ in range(moved):
                 pos = (pos[0] + mv[d][0], pos[1] + mv[d][1])
             if moved:
@@ -1424,6 +1553,9 @@ class Sim:
                     raise MotionFailure("sin avance")
             if unexpected:
                 setw(*pos, heading, True)
+        if learning:
+            self.mapping_complete = pos == tuple(self.c.start) and not self.failure
+            self.learned_heading = heading
         return True
 
     def mode3(self):
@@ -1444,10 +1576,53 @@ class Sim:
                 if 0 <= self.raw_readings["F"] < self.c.fw.front_wall:
                     yield from self.turn_corner_track(-degrees)
                     heading = 2
-        yield from self.explore(tuple(self.c.start), heading)
+        prior = None
+        if self.c.mode == 3 and self.c.use_goal and self.c.learned_path:
+            from . import map_storage
+
+            try:
+                walls, seen, geometry = map_storage.load(self.c.learned_path)
+            except (OSError, ValueError):
+                self.events.append((self.t, "MAPA_NO_DISPONIBLE", self.x, self.y))
+            else:
+                ox, oy = self.c.start[0] - 20, self.c.start[1] - 20
+                prior = {
+                    (x + ox, y + oy, d): bool(bits & (1 << d))
+                    for (x, y), bits in walls.items()
+                    for d in range(4)
+                }
+                self.loaded_seen = {(x + ox, y + oy) for x, y in seen}
+                self.corridor_est, self.cell_mm = geometry[:2]
+                self.events.append((self.t, "MAPA_CARGADO", self.x, self.y))
+        yield from self.explore(tuple(self.c.start), heading, prior)
+        if self.mapping_complete:
+            yield from self.cell_rotate_to(math.pi / 2)
+            if self.c.learned_path:
+                from . import map_storage
+
+                ox, oy = 20 - self.c.start[0], 20 - self.c.start[1]
+                bits = {}
+                for (x, y, d), closed in self.learned_walls.items():
+                    key = x + ox, y + oy
+                    if 0 <= key[0] < 40 and 0 <= key[1] < 40 and closed:
+                        bits[key] = bits.get(key, 0) | (1 << d)
+                seen = {(x + ox, y + oy) for x, y in self.learned_seen}
+                if any(x in (0, 39) or y in (0, 39) for x, y in seen):
+                    self.mapping_complete = False
+                    raise MotionFailure("MAPA_LIMITE")
+                map_storage.save(
+                    self.c.learned_path,
+                    bits,
+                    seen,
+                    self.corridor_est,
+                    self.cell_mm,
+                    math.sin(math.radians(self.c.robot.side_angle)),
+                    int(self.c.robot.deadzone),
+                )
+                self.events.append((self.t, "MAPA_GUARDADO", self.x, self.y))
 
     def run(self):
-        gen = {5: self.mode5, 4: self.mode4, 3: self.mode3}.get(self.c.mode, self.mode1)()
+        gen = {6: self.mode3, 5: self.mode5, 4: self.mode4, 3: self.mode3}.get(self.c.mode, self.mode1)()
         steps = int(self.c.seconds / self.DT)
         for _ in range(steps):
             try:
@@ -1459,12 +1634,14 @@ class Sim:
                 if self.reached is None and not self.mapping_complete:
                     self.failure = "navegacion terminada sin llegada fisica"
                 break
-            if self.reached is not None and not (self.c.mode == 3 and not self.c.use_goal):
+            if self.reached is not None and not (
+                self.c.mode == 6 or (self.c.mode == 3 and not self.c.use_goal)
+            ):
                 break
         if (
             not self.mapping_complete
             and self.failure is None
-            and (self.reached is None or (self.c.mode == 3 and not self.c.use_goal))
+            and (self.reached is None or self.c.mode == 6 or (self.c.mode == 3 and not self.c.use_goal))
         ):
             self.failure = "limite de simulacion"
         gen.close()

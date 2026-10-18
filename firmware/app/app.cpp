@@ -7,9 +7,9 @@
 
 namespace {
 
-const int kModes = 5;
+const int kModes = 6;
 const char* const kModeNames[] = {"", "Pared derecha", "Pared izquierda", "Laberinto", "Ruta competencia",
-                                  "Espacio libre"};
+                                  "Espacio libre", "Aprender pista"};
 
 }  // namespace
 
@@ -92,6 +92,9 @@ void App::runMode(int mode) {
       }
       break;
     }
+    case 6:
+      maze_.learnTrack();
+      break;
     case 4:
       maze_.runCompetition();
       break;
@@ -169,6 +172,14 @@ int App::waitForStart(int mode) {
   uint32_t lastConf = millis();
   while (true) {
     robot_.idle(20);
+    if (robot_.requests().readMap) {
+      robot_.requests().readMap = false;
+      maze_.showSavedMap();
+    }
+    if (robot_.requests().eraseMap) {
+      robot_.requests().eraseMap = false;
+      maze_.eraseMap();
+    }
     const int m = robot_.takeMode();
     if (m) {
       mode = m;

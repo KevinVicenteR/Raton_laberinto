@@ -165,3 +165,11 @@ void Lasers::waitFresh(int n) {
     if (done) return;
   }
 }
+
+void Lasers::invalidateFilters() {
+  for (int i = 0; i < 3; ++i) {
+    kValid_[i] = false;
+    jumps_[i] = 0;
+    mm_[i] = -1;
+  }
+}

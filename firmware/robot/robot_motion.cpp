@@ -46,10 +46,9 @@ float RobotHW::wheelDistance() const {
 void RobotHW::stopMotors() {
   lastPeriodUs_ = 0;  // la pausa entre maniobras no cuenta como retraso del control
   motors_.brake();
-  delay(60);
-  motors_.coast();
+  idle(20);  // freno activo, sensores y Bluetooth siguen atendidos
   lastSpeed_ = 0;
-  idle(cfg::SETTLE_MS);
+  idle(cfg::SETTLE_MS);  // mantener freno hasta la siguiente orden de movimiento
 }
 
 // ---------------------------------------------------------------- lecturas
@@ -70,7 +69,7 @@ int RobotHW::frontMm() {
 }
 
 Walls RobotHW::readWalls() {
-  lasers_.waitFresh(2);
+  waitFresh(2);
   auto wall = [](int mm, int threshold) { return mm >= 0 && mm < threshold; };
   return Walls{wall(sideMm(Lasers::LEFT), tuning_.sideWall), wall(frontMm(), cfg::FRONT_WALL_MM),
                wall(sideMm(Lasers::RIGHT), tuning_.sideWall)};
@@ -79,7 +78,7 @@ Walls RobotHW::readWalls() {
 Walls RobotHW::senseCell() {
   int best[3] = {-1, -1, -1};
   for (int k = 0; k < 5; ++k) {
-    lasers_.waitFresh(1);
+    waitFresh(1);
     for (int i = 0; i < 3; ++i) {
       const int v = lasers_.mm(static_cast<Lasers::Id>(i));
       if (v >= 0 && (best[i] < 0 || v < best[i])) best[i] = v;
@@ -141,7 +140,9 @@ void RobotHW::controlStep(float v, float speed, float& integral, float dt, bool 
   if (v > 0) {
     base = cfg::PWM_MIN_RUN + cfg::KFF_SPEED * v + cfg::KP_SPEED * err + cfg::KI_SPEED * integral;
     if (speed < 20.0f && base < cfg::PWM_MIN_MOVE) base = cfg::PWM_MIN_MOVE;  // parado: empujon para arrancar
-    if (base < cfg::PWM_MIN_RUN) base = cfg::PWM_MIN_RUN;
+    // En frenada el PI debe poder bajar del PWM de mantenimiento: forzarlo
+    // mantenia las ruedas empujando aunque la velocidad ya excediera la consigna.
+    base = clampf(base, 0.0f, cfg::PWM_MAX - cfg::MAX_STEER);
   }
 
   // Direccion en capas:
@@ -171,7 +172,12 @@ void RobotHW::controlStep(float v, float speed, float& integral, float dt, bool 
     // y el PID del giroscopio lo sigue.
     float target = 0;
     if (walls) {
-      target = clampf(conf * tuning_.kpWall * offset, -cfg::MAX_WALL_CORRECTION_DEG, cfg::MAX_WALL_CORRECTION_DEG);
+      // La deriva lateral del Kalman anticipa el cruce del centro. Limitarla evita
+      // que un cambio de pared o un valor atipico domine el rumbo.
+      const float speedGain = clampf(132.0f / fmaxf(v, 80.0f), 0.5f, 1.0f);
+      target = clampf(conf * speedGain * (tuning_.kpWall * offset +
+                      cfg::WALL_RATE_DAMP * clampf(rate, -40.0f, 40.0f)),
+                      -cfg::MAX_WALL_CORRECTION_DEG, cfg::MAX_WALL_CORRECTION_DEG);
     }
     yawTarget_ += cfg::YAW_TARGET_SMOOTH * (target - yawTarget_);
     steer = cfg::KP_YAW * (yawTarget_ - heading_) - cfg::KD_YAW * gyro_.rate();
@@ -196,7 +202,8 @@ int RobotHW::runCells(int cells, float vmax, bool* unexpected, raton::CellObserv
   // Tras un giro el filtro del frontal aun guarda la pared que veia antes de girar: se espera a tener
   // lecturas nuevas en el rumbo actual antes de arrancar (si no, el tramo acababa en 0 celdas).
   frontMemMm_ = -1;
-  lasers_.waitFresh(8);  // ~240 ms
+  if (postTurnFresh_) waitFresh(cfg::POST_TURN_SAMPLES);
+  postTurnFresh_ = false;
   encoders_.reset();
   resetHeadingToGrid();
   yawTarget_ = 0;
@@ -265,8 +272,8 @@ int RobotHW::runCells(int cells, float vmax, bool* unexpected, raton::CellObserv
                         gyro_.bumpG() > cfg::BUMP_G;
     // Frontal confirmado: solo cuenta una lectura que coincide (±30 mm) con la anterior nueva.
     const int frontNow = frontMm();
-    if (laserSamples_ != frontSample) {
-      frontSample = laserSamples_;
+    if (lasers_.sampleCount(Lasers::FRONT) != frontSample) {
+      frontSample = lasers_.sampleCount(Lasers::FRONT);
       frontConfirmed = (frontNow >= 0 && frontPrev >= 0 && abs(frontNow - frontPrev) <= 30) ? frontNow
                        : (frontNow < 0 ? -1 : frontConfirmed);
       frontPrev = frontNow;
@@ -324,6 +331,8 @@ int RobotHW::runCells(int cells, float vmax, bool* unexpected, raton::CellObserv
     controlStep(fmaxf(v, cfg::MIN_SPEED), speed, integral, dt);
   }
   stopMotors();
+  cachedCellFront_ = !stuck;
+  cachedCellFrontMm_ = frontConfirmed;
   if (stuck && !aborted_) {
     setState("PEGADO");
     char line[48];
@@ -336,7 +345,7 @@ int RobotHW::runCells(int cells, float vmax, bool* unexpected, raton::CellObserv
   const int moved = progress.cells;
   // Donde queda el centro del raton respecto al de la celda: con pared delante lo dice el laser; si no,
   // lo que se paso o le falto por encoders. Lo usan el giro y la marcha atras siguientes.
-  lasers_.waitFresh(1);
+  waitFresh(1);
   const int f = lasers_.mm(Lasers::FRONT);
   if (f >= 0 && f < cfg::FRONT_WALL_MM) {
     pendingAdvance_ = 0.5f * geom_.corridorMm() - (f - geom_.deadzoneMm()) - cfg::FRONT_SENSOR_AHEAD_MM;
@@ -528,19 +537,20 @@ float RobotHW::rotateOnce(float degrees) {
     // Dentro de tolerancia y casi quieto: hecho. Se decide aqui, antes de frenar.
     if (fabsf(err) < cfg::TURN_TOLERANCE_DEG) {
       motors_.brake();
-      if (fabsf(rate) < 40.0f && ++settled >= 3) break;
+      if (fabsf(rate) < 8.0f && ++settled >= 3) break;
       continue;
     }
     settled = 0;
     const int sign = err >= 0 ? 1 : -1;
-    // PD: frena solo al acercarse (la derivada resta cuando ya gira deprisa hacia el objetivo).
-    float pwm = clampf(cfg::KP_TURN * err - cfg::KD_TURN * rate, -cfg::TURN_PWM_MAX, cfg::TURN_PWM_MAX);
-    if (fabsf(rate) < 20.0f) {
-      // Parado. Lejos del objetivo: empujon minimo para arrancar. Cerca (< TURN_ACCEPT_DEG) y parado, no
-      // se insiste (insistir a todo o nada lo hacia bailar sobre el objetivo hasta agotar el tiempo).
-      if (fabsf(err) < cfg::TURN_ACCEPT_DEG && millis() - t0 > 300) break;
-      if (fabsf(pwm) < cfg::TURN_PWM_MIN) pwm = sign * cfg::TURN_PWM_MIN;
-    }
+    // Perfil angular: la distancia de frenado crece con el cuadrado de la tasa.
+    // Se reserva un grado para absorber latencia/inercia antes de la tolerancia.
+    const float desired = sign * fminf(cfg::TURN_RATE_DPS,
+        sqrtf(2.0f * cfg::TURN_ACCEL_DPS2 * fmaxf(0.0f, fabsf(err) - 1.0f)));
+    float pwm = clampf(desired / 900.0f + sign * cfg::PWM_MIN_RUN * fminf(1.0f, fabsf(err) / 6.0f) + cfg::KD_TURN * (desired - rate),
+                       -cfg::TURN_PWM_MAX, cfg::TURN_PWM_MAX);
+    // Unicamente arranque inicial lejos del objetivo: nunca empujones al afinar.
+    if (millis() - t0 < 200 && fabsf(err) > 12.0f && fabsf(rate) < 20.0f && fabsf(pwm) < cfg::TURN_PWM_MIN)
+      pwm = sign * cfg::TURN_PWM_MIN;
     if (cfg::TURN_IN_PLACE) {
       motors_.set(-pwm, pwm);  // sobre si mismo: lo que menos espacio ocupa
     } else if (pwm > 0) {
@@ -550,6 +560,9 @@ float RobotHW::rotateOnce(float degrees) {
     }
   }
   stopMotors();
+  cachedCellFront_ = false;
+  lasers_.invalidateFilters();
+  postTurnFresh_ = true;
   return degrees - gyro_.yaw();
 }
 
@@ -629,4 +642,24 @@ void RobotHW::backUp(float mm) {
   recordMotion("back", -mm, {complete, actual, heading_,
                              complete ? raton::MotionReason::Complete
                                       : (aborted_ ? raton::MotionReason::Aborted : raton::MotionReason::Interrupted)});
+}
+
+void RobotHW::waitFresh(int samples) {
+  uint32_t start[3];
+  for (int i = 0; i < 3; ++i) start[i] = lasers_.sampleCount(static_cast<Lasers::Id>(i));
+  const uint32_t t0 = millis();
+  while (!aborted_ && millis() - t0 < 200) {
+    idle(1);
+    bool done = true;
+    for (int i = 0; i < 3; ++i)
+      if (lasers_.sampleCount(static_cast<Lasers::Id>(i)) - start[i] < static_cast<uint32_t>(samples)) done = false;
+    if (done) break;
+  }
+}
+
+bool RobotHW::frontWallStopped() {
+  // Dos entregas frontales independientes ya confirmadas durante el avance.
+  // No volver a adquirir los tres sensores al decidir tras cada celda.
+  const int front = cachedCellFront_ ? cachedCellFrontMm_ : stableFrontMm();
+  return front >= 0 && front < geom_.frontTurnMm() + static_cast<int>(cfg::FRONT_WALL_FACTOR * geom_.cellMm());
 }

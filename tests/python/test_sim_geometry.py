@@ -52,7 +52,8 @@ class GeometryTests(unittest.TestCase):
         )
         self.assertEqual(len(observations), 1)
         self.assertLess(observations[0][1], sim.travelled)
-        self.assertGreater(sim.explore_v, 0)
+        self.assertEqual(sim.explore_v, 0)
+        self.assertLess(observations[0][2], sim.t)
 
     def test_side_sample_is_taken_before_target_center(self):
         sim = S.Sim(S.Case("sample", S.M_L, (2, 0), (0, 2)))

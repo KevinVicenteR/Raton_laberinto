@@ -121,6 +121,7 @@ class Telemetry {
   }
 
   uint32_t droppedLines() { return dropped; }
+  int pendingPriorityBytes() { return priority.used(); }
 
   void flush(uint32_t ms) {
     const uint32_t t0 = millis();
@@ -150,6 +151,7 @@ void poll() { Telemetry::instance().poll(); }
 void println(const char* raw, bool important) { Telemetry::instance().println(raw, important); }
 void println(const char* raw) { Telemetry::instance().println(raw); }
 uint32_t droppedLines() { return Telemetry::instance().droppedLines(); }
+int pendingPriorityBytes() { return Telemetry::instance().pendingPriorityBytes(); }
 void flush(uint32_t ms) { Telemetry::instance().flush(ms); }
 int read() { return Telemetry::instance().read(); }
 

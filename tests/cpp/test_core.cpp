@@ -391,7 +391,41 @@ void checkMapTrack(const Truth& truth, Cell start = makeCell(0, 0)) {
 
 }  // namespace
 
+void testMapPersistence() {
+  raton::CellMap map, restored;
+  map.clear(nullptr, 40, 40);
+  map.setWall(makeCell(20, 20), raton::NORTH, true);
+  map.markSeen(makeCell(20, 20));
+  map.addVisit(makeCell(20, 20));
+  std::vector<uint8_t> bytes(raton::CellMap::kSerializedMax);
+  CHECK(map.serialize(bytes.data(), 1) == 0);
+  const size_t size = map.serialize(bytes.data(), bytes.size());
+  CHECK(restored.deserialize(bytes.data(), size));
+  CHECK(restored.wall(makeCell(20, 20), raton::NORTH));
+  CHECK(restored.seen(makeCell(20, 20)));
+  CHECK(restored.visits(makeCell(20, 20)) == 1);
+  std::vector<uint8_t> again(bytes.size());
+  CHECK(restored.serialize(again.data(), again.size()) == size);
+  CHECK(bytes == again);
+  CHECK(!restored.deserialize(bytes.data(), size - 1));
+  for (size_t i = 0; i < size; ++i) {
+    bytes[i] ^= 1;
+    CHECK(!restored.deserialize(bytes.data(), size));
+    bytes[i] ^= 1;
+  }
+  CHECK(restored.seen(makeCell(20, 20))); // un rechazo no modifica el mapa
+  // Serpiente de 1600 celdas: una distancia de 8 bits truncaba la ruta a 254.
+  map.clear([](int, int, int) { return true; }, 40, 40);
+  for (int y = 0; y < 40; ++y) {
+    for (int x = 0; x < 39; ++x) map.setWall(makeCell(x, y), raton::EAST, false);
+    if (y < 39) map.setWall(makeCell(y % 2 == 0 ? 39 : 0, y), raton::NORTH, false);
+  }
+  map.flood(makeCell(0, 39));
+  CHECK(map.dist(makeCell(0, 0)) == 1599);
+}
+
 int main() {
+  testMapPersistence();
   testFrame();
   testLineQueue();
   testOrquestadores();

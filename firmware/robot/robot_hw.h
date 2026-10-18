@@ -34,7 +34,7 @@ class RobotHW : public raton::CellDriver {
   void turnInCell(float degrees) override { turnCorner(degrees, true); }
   int runCells(int cells, float vmax, bool* unexpected, raton::CellObserver* observer) override;
   bool cellSides(int i, bool& left, bool& right) const override;
-  bool frontWallStopped() override { return senseCell().front; }
+  bool frontWallStopped() override;
   int stableFrontMm() override;
   bool calibrateStill(int& left, int& right, int& front) override;
   void alignToFront() override;
@@ -128,6 +128,10 @@ class RobotHW : public raton::CellDriver {
   void controlStep(float v, float speed, float& integral, float dt, bool useWalls = true);
   bool lateralOffset(float& offset, float& rate, float& conf) const;
   void stopMotors();
+  void waitFresh(int samples);
+  bool postTurnFresh_ = false;
+  bool cachedCellFront_ = false;
+  int cachedCellFrontMm_ = -1;
   float wheelDistance() const;
   static raton::ParamsMovimiento motionParams();
 

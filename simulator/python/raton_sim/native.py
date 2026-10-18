@@ -56,6 +56,19 @@ def firmware_config(sim_module=None):
             raise ValueError(f"configuración no numérica: {name}")
 
     mapping = dict(
+        accel="ACCEL",
+        yaw_smooth="YAW_TARGET_SMOOTH",
+        kd_yaw="KD_YAW",
+        wall_rate_damp="WALL_RATE_DAMP",
+        turn_rate="TURN_RATE_DPS",
+        turn_accel="TURN_ACCEL_DPS2",
+        turn_pwm_max="TURN_PWM_MAX",
+        turn_pwm_min="TURN_PWM_MIN",
+        pwm_min_run="PWM_MIN_RUN",
+        kd_turn="KD_TURN",
+        fresh_samples="POST_TURN_SAMPLES",
+        calibration_samples="CALIBRATION_SAMPLES",
+        front_stable_samples="FRONT_STABLE_SAMPLES",
         speed="SEARCH_SPEED",
         side_wall="SIDE_WALL_MM",
         front_wall="FRONT_WALL_MM",
@@ -120,6 +133,8 @@ def firmware_config(sim_module=None):
     return replace(
         sim_module.Firmware(),
         geometry=geometry,
+        profiled_turn=True,
+        stop_seconds=(20 + number("SETTLE_MS")) / 1000,
         **extra,
         **values,
         cell_side_wall=float(

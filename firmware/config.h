@@ -78,7 +78,7 @@ const bool WAIT_FOR_WEB_START = true;
 // ---------- Eleccion de modo con la mano ----------
 // Al encender, cada pasada de la mano delante del laser frontal cambia de modo:
 // 1 = seguir pared derecha, 2 = seguir pared izquierda, 3 = resolver laberinto (flood fill),
-// 4 = ruta de la competencia (laberinto del reglamento en competition_maze.h), 5 = espacio libre.
+// 4 = ruta de la competencia, 5 = espacio libre, 6 = aprender pista y guardar en flash.
 // Sin pasadas en MODE_SELECT_MS arranca en el modo 1. 0 = sin eleccion, arranca al instante.
 const uint32_t MODE_SELECT_MS = 2000;
 const int HAND_NEAR_MM = 60;     // mano delante
@@ -87,7 +87,7 @@ const int HAND_FAR_MM = 150;     // mano retirada
 // ---------- Giroscopio ----------
 const float GYRO_BIAS_TRACK_DPS = 2.0f;    // parado y girando menos que esto: se corrige el sesgo
 const float GYRO_BIAS_TRACK_GAIN = 0.01f;  // velocidad de esa correccion por muestra
-const uint32_t SETTLE_MS = 40;             // pausa tras cada maniobra (corrige sesgo y estabiliza)
+const uint32_t SETTLE_MS = 15;             // pausa tras cada maniobra (corrige sesgo y estabiliza)
 
 // ---------- Rumbo con encoders ----------
 const float TRACK_WIDTH_MM = 75.0f;        // distancia entre ruedas; al arrancar se mide sola
@@ -143,7 +143,7 @@ const uint32_t START_DELAY_MS = 0;      // espera tras encender antes de explora
 const uint32_t CONTROL_PERIOD_US = 5000;  // 200 Hz
 const float SEARCH_SPEED = 100.0f;        // mm/s
 const float SPEED_RUN_SPEED = 700.0f;     // mm/s (max teorico ~890 mm/s a 6 V)
-const float ACCEL = 800.0f;               // mm/s^2
+const float ACCEL = 1000.0f;               // mm/s^2
 const float MIN_SPEED = 40.0f;            // mm/s al final de la frenada
 
 // ---------- Seguidor de paredes (CALIBRAR en la pista) ----------
@@ -160,8 +160,8 @@ const float W_TURN = 0.3f;
 const float B_STRAIGHT = 0.2f;
 // Pista conocida (modo 4): tramos rectos de una vez a esta velocidad (mm/s). Si una pared no coincide
 // con el mapa, pasa a buscar la meta como en una pista desconocida.
-const float COMP_SPEED = 250.0f;
-const float EXPLORE_SPEED = 132.0f;        // modo 3: a 250 llegaba a 300-450 mm/s y frenaba tarde contra las paredes
+const float COMP_SPEED = 300.0f;
+const float EXPLORE_SPEED = 180.0f;        // margen N20: perfil trapezoidal y PI capaz de frenar
 // Pistas desconocidas (modo 5): ademas del espacio y la novedad, la direccion hacia la meta (coseno del
 // angulo, -1..1) y las veces que ya se salio por esa salida del cruce (memoria estilo Tremaux).
 const float W_GOAL = 0.6f;
@@ -227,8 +227,8 @@ const float SPEED_FILTER = 0.85f;         // suavizado de la velocidad medida (0
 const float KP_SPEED = 0.0008f;
 const float KI_SPEED = 0.004f;
 const float KP_YAW = 0.0119f;              // PWM por grado de error
-const float KD_YAW = 0.0006f;             // PWM por grado/s
-const float KP_WALL = 0.185f;              // cascada: grados de rumbo por mm descentrado (modo por defecto)
+const float KD_YAW = 0.0012f;             // PWM por grado/s
+const float KP_WALL = 0.12f;              // cascada: grados de rumbo por mm descentrado (modo por defecto)
 // PID de direccion sobre la desviacion lateral (mm respecto al centro del pasillo):
 //   giro = KP_STEER * desviacion + KD_STEER * (cambio de la desviacion en un ciclo de control)
 // La derivada sale de la velocidad que estima el Kalman de cada laser (no del valor crudo, que salta).
@@ -242,21 +242,25 @@ const float KD_STEER = 1.0f;              // PWM por mm de cambio de desviacion 
 //       llega en 1 de 10 (el Kd amplifica el ruido de los laseres, que actualizan a 50 Hz).
 // Se cambia en marcha desde la web (orden p0 / p1).
 const int STEER_MODE = 0;
-const float MAX_WALL_CORRECTION_DEG = 4.0f;
+const float MAX_WALL_CORRECTION_DEG = 3.0f;
 const float LATERAL_DEADBAND_MM = 8.5f;   // descentrado menor que esto no se corrige (evita zigzag)
-const float YAW_TARGET_SMOOTH = 0.05f;    // 0..1: suavizado del rumbo objetivo por ciclo
+const float YAW_TARGET_SMOOTH = 0.12f;    // 200 Hz: menos retardo en la cascada amortiguada
 const float MAX_STEER = 0.14f;            // correccion maxima de PWM entre ruedas (evita bandazos)
 
-const float KP_TURN = 0.006f;
+const float WALL_RATE_DAMP = 0.035f;       // grados por mm/s de deriva lateral (Kalman)
+const float TURN_RATE_DPS = 220.0f;
+const float TURN_ACCEL_DPS2 = 900.0f;
+const int POST_TURN_SAMPLES = 2;
+const int FRONT_STABLE_SAMPLES = 5;
+const int CALIBRATION_SAMPLES = 7;
 const float KD_TURN = 0.0010f;
 const bool TURN_IN_PLACE = true;            // true = gira sobre si mismo (pista pequena), false = pivote en una rueda
-const float TURN_PWM_MAX = 0.40f;
+const float TURN_PWM_MAX = 0.45f;
 const float TURN_PWM_MIN = 0.28f;          // minimo para ARRANCAR a girar (parado); girando ya no se fuerza
 const float TURN_TOLERANCE_DEG = 3.0f;     // giro dado por bueno
-const float TURN_ACCEPT_DEG = 5.0f;        // parado y sin poder afinar: se deja de insistir en ese intento
-const float TURN_RETRY_DEG = 5.0f;         // si queda mas torcido que esto, otro intento corto
-const int TURN_ATTEMPTS = 3;               // intentos por giro
-const float TURN_FAIL_DEG = 10.0f;         // error mayor tras los intentos = giro fallido (para el modo)
+const float TURN_RETRY_DEG = 3.0f;         // reintentar solo fuera de la precision requerida
+const int TURN_ATTEMPTS = 2;               // intentos por giro
+const float TURN_FAIL_DEG = 3.0f;         // no continuar con un error >=3 grados
 const uint32_t TURN_TIMEOUT_MS = 3000;
 
 }  // namespace cfg

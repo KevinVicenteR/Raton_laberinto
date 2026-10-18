@@ -14,7 +14,7 @@ class NavigationTests(unittest.TestCase):
 
     def test_imports_real_firmware_configuration(self):
         fw = N.firmware_config(S)
-        self.assertEqual(fw.kp_wall, 0.185)
+        self.assertEqual(fw.kp_wall, 0.12)
         self.assertEqual(fw.cfg_side_ahead, 30)
         self.assertEqual(fw.turn_timeout, 3)
 

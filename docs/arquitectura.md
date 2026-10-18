@@ -32,7 +32,7 @@ implementa `RobotHW`; en las pruebas (`tests/cpp`) un robot simulado que recorre
 
 | Carpeta | Clases |
 |---|---|
-| `app/` | `App` (arranque, elección de modo, despacho), `WallFollower` (modos 1-2), `FreeSpaceNavigator` (modo 5), `MazeMission` (modos 3-4), `Maneuvers` (recuperaciones), `Reporter` (líneas DECIDE) |
+| `app/` | `App` (arranque, elección de modo, despacho), `WallFollower` (modos 1-2), `FreeSpaceNavigator` (modo 5), `MazeMission` (modos 3-4 y 6, persistencia TDBStore en `map_storage`), `Maneuvers` (recuperaciones), `Reporter` (líneas DECIDE) |
 | `robot/` | `RobotHW` (ciclo de control, odometría y rumbo en `robot_hw.cpp`; maniobras en `robot_motion.cpp`; calibraciones en `robot_calibration.cpp`), `CommandHandler` (órdenes y ACK/NAK), `Tuning` y `OperatorRequests` |
 | `comms/` | `Telemetry` encapsula Bluetooth, recepción y colas prioritaria y normal |
 | `hw/` | Drivers: `Motors` (DRV8833), `Encoders`, `Lasers` (3×VL53L0X con Kalman), `Gyro` (BMI270), `Display` (SSD1306) |

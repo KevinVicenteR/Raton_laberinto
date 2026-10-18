@@ -142,3 +142,51 @@ bool CellMap::unseenOnRoute(Cell start, Cell goal, Cell from, Cell& out) {
 }
 
 }  // namespace raton
+
+namespace raton {
+namespace {
+uint32_t mapCrc(const uint8_t* data, size_t size) {
+  uint32_t crc = 0xffffffffu;
+  for (size_t i = 0; i < size; ++i) {
+    crc ^= data[i];
+    for (int bit = 0; bit < 8; ++bit) crc = (crc >> 1) ^ (0xedb88320u & (0u - (crc & 1u)));
+  }
+  return ~crc;
+}
+}
+size_t CellMap::serialize(uint8_t* out, size_t capacity) const {
+  const size_t size = 12 + 3 * width_ * height_;
+  if (!out || capacity < size) return 0;
+  out[0] = 'R'; out[1] = 'M'; out[2] = 'A'; out[3] = 'P';
+  out[4] = 1; out[5] = width_; out[6] = height_; out[7] = 0;
+  size_t n = 8;
+  for (int x = 0; x < width_; ++x) for (int y = 0; y < height_; ++y) {
+    out[n++] = walls_[x][y]; out[n++] = seen_[x][y] ? 1 : 0; out[n++] = visits_[x][y];
+  }
+  const uint32_t crc = mapCrc(out, n);
+  for (int i = 0; i < 4; ++i) out[n++] = static_cast<uint8_t>(crc >> (8 * i));
+  return size;
+}
+bool CellMap::deserialize(const uint8_t* data, size_t size) {
+  if (!data || size < 12 || data[0] != 'R' || data[1] != 'M' || data[2] != 'A' || data[3] != 'P' ||
+      data[4] != 1 || data[7] != 0 || data[5] < 1 || data[5] > kMax || data[6] < 1 || data[6] > kMax ||
+      size != static_cast<size_t>(12 + 3 * data[5] * data[6])) return false;
+  uint32_t crc = 0;
+  for (int i = 0; i < 4; ++i) crc |= static_cast<uint32_t>(data[size - 4 + i]) << (8 * i);
+  if (crc != mapCrc(data, size - 4)) return false;
+  const int w = data[5], h = data[6];
+  for (int x = 0; x < w; ++x) for (int y = 0; y < h; ++y) {
+    const size_t at = 8 + 3 * (x * h + y);
+    const uint8_t walls = data[at];
+    if (walls > 15 || data[at + 1] > 1) return false;
+    if (x + 1 < w && !!(walls & 2) != !!(data[at + 3 * h] & 8)) return false;
+    if (y + 1 < h && !!(walls & 1) != !!(data[at + 3] & 4)) return false;
+  }
+  clear(nullptr, w, h);
+  size_t n = 8;
+  for (int x = 0; x < w; ++x) for (int y = 0; y < h; ++y) {
+    walls_[x][y] = data[n++]; seen_[x][y] = data[n++] != 0; visits_[x][y] = data[n++];
+  }
+  return true;
+}
+}  // namespace raton

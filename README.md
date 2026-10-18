@@ -35,7 +35,7 @@ Edge). Otras órdenes:
 
 1. Seguir la pared derecha · 2. Seguir la pared izquierda · 3. Laberinto por celdas (mapea una pista
 desconocida; con meta: explora, busca la ruta demostrada y hace la carrera rápida) · 4. Ruta más corta
-del laberinto del reglamento · 5. Espacio libre.
+del laberinto del reglamento · 5. Espacio libre · 6. Aprender pista (mapear, volver y guardar en flash).
 
 ## Estructura
 

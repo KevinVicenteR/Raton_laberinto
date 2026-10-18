@@ -4,6 +4,7 @@
 #pragma once
 
 #include <stdint.h>
+#include <stddef.h>
 
 #include "maze/grid.h"
 
@@ -12,12 +13,17 @@ namespace raton {
 class CellMap {
  public:
   static constexpr int kMax = 40;
-  static constexpr uint8_t kUnreached = 255;
+  static constexpr uint16_t kUnreached = 65535;
   // Mapa previo: true si hay pared en (x, y) hacia dir (N=0 E=1 S=2 W=3).
   using WallPrior = bool (*)(int x, int y, int dir);
 
   // Vacia el mapa; con prior, parte de ese dibujo (lo que se vea en cada celda manda sobre el).
   void clear(WallPrior prior, int width, int height);
+
+  // Formato portable RMAP v1, little endian, CRC32; carga atomica tras validar.
+  static constexpr size_t kSerializedMax = 12 + 3 * kMax * kMax;
+  size_t serialize(uint8_t* out, size_t capacity) const;
+  bool deserialize(const uint8_t* data, size_t size);
 
   int width() const { return width_; }
   int height() const { return height_; }
@@ -45,7 +51,7 @@ class CellMap {
   // Inundacion desde goal (lo desconocido cuenta como abierto). Con avoidDead no cruza callejones.
   void setAvoidDead(bool on) { avoidDead_ = on; }
   void flood(Cell goal);
-  uint8_t dist(Cell c) const { return inside(c) ? dist_[c.x][c.y] : kUnreached; }
+  uint16_t dist(Cell c) const { return inside(c) ? dist_[c.x][c.y] : kUnreached; }
 
   // Celda sin leer mas cercana a la que se puede llegar por lo ya visto (frontera).
   bool nearestUnseen(Cell from, Cell& out);
@@ -61,7 +67,7 @@ class CellMap {
   uint8_t walls_[kMax][kMax] = {};
   bool seen_[kMax][kMax] = {};
   uint8_t visits_[kMax][kMax] = {};
-  uint8_t dist_[kMax][kMax] = {};
+  uint16_t dist_[kMax][kMax] = {};
   bool dead_[kMax][kMax] = {};
   Cell keep_[2] = {{-1, -1}, {-1, -1}};
   bool avoidDead_ = true;
