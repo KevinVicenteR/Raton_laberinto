@@ -56,12 +56,21 @@ App::App()
 }
 
 void App::fail(const char* msg) {
+  // Sin parar el Bluetooth: la web sigue conectada y ve el error (y puede reiniciar la placa con R).
   motors_.coast();
-  Serial.println(msg);
-  display_.show("ERROR", msg);
+  busy_ = true;
+  display_.show("ERROR", msg, "", "Revisa cables y", "reinicia (R)");
+  char line[64];
+  snprintf(line, sizeof(line), "ERROR_ARRANQUE %s", msg);
+  uint32_t last = 0;
   while (true) {
-    digitalWrite(LED_BUILTIN, !digitalRead(LED_BUILTIN));
-    delay(150);
+    service();
+    if (millis() - last > 1000) {
+      last = millis();
+      reply(line);
+    }
+    digitalWrite(LED_BUILTIN, (millis() / 150) % 2);
+    delay(5);
   }
 }
 
@@ -72,24 +81,32 @@ void App::setup() {
   motors_.begin();
   motors_.coast();
   encoders_.begin();
-  delay(300);  // margen para que laseres, IMU y OLED se enciendan
+  // Bluetooth lo primero: si luego falla un sensor, la web se puede conectar y ver el error.
+  telemetry::begin();
+  board_.service = serviceTrampoline;
+  const uint32_t t0 = millis();
+  while (millis() - t0 < 300) service();  // margen para que laseres, IMU y OLED se enciendan
   Wire.begin();
   Wire.setClock(400000);
   display_.begin();
   bool ok = false;
   for (int i = 0; i < 5 && !ok; ++i) {
     ok = lasers_.begin();
+    service();
     if (!ok) delay(100);
   }
+  char line[64];
+  snprintf(line, sizeof(line), "SENSORES izq=%s frente=%s der=%s", lasers_.ok(0) ? "ok" : "FALLA",
+           lasers_.ok(1) ? "ok" : "FALLA", lasers_.ok(2) ? "ok" : "FALLA");
+  reply(line);
   if (!ok) fail(!lasers_.ok(0) ? "Laser izquierdo" : (!lasers_.ok(1) ? "Laser frontal" : "Laser derecho"));
   ok = false;
   for (int i = 0; i < 5 && !ok; ++i) {
     ok = imu_.begin();
+    service();
     if (!ok) delay(100);
   }
-  if (!ok) fail("IMU");
-  telemetry::begin();
-  board_.service = serviceTrampoline;
+  if (!ok) fail("IMU (giroscopio)");
   mouse_.resetMap();
   if (storage::loadMap(mouse_.maze()) && mouse_.maze().width() == params_.mazeW &&
       mouse_.maze().height() == params_.mazeH) {
@@ -98,7 +115,6 @@ void App::setup() {
   } else {
     mouse_.resetMap();
   }
-  char line[48];
   snprintf(line, sizeof(line), "LISTO giroscopio %d Hz", static_cast<int>(imu_.odrHz()));
   reply(line);
 }
@@ -161,6 +177,11 @@ void App::command(char* cmd) {
   if (cmd[0] == 'x' && cmd[1] == 0) {
     board_.requestStop();
     return;
+  }
+  if (!strcmp(cmd, "R")) {
+    reply("REINICIO");
+    telemetry::flush(300);
+    NVIC_SystemReset();
   }
   if (busy_) {
     reply("OCUPADO (x = parar)");
