@@ -169,25 +169,50 @@ void App::command(char* cmd) {
   if (cmd[0] == 's' && (cmd[1] == 0 || (cmd[1] >= '1' && cmd[1] <= '7' && cmd[2] == 0))) {
     if (cmd[1]) mode_ = cmd[1] - '0';
     startRequested_ = true;
+    snprintf(out, sizeof(out), "ARRANCANDO %s", kModeNames[mode_]);
+    reply(out);
     return;
   }
   if (cmd[0] == 'm' && cmd[1] >= '1' && cmd[1] <= '7' && cmd[2] == 0) {
     mode_ = cmd[1] - '0';
-    snprintf(out, sizeof(out), "MODO %s", kModeNames[mode_]);
+    snprintf(out, sizeof(out), "MODE %d", mode_);  // la web marca el modo cuando la placa lo confirma
+    reply(out);
+    snprintf(out, sizeof(out), "MODO %s: %s", kModeNames[mode_], kModeHelp[mode_]);
     reply(out);
     return;
   }
   if (cmd[0] == 'G') {
-    int gx, gy;
+    // G<x>,<y>: celda de la meta en el laberinto. GW<x>,<y>: en el mapa aprendido de la web, donde la
+    // salida aparece en (20,20).
+    const bool web = cmd[1] == 'W';
     const char* comma = strchr(cmd, ',');
-    gx = atoi(cmd + 1);
-    gy = comma ? atoi(comma + 1) : -1;
-    if (comma && raton::setParam(params_, "goalX", gx) &&
-        raton::setParam(params_, "goalY", gy)) {
+    int gx = atoi(cmd + (web ? 2 : 1));
+    int gy = comma ? atoi(comma + 1) : -1;
+    if (web) {
+      gx += params_.startX - 20;
+      gy += params_.startY - 20;
+    }
+    if (comma && raton::setParam(params_, "goalX", static_cast<float>(gx)) &&
+        raton::setParam(params_, "goalY", static_cast<float>(gy)) && gx < params_.mazeW && gy < params_.mazeH) {
       mouse_.maze().setGoal(params_.goalX, params_.goalY, params_.goalW, params_.goalH);
       snprintf(out, sizeof(out), "META %d,%d (save para guardarla)", gx, gy);
-      reply(out);
+    } else {
+      snprintf(out, sizeof(out), "META NO VALIDA %d,%d: el laberinto es de %d x %d", gx, gy, params_.mazeW,
+               params_.mazeH);
     }
+    reply(out);
+    return;
+  }
+  // Ordenes de la web anterior.
+  if (!strcmp(cmd, "ERASE_MAP")) cmd = const_cast<char*>("erase");
+  else if (!strcmp(cmd, "LOAD_MAP")) cmd = const_cast<char*>("map");
+  else if (!strcmp(cmd, "?")) cmd = const_cast<char*>("params");
+  else if (!strcmp(cmd, "T")) {
+    wheelTest();
+    return;
+  } else if (cmd[0] == 'K') {
+    if (atof(cmd + 1) >= 100) calibrateSides(static_cast<float>(atof(cmd + 1)));
+    else calibrateFront();
     return;
   }
   char name[32];
@@ -265,6 +290,8 @@ void App::command(char* cmd) {
     reply(out);
     return;
   }
+  snprintf(out, sizeof(out), "? orden desconocida: %s", cmd);
+  reply(out);
   reply("ordenes: s s<n> x m<n> G<x>,<y> set <p> <v> get <p> params save defaults map erase calfront calside <mm> estado R");
 }
 
@@ -277,7 +304,7 @@ int App::menu() {
   // Dejarla mas de 1 s = arrancar al retirarla.
   enum { FAR, NEAR } hand = FAR;
   uint32_t nearSince = 0;
-  uint32_t lastShow = 0;
+  uint32_t lastShow = 0, lastMode = 0;
   bool armed = false;
   startRequested_ = false;
   board_.clearStop();
@@ -297,6 +324,7 @@ int App::menu() {
         lastShow = 0;
       }
       armed = hand == NEAR && now - nearSince > 1000;
+      if (hand == FAR && lastShow == 0) lastMode = 0;
     }
     digitalWrite(LED_BUILTIN, armed ? 1 : static_cast<int>((now / 500) % 2));
     if (now - lastShow > 400) {
@@ -307,9 +335,12 @@ int App::menu() {
       snprintf(l4, sizeof(l4), "Meta %d,%d", params_.goalX, params_.goalY);
       display_.show(kModeNames[mode_], kModeHelp[mode_], armed ? "SUELTA = ARRANCA" : "mano: cambiar/1s",
                     l3, l4);
-      char st[48];
-      snprintf(st, sizeof(st), "MENU modo=%d", mode_);
-      telemetry::println(st, false);
+    }
+    if (now - lastMode > 2000) {  // la web se puede conectar en cualquier momento
+      lastMode = now;
+      char st[16];
+      snprintf(st, sizeof(st), "MODE %d", mode_);
+      telemetry::println(st, true);
     }
   }
 }

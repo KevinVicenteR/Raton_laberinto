@@ -1,17 +1,28 @@
 import { useState } from 'react';
 import type { Cell } from '../telemetria/types';
+// Modos del firmware (arquitectura v2): el numero es el que se envia con m<n> y s<n>.
 export const modes = [
-  'Pared derecha',
-  'Pared izquierda',
-  'Laberinto',
-  'Ruta competencia',
-  'Espacio libre',
-  'Aprender pista',
+  'Explorar',
+  'Carrera',
+  'Solo meta',
+  'Sensores',
+  'Calibrar motores',
+  'Prueba de ruedas',
+  'Borrar mapa',
+];
+export const modeHelp = [
+  'Meta, ruta más corta, vuelta a la salida y guarda el mapa',
+  'Ruta más rápida con el mapa guardado (curvas suaves)',
+  'Explora hasta la meta y para',
+  'Lecturas de los láseres y el giroscopio',
+  'En el suelo, pasillo recto de 2 celdas: mide kV, kS y τ',
+  'Ratón LEVANTADO: cada rueda adelante y atrás',
+  'Olvida el mapa guardado en flash',
 ];
 export function useRobotCommands(send: (cmd: string) => Promise<boolean>) {
   const [mode, setMode] = useState(() => {
     const n = Number(localStorage.getItem('raton-mode'));
-    return n >= 1 && n <= 6 ? n : 1;
+    return n >= 1 && n <= modes.length ? n : 1;
   });
   const select = (n: number) => {
     setMode(n);
@@ -28,15 +39,16 @@ export function useRobotCommands(send: (cmd: string) => Promise<boolean>) {
     start: () => send(`s${mode}`),
     stop: () => send('x'),
     restart: () => send('R'),
-    eraseMap: () => send('ERASE_MAP'),
-    loadMap: () => send('LOAD_MAP'),
+    eraseMap: () => send('erase'),
+    loadMap: () => send('map'),
     train: () => {
-      setMode(6);
-      return sequence(['G-1,-1', 's6']);
+      setMode(1);
+      return send('s1');
     },
+    // La celda elegida en el mapa aprendido (salida en 20,20) como meta, y carrera.
     route: (goal: Cell) => {
-      setMode(3);
-      return sequence([`G${goal.join(',')}`, 's3']);
+      setMode(2);
+      return sequence([`GW${goal.join(',')}`, 's2']);
     },
     sequence,
   };

@@ -1,8 +1,10 @@
 #include "storage.h"
 
+// El orden importa: mbed.h trae Arduino.h y la configuracion de la placa (MBED_CONF_*) que necesita
+// FlashIAPBlockDevice.h; incluirlo despues rompe la compilacion con el nucleo mbed de Arduino.
+#include <mbed.h>
 #include <FlashIAPBlockDevice.h>
 #include <TDBStore.h>
-#include <mbed.h>
 #include <string.h>
 
 namespace {

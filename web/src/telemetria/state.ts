@@ -72,7 +72,7 @@ export function telemetryReducer(state: TelemetryState, action: Action): Telemet
   if (line === 'MAPA_BORRADO') next = { ...next, cells: {}, learnRobot: [20, 20] };
   if (line === 'MAPA_NUEVO') next = { ...next, cells: {}, learnRobot: [20, 20] };
   if (line === 'RUTA_INICIO') next.learnRobot = [20, 20];
-  if (/^(MODE|START) [1-6]$/.test(line)) next.boardMode = line;
+  if (/^(MODE|START) [1-7]$/.test(line)) next.boardMode = line;
   if (line.startsWith('DECIDE: ')) next.decision = line.slice(8);
   if (line === 'INICIO_MAPA')
     next = { ...next, occupancy: emptyOccupancy(), trail: [], samples: [], raceStart: t, raceEnd: null };

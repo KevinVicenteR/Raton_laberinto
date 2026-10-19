@@ -545,6 +545,10 @@ Navigator::Depart Navigator::depart(Brain& brain, float vmax) {
       return Depart::Go;
     }
   }
+  char line[72];
+  snprintf(line, sizeof(line), "NO_SALE x=%d y=%d: el frontal ve pared en todas las salidas (F%d)", cx_, cy_,
+           s_.front.mm);
+  io_.report(line, true);
   return Depart::Fail;
 }
 

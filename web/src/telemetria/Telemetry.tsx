@@ -1,7 +1,7 @@
 import { Diagnostics } from '../seguridad/Diagnostics';
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import { useTelemetry } from './useTelemetry';
-import { useRobotCommands, modes } from '../conexion/useRobotCommands';
+import { useRobotCommands, modes, modeHelp } from '../conexion/useRobotCommands';
 import { useReplay } from '../simulacion/useReplay';
 import { ReplayProjector } from '../simulacion/replayState';
 import { competition } from '../mapa/competition';
@@ -225,25 +225,14 @@ export function Telemetry() {
                 <b>
                   {i + 1} · {name}
                 </b>
-                <span>
-                  {
-                    [
-                      'Sigue la pared derecha',
-                      'Sigue la pared izquierda',
-                      'Explora o recorre el mapa aprendido',
-                      'Ruta mínima del reglamento',
-                      'Elige el mayor espacio libre',
-                      'Mapea, vuelve a la salida y guarda en flash',
-                    ][i]
-                  }
-                </span>
+                <span>{modeHelp[i]}</span>
               </button>
             ))}
           </div>
           <p className="status">
-            Elegir modo envía m1–m6 si está conectado. ARRANCAR envía el modo seleccionado.
+            Elegir modo envía m1–m7 si está conectado. ARRANCAR envía s y el modo seleccionado.
           </p>
-          {(commands.mode === 3 || commands.mode === 6 || Object.keys(state.cells).length > 0) && (
+          {(commands.mode <= 3 || Object.keys(state.cells).length > 0) && (
             <>
               <h2>Mapa aprendido en vivo</h2>
               <div className="row">
@@ -254,25 +243,25 @@ export function Telemetry() {
                     void run(commands.train);
                   }}
                 >
-                  Aprender pista y guardar
+                  Explorar y guardar
                 </button>
                 <button
                   disabled={!canSend || busy || !learnGoal || !Object.keys(state.cells).length}
                   onClick={() => learnGoal && void run(() => commands.route(learnGoal))}
                 >
-                  Ruta más corta a la meta
+                  Carrera a la celda elegida
                 </button>
               </div>
               <button disabled={!canSend || busy || active} onClick={() => void run(commands.loadMap)}>
-                Cargar mapa guardado
+                Ver mapa guardado
               </button>
               <button disabled={!canSend || busy || active} onClick={() => void run(commands.eraseMap)}>
                 Borrar mapa guardado
               </button>
               <p className="status">
-                MAPA_GUARDADO: disponible tras reiniciar. MAPA_CARGADO: listo para ruta con meta.
-                MAPA_INCOMPLETO / MAPA_LIMITE: no se guarda. MAPA_ERROR_FLASH: fallo de memoria. Coloca el
-                ratón en la salida original mirando al norte antes de recorrer el mapa.
+                Explorar guarda el mapa en la placa al llegar a la meta y al volver (MAPA_GUARDADO). Toca una
+                celda del mapa y pulsa Carrera para ir a ella. Coloca el ratón en la salida mirando al norte
+                antes de arrancar.
               </p>
               <LearnedMap
                 cells={state.cells}
