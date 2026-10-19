@@ -1,4 +1,4 @@
-# Integracion continua: nucleo C++, simulador Python, web React, firmware y los scripts del entorno.
+# Integracion continua: nucleo C++ y raton completo en el simulador, firmware (PlatformIO) y web.
 name: CI
 
 on:
@@ -12,67 +12,20 @@ concurrency:
 
 jobs:
   nucleo:
-    name: Nucleo C++
+    name: Nucleo y simulador
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Herramientas de compilacion
+      - name: Herramientas
         run: sudo apt-get update -qq && sudo apt-get install -y -qq cmake g++ >/dev/null
       - name: Compilar con sanitizers
         run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DRATON_SANITIZE=ON && cmake --build build --parallel
-      - name: Pruebas por funcionalidad (entrada única)
+      - name: Pruebas (unitarias y misiones simuladas)
         run: ctest --test-dir build --output-on-failure
-
-  simulador:
-    name: Simulador Python
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-          cache: pip
-          cache-dependency-path: |
-            requirements-dev.txt
-            simulator/python/pyproject.toml
-      - name: Dependencias
+      - name: Bateria de laberintos (fisica ideal y con errores)
         run: |
-          grep -v '^platformio' requirements-dev.txt > /tmp/req.txt
-          pip install -r /tmp/req.txt -e simulator/python
-      - name: Herramientas de compilacion
-        run: sudo apt-get update -qq && sudo apt-get install -y -qq cmake g++ >/dev/null
-      - name: Biblioteca nativa
-        run: cmake -S . -B build && cmake --build build --target raton_navigation --parallel
-      - name: Estilo
-        run: ruff check simulator/python tests/python && ruff format --check simulator/python tests/python
-      - name: Pruebas por funcionalidad (entrada única)
-        env:
-          RATON_NATIVE_LIB: ${{ github.workspace }}/build/libraton_navigation.so
-        run: pytest tests/python -q
-
-  web:
-    name: Web React
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: web
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-          cache-dependency-path: web/package-lock.json
-      - run: npm ci --no-audit --no-fund
-      - run: npm run lint
-      - run: npm run format:check
-      - run: npm run typecheck
-      - run: npm test
-      - run: npm run build
-      - uses: actions/upload-artifact@v4
-        with:
-          name: web-dist
-          path: web/dist
+          cmake -S . -B build-rel -DCMAKE_BUILD_TYPE=Release && cmake --build build-rel --parallel --target raton_sim
+          build-rel/raton_sim --bench 20
 
   firmware:
     name: Firmware (PlatformIO)
@@ -87,28 +40,29 @@ jobs:
           path: ~/.platformio
           key: pio-${{ runner.os }}-${{ hashFiles('platformio.ini') }}
           restore-keys: pio-${{ runner.os }}-
-      - run: pip install platformio==6.2.0
-      - name: Compilar raton y prueba_hardware
-        run: pio run -e raton -e prueba_hardware
+      - run: pip install platformio==6.1.16
+      - name: Compilar
+        run: pio run
       - uses: actions/upload-artifact@v4
         with:
           name: firmware
           path: .pio/build/raton/firmware.*
 
-  entorno:
-    name: Scripts del entorno
+  web:
+    name: Web de telemetria
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
           cache-dependency-path: web/package-lock.json
-      - name: scripts/setup.sh
-        run: scripts/setup.sh --sin-firmware
-      - name: scripts/run.sh pruebas
-        run: scripts/run.sh pruebas --sin-firmware
+      - run: npm ci --no-audit --no-fund
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build

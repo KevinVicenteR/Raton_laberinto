@@ -1,41 +1,48 @@
+// Pines y cableado del raton (Arduino Nano 33 BLE Sense Rev2). Los parametros de comportamiento estan en
+// lib/raton_core/src/raton/params.h y se ajustan por Bluetooth/Serie sin recompilar ("set nombre valor").
 #pragma once
+
 #include <Arduino.h>
-#include "hardware/params.h"
-#include "odometria/params.h"
-#include "mapa/params.h"
-#include "paredes/params.h"
-#include "centrado/params.h"
-#include "velocidad/params.h"
-#include "giros/params.h"
-#include "seguridad/params.h"
-#include "exploracion/params.h"
-#include "modos/params.h"
-#include "comunicacion/params.h"
 
-namespace cfg {
+namespace pins {
 
-// ---------- Pines ----------
-// Laseres VL53L0X (I2C en A4/A5, compartido con la OLED)
-const uint8_t PIN_XSHUT_IZQ = A0;
-const uint8_t PIN_XSHUT_FRO = A1;
-const uint8_t PIN_XSHUT_DER = A2;
+// Laseres VL53L0X (I2C en A4/A5, compartido con la OLED). XSHUT para darles direccion uno a uno.
+const uint8_t XSHUT_LEFT = A0;
+const uint8_t XSHUT_FRONT = A1;
+const uint8_t XSHUT_RIGHT = A2;
+const uint8_t ADDR_LEFT = 0x30;
+const uint8_t ADDR_FRONT = 0x31;
+const uint8_t ADDR_RIGHT = 0x32;
+const uint8_t ADDR_OLED = 0x3C;
 
-// DRV8833
-const uint8_t PIN_AIN1 = 5;  // motor izquierdo
-const uint8_t PIN_AIN2 = 6;
-const uint8_t PIN_BIN1 = 9;  // motor derecho
-const uint8_t PIN_BIN2 = 10;
+// DRV8833: A = motor izquierdo, B = motor derecho.
+const uint8_t AIN1 = 5;
+const uint8_t AIN2 = 6;
+const uint8_t BIN1 = 9;
+const uint8_t BIN2 = 10;
 
 // Encoders N20 (amarillo = A, verde = B). Alimentarlos a 3.3 V, NO a 5 V.
-const uint8_t PIN_ENC_IZQ_A = 2;
-const uint8_t PIN_ENC_IZQ_B = 3;
-const uint8_t PIN_ENC_DER_A = 4;
-const uint8_t PIN_ENC_DER_B = 7;
+const uint8_t ENC_LEFT_A = 2;
+const uint8_t ENC_LEFT_B = 3;
+const uint8_t ENC_RIGHT_A = 4;
+const uint8_t ENC_RIGHT_B = 7;
 
-// ---------- Direcciones I2C ----------
-const uint8_t I2C_LASER_IZQ = 0x30;
-const uint8_t I2C_LASER_FRO = 0x31;
-const uint8_t I2C_LASER_DER = 0x32;
-const uint8_t I2C_OLED = 0x3C;
+}  // namespace pins
 
-}  // namespace cfg
+namespace wiring {
+
+// Medido en el raton con la prueba de ruedas (orden "ruedas"): sentido de cada motor y encoder.
+const bool INVERT_MOTOR_LEFT = true;
+const bool INVERT_MOTOR_RIGHT = false;
+const bool INVERT_ENC_LEFT = true;
+const bool INVERT_ENC_RIGHT = false;
+const bool ENCODERS_SWAPPED = true;  // el encoder del motor izquierdo esta en los pines del derecho
+const float GYRO_SIGN = 1.0f;        // +1 si girar a la izquierda da rumbo positivo
+
+// PWM del DRV8833 en "slow decay" (una entrada fija en alto y la otra con PWM invertido): la velocidad es
+// casi proporcional al duty y el N20 tiene par a baja velocidad. 20 kHz no se oye.
+const uint32_t PWM_PERIOD_US = 50;
+
+const char* const BLE_NAME = "Raton";
+
+}  // namespace wiring

@@ -1,96 +1,46 @@
 #!/usr/bin/env bash
-# Corre el entorno del proyecto. Requiere haber ejecutado antes scripts/setup.sh.
+# Ordenes del proyecto.
 #
-#   scripts/run.sh                  pruebas rapidas y abre la web de telemetria (http://127.0.0.1:5173)
-#   scripts/run.sh web              solo la web en modo desarrollo
-#   scripts/run.sh pruebas          todas las pruebas: nucleo C++, simulador, web y compilacion del firmware
-#                                   (con --sin-firmware no compila el firmware)
-#   scripts/run.sh firmware         compila el firmware (raton y prueba_hardware)
-#   scripts/run.sh subir [puerto]   compila y sube el firmware a la placa por USB
-#   scripts/run.sh monitor [puerto] Monitor Serie de la placa
-#   scripts/run.sh sim <orden> ...  simulador: casos, pistas, evaluar, publicar, pesos, entrenar
-#   scripts/run.sh ayuda            esta ayuda
+#   scripts/run.sh pruebas            compila y pasa las pruebas (nucleo + misiones simuladas)
+#   scripts/run.sh sim [opciones]     simulador (por defecto: laberinto del reglamento con detalle)
+#   scripts/run.sh bateria [n]        reglamento + n laberintos aleatorios, ideales y con errores
+#   scripts/run.sh firmware           compila el firmware (PlatformIO)
+#   scripts/run.sh subir [puerto]     compila y sube el firmware por USB
+#   scripts/run.sh monitor [puerto]   Monitor Serie (115200)
+#   scripts/run.sh web                web de telemetria por Bluetooth (http://127.0.0.1:5173)
 set -euo pipefail
-
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
-
 paso() { printf '\n\033[1m==> %s\033[0m\n' "$*"; }
-
-PY="$ROOT/.venv/bin/python"
-PIO="$ROOT/.venv/bin/pio"
-if [ ! -x "$PY" ] || [ ! -d web/node_modules ]; then
-  echo "El entorno no esta instalado: ejecuta primero scripts/setup.sh" >&2
-  exit 1
-fi
-[ -x "$PIO" ] || PIO="$(command -v pio || echo "$HOME/.platformio/penv/bin/pio")"
-
-native_lib() {
-  for f in build/libraton_navigation.dylib build/libraton_navigation.so build/raton_navigation.dll; do
-    [ -f "$f" ] && { echo "$ROOT/$f"; return; }
-  done
-  echo ""
-}
-export RATON_NATIVE_LIB="${RATON_NATIVE_LIB:-$(native_lib)}"
-
-nucleo() {
-  paso "Nucleo C++"
-  cmake -S . -B build
+compilar() {
+  cmake -S . -B build -DCMAKE_BUILD_TYPE=Release >/dev/null
   cmake --build build --parallel
-  ctest --test-dir build --output-on-failure
 }
+PIO="$(command -v pio || echo "$HOME/.platformio/penv/bin/pio")"
 
-simulador() {
-  paso "Simulador Python"
-  "$PY" -m ruff check simulator/python tests/python
-  "$PY" -m ruff format --check simulator/python tests/python
-  "$PY" -m pytest tests/python -q
-}
-
-web_checks() {
-  paso "Web"
-  (cd web && npm run lint && npm run format:check && npm run typecheck && npm test && npm run build)
-}
-
-firmware() {
-  paso "Firmware"
-  "$PIO" run -e raton -e prueba_hardware
-}
-
-web_dev() {
-  paso "Web de telemetria en http://127.0.0.1:5173 (Ctrl+C para parar)"
-  echo "La conexion por Bluetooth necesita Chrome o Edge (Web Bluetooth)."
-  cd web && exec npm run dev
-}
-
-case "${1:-}" in
-  "")
-    nucleo
-    simulador
-    web_dev
-    ;;
-  web) web_dev ;;
+case "${1:-pruebas}" in
   pruebas)
-    nucleo
-    simulador
-    web_checks
-    [ "${2:-}" = "--sin-firmware" ] || firmware
-    paso "Todo correcto"
-    ;;
-  firmware) firmware ;;
-  subir)
-    if [ -n "${2:-}" ]; then "$PIO" run -e raton -t upload --upload-port "$2"; else "$PIO" run -e raton -t upload; fi
-    ;;
-  monitor)
-    if [ -n "${2:-}" ]; then "$PIO" device monitor -b 115200 -p "$2"; else "$PIO" device monitor -b 115200; fi
+    paso "Nucleo, firmware (comprobacion en el PC) y misiones simuladas"
+    compilar
+    ctest --test-dir build --output-on-failure
     ;;
   sim)
     shift
-    exec "$PY" -m raton_sim "$@"
+    compilar >/dev/null
+    build/raton_sim "$@"
     ;;
-  ayuda|-h|--help) sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//' ;;
+  bateria)
+    compilar >/dev/null
+    build/raton_sim --bench "${2:-20}"
+    ;;
+  firmware) "$PIO" run ;;
+  subir) "$PIO" run -t upload ${2:+--upload-port "$2"} ;;
+  monitor) "$PIO" device monitor -b 115200 ${2:+-p "$2"} ;;
+  web)
+    (cd web && { [ -d node_modules ] || npm ci; } && npm run dev)
+    ;;
   *)
-    echo "Orden desconocida: $1 (usa scripts/run.sh ayuda)" >&2
+    sed -n '2,11p' "$0" | sed 's/^# \{0,1\}//'
     exit 1
     ;;
 esac

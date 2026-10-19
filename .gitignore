@@ -27,7 +27,7 @@ __pycache__/
 *.tsbuildinfo
 
 # Salidas generadas (se regeneran con scripts/run.sh sim ...)
-simulator/results/
+sim/results/
 web/dist/
 coverage/
 
@@ -45,3 +45,4 @@ npm-debug.log*
 .idea/
 .DS_Store
 Thumbs.db
+build-*/

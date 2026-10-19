@@ -1,5 +1,0 @@
-# Herramientas del entorno de desarrollo (las instala scripts/setup.sh en .venv).
-numpy==2.4.6        # entrenamiento CMA-ES del simulador
-pytest==9.1.1
-ruff==0.17.1
-platformio==6.2.0   # compila y sube el firmware
