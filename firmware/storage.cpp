@@ -3,6 +3,14 @@
 // El orden importa: mbed.h trae Arduino.h y la configuracion de la placa (MBED_CONF_*) que necesita
 // FlashIAPBlockDevice.h; incluirlo despues rompe la compilacion con el nucleo mbed de Arduino.
 #include <mbed.h>
+// Valores por defecto de mbed (por si una version del nucleo no los define): base y tamano los da el
+// constructor de abajo.
+#ifndef MBED_CONF_FLASHIAP_BLOCK_DEVICE_BASE_ADDRESS
+#define MBED_CONF_FLASHIAP_BLOCK_DEVICE_BASE_ADDRESS 0xFFFFFFFF
+#endif
+#ifndef MBED_CONF_FLASHIAP_BLOCK_DEVICE_SIZE
+#define MBED_CONF_FLASHIAP_BLOCK_DEVICE_SIZE 0
+#endif
 #include <FlashIAPBlockDevice.h>
 #include <TDBStore.h>
 #include <string.h>
