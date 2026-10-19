@@ -2,18 +2,18 @@ import { useState } from 'react';
 import type { Cell } from '../telemetria/types';
 // Modos del firmware (arquitectura v2): el numero es el que se envia con m<n> y s<n>.
 export const modes = [
-  'Explorar',
-  'Carrera',
-  'Solo meta',
+  'Explorar (competencia)',
+  'Carrera (competencia)',
+  'Práctica (cualquier medida)',
   'Sensores',
   'Calibrar motores',
   'Prueba de ruedas',
   'Borrar mapa',
 ];
 export const modeHelp = [
-  'Meta, ruta más corta, vuelta a la salida y guarda el mapa',
-  'Ruta más rápida con el mapa guardado (curvas suaves)',
-  'Explora hasta la meta y para',
+  'Pista de la competencia (celda cellMm, meta guardada): meta, ruta más corta, vuelta y guarda el mapa',
+  'Pista de la competencia: ruta más rápida con el mapa guardado (curvas suaves)',
+  'Cualquier pista: mide el pasillo en la salida, explora todo sin repetir y vuelve. No toca la competencia',
   'Lecturas de los láseres y el giroscopio',
   'En el suelo, pasillo recto de 2 celdas: mide kV, kS y τ',
   'Ratón LEVANTADO: cada rueda adelante y atrás',

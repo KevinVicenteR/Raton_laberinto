@@ -92,7 +92,9 @@ void Navigator::begin(int x, int y, Dir h) {
   blocked_ = false;
   stalled_ = false;
   stallTimer_ = 0;
-  if (cell_ <= 0 || fabsf(cell_ - p_.cellMm) > 0.12f * p_.cellMm) cell_ = p_.cellMm;
+  cell_ = p_.cellMm;
+  cellRef_ = cell_;
+  startStraight();
   halfCorr_ = 0.5f * (cell_ - p_.wallMm);
   sideLatOdo_[0] = sideLatOdo_[1] = -1e9f;
   computeSmoothGeometry();
@@ -147,6 +149,7 @@ void Navigator::tick() {
 
 void Navigator::enterNextCell() {
   centerOdo_ += cell_;
+  ++straightCells_;
   cx_ += dx(h_);
   cy_ += dy(h_);
   maze_.markVisited(cx_, cy_);
@@ -191,9 +194,10 @@ void Navigator::senseSides() {
     // Distancia sin medida: si justo antes veia la pared muy cerca, es pared (demasiado cerca para medir).
     int mm = r.mm;
     if (mm >= 0) {
+      tr.near = mm < 45 ? tr.near + 1 : 0;
       tr.lastValidMm = mm;
       tr.lastValidT = t_;
-    } else if (tr.lastValidT >= 0 && t_ - tr.lastValidT < 0.1f && tr.lastValidMm < 45) {
+    } else if (tr.near >= 2 && t_ - tr.lastValidT < 0.06f) {
       mm = tr.lastValidMm;
     }
     const float odoSample = motion_.position() - v * p_.sensorLatencyS;
@@ -205,6 +209,12 @@ void Navigator::senseSides() {
     float hx = sx + ray * cosf(rayAng);
     const float hy = sy + ray * sinf(rayAng);
     const float lateral = sign * hy;  // distancia perpendicular del eje a la pared, hacia ese lado
+    // Pasillo ancho (pista de practica): una lectura mas lejos que la pared lateral pero por debajo del
+    // umbral suele ser el rayo que cruza un hueco y da en una pared de la celda vecina. No se usa para
+    // nada. En el pasillo estrecho de la competencia esa franja es el propio descentrado: se usa.
+    if (mm >= 0 && halfCorr_ > 90.0f && lateral > halfCorr_ + 0.5f * p_.wallMm + 25.0f &&
+        lateral < p_.sideWallRatio * halfCorr_)
+      continue;
     const bool wall = mm >= 0 && lateral < p_.sideWallRatio * halfCorr_;
     if (!wall) {
       // Sin pared: el rayo "cruza" el lateral a la altura del pasillo nominal.
@@ -229,7 +239,8 @@ void Navigator::senseSides() {
     // Voto sobre la pared de la celda donde cae el rayo, lejos de los postes.
     const int k = static_cast<int>(floorf((hitRel + 0.5f * cell) / cell));
     const float u = hitRel + 0.5f * cell - k * cell;
-    const float margin = 0.5f * p_.wallMm + 14.0f;
+    // En pasillos anchos el rayo da mucho mas lejos y el error de angulo pesa mas: mas margen.
+    const float margin = 0.5f * p_.wallMm + 14.0f + fmaxf(0.0f, 0.15f * (cell_ - 160.0f));
     if (k >= 0 && k <= 1 && u > margin && u < cell - margin) {
       const int x = cx_ + k * dx(h_), y = cy_ + k * dy(h_);
       const Dir d = side == 0 ? turnLeft(h_) : turnRight(h_);
@@ -260,9 +271,11 @@ void Navigator::senseFront() {
   Range r = s_.front;
   if (!r.fresh) return;
   if (r.mm >= 0) {
+    // Dos lecturas seguidas muy cerca: de verdad hay pared encima (una lectura falsa suelta no cuenta).
+    frontNear_ = r.mm < 45 ? frontNear_ + 1 : 0;
     frontLastMm_ = r.mm;
     frontLastT_ = t_;
-  } else if (frontLastT_ >= 0 && t_ - frontLastT_ < 0.1f && frontLastMm_ < 45) {
+  } else if (frontNear_ >= 2 && t_ - frontLastT_ < 0.06f) {
     r.mm = frontLastMm_;  // demasiado cerca para medir: sigue habiendo pared
   }
   const float psiDeg = headingError();
@@ -287,8 +300,24 @@ void Navigator::senseFront() {
       const float dist = face - sensorRel;
       if (maze_.inside(x, y)) {
         maze_.observe(x, y, h_, true, k == 0 ? 2 : 1);
+#ifdef RATON_DEBUG
+        if (getenv("NAVDBG")) printf("%.3f FRONT k=%d r=%d face=%.0f sensorRel=%.0f psi=%.1f\n", t_, k, r.mm, face, sensorRel, psiDeg);
+#endif
         // Corregir el avance con una pared confirmada y cercana (el VL53L0X es preciso a corta distancia).
         if (maze_.votes(x, y, h_) >= 3 && dist < 260.0f && fabsf(psiDeg) < 4.0f) {
+          if (learnCell_ && !cellLearned_ && straightCells_ + k >= 2) {
+            // Error acumulado desde el inicio del tramo recto repartido entre las celdas recorridas: es lo
+            // que le falta (o sobra) al paso de celda. Una vez por tramo.
+            cellLearned_ = true;
+            const float err = (straightCorr_ + residual) / (straightCells_ + k + 0.5f);
+            const float before = cell_;
+            cell_ = clampf(cell_ + 0.6f * err, 0.92f * cellRef_, 1.08f * cellRef_);
+            if (fabsf(cell_ - before) >= 1.0f) {
+              char line[40];
+              snprintf(line, sizeof(line), "PASO_CELDA %d mm", static_cast<int>(cell_ + 0.5f));
+              io_.report(line, false);
+            }
+          }
           applyCorrection(residual, 0.3f);
         }
         // Pared justo delante que no deberia estar: parar.
@@ -321,6 +350,13 @@ void Navigator::senseFront() {
 void Navigator::applyCorrection(float e, float gain) {
   // e > 0: la celda real esta mas adelante de lo que dice la odometria.
   centerOdo_ += gain * e;
+  straightCorr_ += gain * e;
+}
+
+void Navigator::startStraight() {
+  straightCells_ = 0;
+  straightCorr_ = 0;
+  cellLearned_ = false;
 }
 
 void Navigator::steer() {
@@ -468,6 +504,7 @@ bool Navigator::pivot(int q) {
   gridAngle_ = target;
   h_ = static_cast<Dir>((h_ + 4 - q) & 3);  // q > 0 = izquierda (antihorario)
   centerOdo_ = motion_.position();
+  startStraight();
   if (q == 2 || q == -2) {
     lateral_.setY(-lateral_.y(), lateral_.varY() + 4.0f);
   } else {
@@ -479,6 +516,8 @@ bool Navigator::pivot(int q) {
   side_[0] = SideTrack();
   side_[1] = SideTrack();
   blockedHits_ = 0;
+  frontNear_ = 0;
+  frontLastT_ = -1;
   return true;
 }
 
@@ -567,6 +606,7 @@ void Navigator::centerOnFront(int k) {
     }
   }
   centerOdo_ = motion_.position();
+  startStraight();
   decided_ = false;
   act_ = Act::None;
 }
@@ -631,6 +671,7 @@ bool Navigator::recover(Brain& brain) {
     const float calib = frontStopReading() - (face - p_.frontAheadMm);
     const float pos = face - (f - calib) - p_.frontAheadMm;
     centerOdo_ = motion_.position() - pos;
+    startStraight();
     maze_.observe(cx_, cy_, h_, true, 3);
   } else if (recoverCount_ >= 2) {
     // Varios atascos aqui sin pared visible: tratar la salida de frente como cerrada.
@@ -745,12 +786,15 @@ NavResult Navigator::run(Brain& brain, float vmax, bool smoothTurns) {
       h_ = q > 0 ? turnLeft(h_) : turnRight(h_);
       // Fin de la curva: el eje queda smoothDl_ pasado el centro de la celda, ya en el nuevo rumbo.
       centerOdo_ = motion_.position() - smoothDl_;
+      startStraight();
       lateral_.setY(0, 100.0f);
       lateral_.addHeadingVariance(7e-4f);
       lastOdo_ = motion_.position();
       latAge_ = 1e9f;
       side_[0] = SideTrack();
       side_[1] = SideTrack();
+      frontNear_ = 0;
+      frontLastT_ = -1;
       arcStarted_ = false;
       arcPlanned_ = false;
       decided_ = false;

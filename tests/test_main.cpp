@@ -216,6 +216,20 @@ void testMissions() {
   }
 }
 
+// Modo practica: pistas de cualquier medida, sin meta. Mide el pasillo y explora todo sin olvidar lo
+// recorrido.
+void testPractice() {
+  const float cells[] = {200.0f, 260.0f, 170.0f};
+  for (int k = 0; k < 3; ++k) {
+    const sim::PracticeResult r = sim::runPractice(5 + k, 5, cells[k], 0, 600u + k, false);
+    printf("  practica %3.0f mm:  %s\n", cells[k], sim::describe(r).c_str());
+    CHECK(r.measured && fabsf(r.cellMeasured - cells[k]) < 12.0f);
+    CHECK(r.exploredAll && r.backHome);
+    CHECK(r.unknownCells <= 1 && r.wrongWalls == 0);
+    CHECK(r.maxArea < 20.0f);
+  }
+}
+
 }  // namespace
 
 int main() {
@@ -227,6 +241,7 @@ int main() {
   testLateralFilter();
   testFrames();
   testMissions();
+  testPractice();
   printf("%d comprobaciones, %d fallos\n", checks, failures);
   return failures ? 1 : 0;
 }

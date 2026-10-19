@@ -66,13 +66,21 @@ void Maze::set(int x, int y, Dir d, Wall s) {
   *p = s == Wall::Closed ? kVoteMax : (s == Wall::Open ? -kVoteMax : 0);
 }
 
-void Maze::forgetWeak(int minVotes) {
+int Maze::forgetWeak(int minVotes) {
+  int n = 0;
   for (int y = 1; y < h_; ++y)
     for (int x = 0; x < w_; ++x)
-      if (h_votes_[y][x] < minVotes && h_votes_[y][x] > -minVotes) h_votes_[y][x] = 0;
+      if (h_votes_[y][x] != 0 && h_votes_[y][x] < minVotes && h_votes_[y][x] > -minVotes) {
+        h_votes_[y][x] = 0;
+        ++n;
+      }
   for (int y = 0; y < h_; ++y)
     for (int x = 1; x < w_; ++x)
-      if (v_votes_[y][x] < minVotes && v_votes_[y][x] > -minVotes) v_votes_[y][x] = 0;
+      if (v_votes_[y][x] != 0 && v_votes_[y][x] < minVotes && v_votes_[y][x] > -minVotes) {
+        v_votes_[y][x] = 0;
+        ++n;
+      }
+  return n;
 }
 
 void Maze::markVisited(int x, int y) {

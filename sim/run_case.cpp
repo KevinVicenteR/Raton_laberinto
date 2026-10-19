@@ -1,6 +1,7 @@
 #include "run_case.h"
 
 #include <stdio.h>
+#include <stdlib.h>
 
 #include <random>
 
@@ -105,6 +106,120 @@ std::string describe(const CaseResult& r) {
            "escapes=%d zona_max=%4.1fs paredes_mal=%d",
            r.goal1 ? "si" : "NO", r.goalTime1, r.exploreTime, r.backHome ? "si" : "no", r.proven ? "si" : "no",
            r.goal2 ? "si" : "NO", r.goalTime2, r.contacts, r.recoveries, r.escapes, r.maxArea, r.wrongWalls);
+  return line;
+}
+
+}  // namespace sim
+
+namespace sim {
+
+PracticeResult runPractice(int w, int h, float cellMm, int level, uint32_t seed, bool verbose) {
+  PracticeResult res;
+  // Pista real: laberinto aleatorio de w x h colocado en el mapa de 32 x 32; fuera, todo cerrado.
+  Maze small, truth;
+  randomMaze(w, h, (w * h) / 6, seed, small);
+  truth.reset(32, 32, true);
+  for (int y = 0; y < 32; ++y)
+    for (int x = 0; x < 32; ++x)
+      for (int d = 0; d < 4; ++d) truth.set(x, y, static_cast<raton::Dir>(d), raton::Wall::Closed);
+  std::mt19937 rng(seed * 13u + 5u);
+  // Salida: una celda con pared a izquierda y derecha mirando a una salida libre.
+  int sx = 0, sy = 0, sd = 0;
+  for (int i = 0; i < 1000; ++i) {
+    sx = static_cast<int>(rng() % w);
+    sy = static_cast<int>(rng() % h);
+    sd = static_cast<int>(rng() % 4);
+    const raton::Dir d = static_cast<raton::Dir>(sd);
+    if (small.wall(sx, sy, d) == raton::Wall::Open && small.wall(sx, sy, raton::turnLeft(d)) == raton::Wall::Closed &&
+        small.wall(sx, sy, raton::turnRight(d)) == raton::Wall::Closed)
+      break;
+  }
+  // El mapa del raton pone la salida en (16,16) mirando al "norte": se gira la pista para que coincida.
+  const int ox = 16, oy = 16;
+  auto toTruth = [&](int x, int y, int& tx, int& ty) {
+    const int rx = x - sx, ry = y - sy;  // relativo a la salida en la pista
+    // rotar para que sd quede como norte
+    int ax = rx, ay = ry;
+    for (int k = 0; k < sd; ++k) {  // girar a la izquierda sd veces: (x, y) -> (-y, x)
+      const int t = ax;
+      ax = -ay;
+      ay = t;
+    }
+    tx = ox + ax;
+    ty = oy + ay;
+  };
+  for (int y = 0; y < h; ++y)
+    for (int x = 0; x < w; ++x) {
+      int tx, ty;
+      toTruth(x, y, tx, ty);
+      for (int d = 0; d < 4; ++d) {
+        const raton::Dir dir = static_cast<raton::Dir>(d);
+        const raton::Dir td = static_cast<raton::Dir>((d - sd + 4) & 3);
+        if (small.wall(x, y, dir) == raton::Wall::Open && truth.inside(tx + raton::dx(td), ty + raton::dy(td)))
+          truth.set(tx, ty, td, raton::Wall::Open);
+      }
+    }
+  raton::Params p;
+  p.mazeW = p.mazeH = 32;
+  p.startX = p.startY = 16;
+  p.startDir = 0;
+  p.goalX = p.goalY = -1;
+  Physical ph = perturbed(p, level, seed + 101u);
+  ph.cellMm = cellMm;  // la medida real de la pista; el raton cree que mide p.cellMm hasta que la mide
+  World world(truth, ph);
+  SimPlatform io(world, p, ph, seed);
+  io.verbose = verbose;
+  io.trace = verbose && getenv("SIMTRACE");
+  io.timeLimit = 600.0f;
+  io.place(16, 16, 0);
+  raton::Mouse mouse(io, p);
+  io.watch = &mouse.maze();
+  res.measured = mouse.measureCell(p) > 0;
+  res.cellMeasured = p.cellMm;
+  const raton::MissionResult r = mouse.explore(false, true);
+  res.exploredAll = r.exploredAll;
+  res.backHome = r.backHome;
+  res.time = r.totalTime;
+  res.contacts = io.contacts();
+  res.maxArea = io.maxAreaTime();
+  const Maze& m = mouse.maze();
+  int visits = 0, cells = 0;
+  for (int y = 0; y < h; ++y)
+    for (int x = 0; x < w; ++x) {
+      int tx, ty;
+      toTruth(x, y, tx, ty);
+      if (!m.fullyKnown(tx, ty)) {
+        ++res.unknownCells;
+        for (int d = 0; d < 4 && verbose; ++d) {
+          const raton::Dir dir = static_cast<raton::Dir>(d);
+          if (m.wall(tx, ty, dir) == raton::Wall::Unknown)
+            printf("SIN_CONOCER %d,%d dir %d votos %d verdad %d visitas %d\n", tx, ty, d, m.votes(tx, ty, dir),
+                   static_cast<int>(truth.wall(tx, ty, dir)), m.visits(tx, ty));
+        }
+      }
+      visits += m.visits(tx, ty);
+      ++cells;
+      for (int d = 0; d < 4; ++d) {
+        const raton::Wall k = m.wall(tx, ty, static_cast<raton::Dir>(d));
+        if (k != raton::Wall::Unknown && k != truth.wall(tx, ty, static_cast<raton::Dir>(d))) ++res.wrongWalls;
+      }
+    }
+  res.revisits = visits - cells;
+  if (verbose) {
+    static char buf[16384];
+    raton::printMaze(m, buf, sizeof(buf), io.cellX(), io.cellY());
+    printf("%s", buf);
+  }
+  return res;
+}
+
+std::string describe(const PracticeResult& r) {
+  char line[200];
+  snprintf(line, sizeof(line),
+           "celda_medida=%4.0f explorado=%s vuelta=%s sin_conocer=%d paredes_mal=%d choques=%d revisitas=%d "
+           "zona_max=%4.1fs tiempo=%5.1fs",
+           r.cellMeasured, r.exploredAll ? "si" : "NO", r.backHome ? "si" : "NO", r.unknownCells, r.wrongWalls,
+           r.contacts, r.revisits, r.maxArea, r.time);
   return line;
 }
 

@@ -7,9 +7,12 @@
 //           tiempo.
 //  ToStart  vuelve a la salida.
 //  Run      carrera: ruta mas rapida con coste por giro; si encuentra una pared inesperada, recalcula.
+//  ExploreAll  sin meta (o meta que no existe en esta pista): va siempre a la celda sin conocer mas cercana
+//           hasta conocer todo lo alcanzable. Lo ya recorrido no se vuelve a visitar si no hace falta.
 //
 // Seguridad (regla de los 30 s): si el raton sigue en la misma zona mas de areaLimitS, se fuerza un
-// objetivo fuera de ella; si no hay camino, se olvidan las paredes poco confirmadas y se reintenta.
+// objetivo fuera de ella. Si la meta queda sin camino se olvidan una vez las paredes poco confirmadas; si
+// sigue sin camino, la meta no esta en esta pista: se explora todo (sin olvidar el mapa) y se vuelve.
 #pragma once
 
 #include "raton/maze.h"
@@ -21,7 +24,7 @@ namespace raton {
 
 class Explorer : public Brain {
  public:
-  enum class Phase { ToGoal, Search, ToStart, Run };
+  enum class Phase { ToGoal, Search, ToStart, Run, ExploreAll };
 
   Explorer(Maze& maze, const Params& p, Navigator& nav, Platform& io) : maze_(maze), p_(p), nav_(nav), io_(io) {}
 
@@ -38,6 +41,10 @@ class Explorer : public Brain {
   bool routeProven(uint32_t* knownCost = nullptr);
   int escapes() const { return escapes_; }
   float maxAreaTime() const { return maxAreaTime_; }
+  // La exploracion completa termino (no queda nada alcanzable por conocer).
+  bool exploredAll() const { return exploredAll_; }
+  // Con el mapa de ahora, queda alguna celda por conocer a la que se pueda llegar desde (x, y).
+  bool somethingLeft(int x, int y);
 
  private:
   void buildTargets(int x, int y);
@@ -62,6 +69,8 @@ class Explorer : public Brain {
   bool escaping_ = false;
   int escapes_ = 0;
   float maxAreaTime_ = 0;
+  bool forgotOnce_ = false;
+  bool exploredAll_ = false;
 };
 
 }  // namespace raton

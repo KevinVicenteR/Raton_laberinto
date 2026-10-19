@@ -34,6 +34,24 @@ struct CaseResult {
 CaseResult runCase(const raton::Maze& truth, const raton::Params& p, const Physical& ph, uint32_t seed, bool verbose,
                    bool race = true, bool trace = false, float timeLimit = 900.0f);
 
+// Modo practica: pista de w x h celdas de cellMm (cualquier medida) dentro del mapa de 32 x 32, raton en una
+// celda al azar con pared a los dos lados; mide el pasillo, explora todo sin meta y vuelve.
+struct PracticeResult {
+  bool measured = false;
+  float cellMeasured = 0;
+  bool exploredAll = false;
+  bool backHome = false;
+  int unknownCells = 0;  // celdas de la pista que quedaron sin conocer del todo
+  int wrongWalls = 0;
+  int contacts = 0;
+  float maxArea = 0;
+  float time = 0;
+  int revisits = 0;      // visitas de mas (suma de visitas - celdas)
+  bool ok() const { return measured && exploredAll && backHome && unknownCells == 0 && maxArea < 30.0f; }
+};
+PracticeResult runPractice(int w, int h, float cellMm, int level, uint32_t seed, bool verbose);
+std::string describe(const PracticeResult& r);
+
 // Fisica con errores realistas de nivel 0 (ideal) a 3 (malo).
 Physical perturbed(const raton::Params& p, int level, uint32_t seed);
 

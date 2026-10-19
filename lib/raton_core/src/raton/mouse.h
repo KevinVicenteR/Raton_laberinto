@@ -15,6 +15,7 @@ struct MissionResult {
   float totalTime = 0;     // s de toda la mision
   bool proven = false;     // ruta mas corta demostrada al terminar
   bool backHome = false;
+  bool exploredAll = false;  // sin meta: conoce todo lo alcanzable
   int recoveries = 0;
   int escapes = 0;
   float maxAreaTime = 0;   // s maximos seguidos en la misma zona
@@ -34,9 +35,14 @@ class Mouse {
   MissionResult race(bool returnHome = true);
   // Solo ir a la meta y parar (la primera pasada de una prueba).
   MissionResult toGoal() { return explore(false, false); }
+  // Mide el pasillo parado en la salida (paredes a los dos lados) y fija out.cellMm. -1 si no puede.
+  float measureCell(Params& out);
+  // Ajuste del paso de celda en marcha (lo activa measureCell; la competencia lo deja apagado).
+  void setLearnCell(bool on) { nav_.setLearnCell(on); }
 
  private:
   MissionResult finish(MissionResult r, float t0);
+  void goHome(MissionResult& r);
 
   Platform& io_;
   const Params& p_;

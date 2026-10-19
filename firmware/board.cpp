@@ -81,6 +81,7 @@ void Board::report(const char* line, bool important) {
 }
 
 bool Board::saveMap(const raton::Maze& maze) {
+  if (!saveEnabled) return false;
   motors_.set(0, 0);
   return storage::saveMap(maze);
 }

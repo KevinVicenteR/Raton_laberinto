@@ -71,9 +71,9 @@ scripts/run.sh subir                # compila y sube el firmware (PlatformIO)
 
 | Modo | Qué hace |
 |---|---|
-| 1 Explorar | Va a la meta, busca la ruta más corta, vuelve a la salida y guarda el mapa en flash |
-| 2 Carrera | Ruta más rápida con el mapa guardado (curvas suaves, rectas a 650 mm/s) |
-| 3 Solo meta | Explora hasta la meta y para |
+| 1 Explorar (competencia) | Geometría de la competencia (`cellMm`, tamaño, salida y meta guardados). Va a la meta, busca la ruta más corta, vuelve a la salida y guarda el mapa en flash |
+| 2 Carrera (competencia) | Ruta más rápida con el mapa guardado (curvas suaves, rectas a 650 mm/s) |
+| 3 Práctica (cualquier medida) | Cualquier pista: mide el pasillo en la salida (gira a cada lado y mide con el frontal), afina el paso de celda en marcha, explora todo recordando por dónde pasó y vuelve a la salida. No toca la geometría ni el mapa de la competencia |
 | 4 Sensores | Lecturas en pantalla y Bluetooth |
 | 5 Cal. motor | Mide kV, kS y τ de los motores en un pasillo recto |
 | 6 Ruedas | Prueba de sentido de motores y encoders (ratón levantado) |
@@ -84,6 +84,8 @@ scripts/run.sh subir                # compila y sube el firmware (PlatformIO)
 - **2ª etapa** (2 oportunidades, mejor tiempo): modo 2 con ese mapa.
 
 Si el laberinto real no es el del ejemplo, configura tamaño, salida y meta antes (ver calibración).
+
+**Modo práctica (3):** pon el ratón en el centro de una celda con pared a la izquierda y a la derecha y la salida libre delante. El mapa es de 32 × 32 con la salida en el centro, así que la pista puede extenderse hasta 15 celdas hacia cada lado. Sin meta: explora hasta conocer todo lo alcanzable (no vuelve a pasar por donde ya conoce salvo para llegar a lo que falta) y regresa. Si antes hiciste `calfront` en la pista de la competencia, el desfase del frontal se traslada solo a la pista nueva.
 
 ## Estructura
 

@@ -20,7 +20,7 @@ class App {
   void service();
 
  private:
-  enum Mode { EXPLORE = 1, RACE, GOAL_ONLY, SENSORS, MOTOR_CAL, WHEELS, ERASE, kModes = ERASE };
+  enum Mode { EXPLORE = 1, RACE, PRACTICE, SENSORS, MOTOR_CAL, WHEELS, ERASE, kModes = ERASE };
   void fail(const char* msg);
   int menu();
   bool armStart();
@@ -29,6 +29,7 @@ class App {
   void command(char* line);
   void reply(const char* line);
   void sensorsMode();
+  void practiceRun();
   void motorCalibration();
   void wheelTest();
   void calibrateFront();

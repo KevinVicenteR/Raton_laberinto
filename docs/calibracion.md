@@ -32,6 +32,7 @@ Recomendación de hardware: un sensor de reflexión (TCRT5000/QRE1113) mirando a
 
 - **Frontal:** ratón en el **centro** de una celda mirando a una pared → `calfront` (fija `frontStopMm`).
 - **Laterales:** ratón centrado y recto en un pasillo con pared a los dos lados → `calside <ancho del pasillo en mm>`. Fija el ángulo real de los laterales y el tamaño de celda.
+- Haz estas dos calibraciones en la pista de la competencia y `save`. El modo práctica (3) las usa en cualquier otra pista sin cambiarlas: mide su propio pasillo al arrancar.
 - **Offsets:** si un sensor lee distinto de la regla, `set leftOffsetMm <real - lectura>` (también `rightOffsetMm` y `frontOffsetMm`).
 
 ## 4. Motores

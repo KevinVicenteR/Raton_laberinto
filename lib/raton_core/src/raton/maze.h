@@ -47,7 +47,8 @@ class Maze {
   void set(int x, int y, Dir d, Wall s);
   // Olvida las paredes poco confirmadas (|votos| < minVotes), salvo el borde. Para salir de un mapa
   // contradictorio.
-  void forgetWeak(int minVotes);
+  // Devuelve cuantas paredes olvido.
+  int forgetWeak(int minVotes);
 
   void markVisited(int x, int y);
   bool visited(int x, int y) const { return inside(x, y) && visits_[index(x, y)] > 0; }

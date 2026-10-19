@@ -14,7 +14,10 @@ void Explorer::setPhase(Phase phase) {
   escaping_ = false;
   ax_ = -1;
   routeX_ = -1;
-  static const char* const kNames[] = {"FASE META", "FASE BUSCAR_RUTA", "FASE VOLVER", "FASE CARRERA"};
+  forgotOnce_ = false;
+  if (phase == Phase::ExploreAll) exploredAll_ = false;
+  static const char* const kNames[] = {"FASE META", "FASE BUSCAR_RUTA", "FASE VOLVER", "FASE CARRERA",
+                                       "FASE EXPLORAR_TODO"};
   io_.report(kNames[static_cast<int>(phase)], true);
 }
 
@@ -27,6 +30,16 @@ bool Explorer::routeProven(uint32_t* knownCost) {
   bestRoute(maze_, p_.startX, p_.startY, sd, goals, false, kTurnCost, known);
   if (knownCost) *knownCost = known.ok ? known.cost : 0;
   return opt.ok && known.ok && known.cost <= opt.cost;
+}
+
+bool Explorer::somethingLeft(int x, int y) {
+  CellSet left;
+  for (int cy = 0; cy < maze_.height(); ++cy)
+    for (int cx = 0; cx < maze_.width(); ++cx)
+      if (!maze_.fullyKnown(cx, cy)) left.add(maze_.index(cx, cy));
+  if (left.count == 0) return false;
+  flood(maze_, left, true, dist_);
+  return dist_[maze_.index(x, y)] != kInf;
 }
 
 void Explorer::buildTargets(int x, int y) {
@@ -51,6 +64,12 @@ void Explorer::buildTargets(int x, int y) {
       break;
     case Phase::ToStart:
       targets_.add(maze_.index(p_.startX, p_.startY));
+      break;
+    case Phase::ExploreAll:
+      // Celdas con alguna pared sin conocer; la inundacion lleva a la mas cercana.
+      for (int cy = 0; cy < maze_.height(); ++cy)
+        for (int cx = 0; cx < maze_.width(); ++cx)
+          if (!maze_.fullyKnown(cx, cy)) targets_.add(maze_.index(cx, cy));
       break;
     case Phase::Search: {
       CellSet goals;
@@ -92,20 +111,39 @@ void Explorer::watchArea(int x, int y) {
     char line[48];
     snprintf(line, sizeof(line), "ZONA_ATRAPADO x=%d y=%d", x, y);
     io_.report(line, true);
-    // Atrapado varias veces: el mapa tiene paredes mal leidas. Olvidar las poco confirmadas.
-    if (escapes_ % 2 == 0) maze_.forgetWeak(3);
   }
 }
 
 int Explorer::stepTowardTargets(int x, int y, Dir h) {
-  for (int attempt = 0; attempt < 3; ++attempt) {
+  for (int attempt = 0; attempt < 2; ++attempt) {
     buildTargets(x, y);
-    if (targets_.count == 0) return -1;
-    flood(maze_, targets_, true, dist_);
-    if (dist_[maze_.index(x, y)] != kInf) return nextStep(maze_, x, y, h, dist_, true);
-    // Sin camino con el mapa actual: alguna pared esta mal. Olvidar primero las dudosas y luego todas.
-    io_.report("MAPA_SIN_CAMINO", true);
-    maze_.forgetWeak(attempt == 0 ? 3 : Maze::kVoteMax + 1);
+    if (targets_.count > 0) {
+      flood(maze_, targets_, true, dist_);
+      if (dist_[maze_.index(x, y)] != kInf) return nextStep(maze_, x, y, h, dist_, true);
+    }
+    if (phase_ == Phase::ExploreAll && !escaping_ && !forgotOnce_) {
+      // Antes de dar la pista por terminada, revisar una vez las paredes dudosas (una mal leida puede
+      // cerrar una parte sin explorar).
+      forgotOnce_ = true;
+      if (maze_.forgetWeak(3) > 0) continue;
+    }
+    if (phase_ == Phase::ExploreAll && !escaping_) {
+      exploredAll_ = true;  // nada alcanzable por conocer
+      io_.report("EXPLORADO_TODO", true);
+      return -1;
+    }
+    if (escaping_ || forgotOnce_) break;
+    // Sin camino: puede haber una pared mal leida. Se olvidan una sola vez las poco confirmadas (el resto
+    // del mapa y lo ya visitado se conserva).
+    forgotOnce_ = true;
+    io_.report("MAPA_SIN_CAMINO: reviso paredes dudosas", true);
+    maze_.forgetWeak(3);
+  }
+  if (phase_ == Phase::ToGoal && !escaping_) {
+    // La meta no se alcanza (o no existe en esta pista): explorar todo lo que falta sin olvidar nada.
+    io_.report("META_NO_ALCANZABLE: exploro todo", true);
+    setPhase(Phase::ExploreAll);
+    return stepTowardTargets(x, y, h);
   }
   return -1;
 }
@@ -115,15 +153,36 @@ int Explorer::decide(int x, int y, Dir h) {
   watchArea(x, y);
   if (!escaping_) {
     switch (phase_) {
-      case Phase::ToGoal:
+      case Phase::ToGoal: {
         if (maze_.isGoal(x, y)) return -1;
+        CellSet goals;
+        goalSet(maze_, goals);
+        if (goals.count == 0) {
+          io_.report("SIN_META: exploro todo", true);
+          setPhase(Phase::ExploreAll);
+        }
         break;
+      }
       case Phase::ToStart:
         if (x == p_.startX && y == p_.startY) return -1;
         break;
       case Phase::Search:
         if (nav_.now() > deadline_) return -1;
         break;
+      case Phase::ExploreAll: {
+        // Hay meta y vuelve a haber camino posible (una pared mal leida se corrigio): ir a por ella.
+        CellSet goals;
+        goalSet(maze_, goals);
+        if (goals.count > 0) {
+          flood(maze_, goals, true, dist_);
+          if (dist_[maze_.index(x, y)] != kInf) {
+            io_.report("META_ALCANZABLE", true);
+            setPhase(Phase::ToGoal);
+            if (maze_.isGoal(x, y)) return -1;
+          }
+        }
+        break;
+      }
       case Phase::Run: {
         if (maze_.isGoal(x, y)) return -1;
         CellSet goals;

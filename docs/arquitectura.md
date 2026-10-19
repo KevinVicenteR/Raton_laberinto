@@ -40,13 +40,14 @@ El DRV8833 se maneja en *slow decay* a 20 kHz: una entrada fija en alto y la otr
 
 ## Navegador (`navigator.cpp`)
 
-Geometría con sensores a 45°:
-- El rayo lateral toca la pared ~70 mm por delante del eje.
-- Las paredes laterales de la celda siguiente se ven cuando el eje está entre 27 y 55 mm pasado el centro de la actual.
+Geometría con sensores a 45° (montaje). El VL53L0X tiene un cono de 25° y devuelve el punto más cercano, así que el ángulo efectivo del rayo es ~32° respecto al avance (`diagAngleDeg = 32`):
+- El rayo lateral toca la pared ~100 mm por delante del eje.
+- Las paredes laterales de la celda siguiente se ven poco después de pasar el centro de la actual.
 - Ahí se decide la acción para la celda siguiente, así no hay pausa para mirar ni pensar.
 
 Qué hace con cada lectura:
-- **Lateral:** se convierte en un voto para la pared donde cae el rayo, descartando ±20 mm alrededor de los postes. Si cae en la zona limpia de la pared, alimenta el filtro lateral. El cambio pared→hueco (el poste) corrige el avance.
+- **Lateral:** se convierte en un voto para la pared donde cae el rayo, descartando ±20 mm alrededor de los postes (más en pasillos anchos). Si cae en la zona limpia de la pared, alimenta el filtro lateral. El cambio pared→hueco (el poste) corrige el avance. En pasillos anchos (práctica), una lectura entre la pared y el umbral se ignora: suele ser el rayo que cruzó un hueco y dio en una pared de la celda vecina.
+- **Votos:** una pared es conocida con 2 votos netos que coinciden; una lectura suelta no decide nada.
 - **Frontal:** vota la primera pared que encuentra y las fronteras que cruza. Con paredes confirmadas corrige el avance. Si ve una pared que no debería estar (delante y cerca), para.
 
 Giros:
@@ -73,6 +74,14 @@ Kalman de 2 estados: desplazamiento `y` y error de rumbo `b`.
 2. **Ruta más corta:** visita solo las celdas sin confirmar de la mejor ruta posible, con coste por giro, hasta que la ruta con paredes conocidas es tan buena como la optimista (`exploreBudgetS` como máximo).
 3. **Vuelta** a la salida y mapa a flash.
 4. **Carrera:** Dijkstra sobre (celda, rumbo) con coste por giro. En las rectas conocidas acelera hasta la siguiente curva.
+5. **Explorar todo** (sin meta, o meta que no existe en esa pista): va siempre a la celda sin conocer más cercana hasta que no queda nada alcanzable. Lo ya conocido no se vuelve a recorrer salvo para llegar a lo que falta. Antes de darlo por terminado revisa una vez las paredes dudosas, y si al volver aparece algo nuevo alcanzable, da otra vuelta.
+
+## Modo práctica (`Mouse::measureCell`, `App::practiceRun`)
+
+- La competencia y la práctica están separadas: la práctica usa una copia de los parámetros y del mapa y al terminar los restaura; no guarda nada en flash.
+- Mapa de 32 × 32 con la salida en (16, 16): cabe una pista de hasta 15 celdas hacia cada lado, sin saber de antemano su tamaño.
+- **Medida del pasillo:** gira a la izquierda, mide con el frontal, vuelve; gira a la derecha, mide, vuelve (un cuarto de vuelta a cada mano para que el error de escala del giroscopio se anule). Pasillo = izquierda + derecha + 2 × `frontAheadMm`; celda = pasillo + `wallMm`. Si había `calfront`, se descuenta su desfase y se traslada a la pista nueva.
+- **Paso de celda en marcha:** al ver de frente una pared confirmada tras al menos dos celdas rectas, el error acumulado del tramo, repartido por celdas, corrige el paso (máximo ±8 %).
 
 Vigilante de zona: con más de `areaLimitS` (10 s) dentro de un radio de 1 celda, el objetivo pasa a ser una celda alcanzable fuera de la zona. Si no hay camino, olvida las paredes poco confirmadas y vuelve a planificar.
 
@@ -86,6 +95,7 @@ Se guardan en flash con CRC.
 
 ## Pruebas
 
-- `tests/test_main.cpp`: mapa con votos, inundación, rutas, texto ↔ mapa, tabla de parámetros, filtro lateral, tramas y 6 misiones completas en el simulador (reglamento ideal y con errores, y 4 aleatorios).
+- `tests/test_main.cpp`: mapa con votos, inundación, rutas, texto ↔ mapa, tabla de parámetros, filtro lateral, tramas, 6 misiones completas en el simulador (reglamento ideal y con errores, y 4 aleatorios) y 3 pistas de práctica de otras medidas (170, 200 y 260 mm).
+- Simulador: `--bench 20` (competencia, 42 casos), `--practica 70` (pistas de 4×5 a 8×9 celdas de 170 a 300 mm), `--pista ancho,alto,celda,semilla,errores` (una pista de práctica con detalle).
 - CMake también compila todo `firmware/` contra cabeceras mínimas (`tests/stubs`) para detectar errores sin la placa.
 - La integración continua compila el firmware real con PlatformIO y corre la batería de laberintos.

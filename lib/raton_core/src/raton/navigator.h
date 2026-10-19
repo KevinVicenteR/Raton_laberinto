@@ -53,6 +53,8 @@ class Navigator {
   void face(Dir d);
   float gyroScale() { return motion_.gyroScale(); }
   float cellPitch() const { return cell_; }
+  // Pista de medida incierta (practica): ajustar el paso de celda en marcha con las paredes de enfrente.
+  void setLearnCell(bool on) { learnCell_ = on; }
 
   int x() const { return cx_; }
   int y() const { return cy_; }
@@ -91,6 +93,7 @@ class Navigator {
   bool pivot(int quarterTurns);
   void learnGyroScale();
   void applyCorrection(float e, float gain);
+  void startStraight();
   bool waitStopped(float timeout);
   bool recover(Brain& brain);
   void checkStall();
@@ -130,6 +133,7 @@ class Navigator {
   int actX_ = -1, actY_ = -1;
   int frontLastMm_ = 1000;
   int frontMisses_ = 0;
+  int frontNear_ = 0;
   float frontLastT_ = -1;
   bool blocked_ = false;
   int blockedHits_ = 0;
@@ -140,6 +144,7 @@ class Navigator {
     bool wall = false;
     float hitOdo = 0;
     int lastValidMm = 1000;
+    int near = 0;  // lecturas validas seguidas muy cerca
     float lastValidT = -1;
   } side_[2];
 
@@ -159,6 +164,12 @@ class Navigator {
   float smoothRadius_ = 50.0f;
   bool smoothOk_ = false;      // la curva cabe en la celda con margen
   float cell_ = 0;           // paso real de celda aprendido en marcha (mm)
+  float cellRef_ = 0;        // el de los parametros (el ajuste no se aleja mas de un 8 %)
+  bool learnCell_ = false;
+  // Tramo recto actual, para el ajuste del paso: celdas avanzadas y correcciones aplicadas desde su inicio.
+  int straightCells_ = 0;
+  float straightCorr_ = 0;
+  bool cellLearned_ = false;
   float halfCorr_ = 71.5f;   // medio pasillo medido en marcha
   float sideLat_[2] = {0, 0};
   float sideLatOdo_[2] = {-1e9f, -1e9f};

@@ -17,7 +17,7 @@ struct Entry {
 
 const Entry kTable[] = {
     PF(cellMm, 100, 400), PF(wallMm, 0, 40), PI(mazeW, 1, 32), PI(mazeH, 1, 32), PI(startX, 0, 31),
-    PI(startY, 0, 31), PI(startDir, 0, 3), PI(goalX, 0, 31), PI(goalY, 0, 31), PI(goalW, 1, 8), PI(goalH, 1, 8),
+    PI(startY, 0, 31), PI(startDir, 0, 3), PI(goalX, -1, 31), PI(goalY, -1, 31), PI(goalW, 1, 8), PI(goalH, 1, 8),
     PF(wheelDiamMm, 10, 80), PF(countsPerRev, 10, 100000), PF(trackMm, 30, 150), PF(frontAheadMm, -20, 80),
     PF(diagAheadMm, -20, 80), PF(diagLateralMm, 0, 60), PF(diagAngleDeg, 20, 70), PI(frontOffsetMm, -60, 60),
     PI(leftOffsetMm, -60, 60), PI(rightOffsetMm, -60, 60), PF(sensorLatencyS, 0, 0.1f), PI(sensorMaxMm, 100, 2000),

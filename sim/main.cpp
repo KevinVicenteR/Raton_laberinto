@@ -44,6 +44,8 @@ int main(int argc, char** argv) {
   std::string mazePath;
   int randomSeed = -1;
   int bench = -1;
+  int practice = 0;
+  int pcase = -1;
   int perturb = 0;
   int loops = 12;
   uint32_t seed = 1;
@@ -58,6 +60,18 @@ int main(int argc, char** argv) {
     else if (a == "--random") randomSeed = atoi(next());
     else if (a == "--bench") bench = (i + 1 < argc && argv[i + 1][0] != '-') ? atoi(next()) : 20;
     else if (a == "--perturb") perturb = atoi(next());
+    else if (a == "--pista") {
+      int w = 5, h = 5, lvl = 0;
+      float c = 200;
+      unsigned sd = 1;
+      sscanf(next(), "%d,%d,%f,%u,%d", &w, &h, &c, &sd, &lvl);
+      const sim::PracticeResult r = sim::runPractice(w, h, c, lvl, sd, true);
+      printf("%s %s\n", r.ok() ? "OK" : "FALLO", sim::describe(r).c_str());
+      return r.ok() ? 0 : 1;
+    } else if (a == "--pcaso") {
+      pcase = atoi(next());
+      practice = pcase + 1;
+    } else if (a == "--practica") practice = (i + 1 < argc && argv[i + 1][0] != '-') ? atoi(next()) : 10;
     else if (a == "--seed") seed = static_cast<uint32_t>(atoi(next()));
     else if (a == "--simseed") simSeed = atoi(next());
     else if (a == "--loops") loops = atoi(next());
@@ -81,6 +95,21 @@ int main(int argc, char** argv) {
       fprintf(stderr, "opcion desconocida: %s\n", a.c_str());
       return 2;
     }
+  }
+
+  if (practice > 0) {
+    int fails = 0;
+    const float cells[] = {200.0f, 230.0f, 260.0f, 300.0f, 170.0f, 250.0f, 270.0f};
+    for (int k = pcase >= 0 ? pcase : 0; k < (pcase >= 0 ? pcase + 1 : practice); ++k) {
+      const int w = 4 + k % 5, h = 5 + (k * 3) % 5;
+      const float c = cells[k % 7];
+      const sim::PracticeResult r = sim::runPractice(w, h, c, (k % 2) * 2, 500u + k, pcase >= 0);
+      if (!r.ok()) ++fails;
+      printf("%-5s %dx%d celda=%3.0f err%d %s\n", r.ok() ? "OK" : "FALLO", w, h, c, (k % 2) * 2, sim::describe(r).c_str());
+      fflush(stdout);
+    }
+    printf("\n%d de %d pistas de practica exploradas completas\n", practice - fails, practice);
+    return fails ? 1 : 0;
   }
 
   if (bench >= 0) {

@@ -34,7 +34,10 @@ struct Params {
   float frontAheadMm = 40.0f;   // posicion del frontal por delante del eje de ruedas
   float diagAheadMm = 30.0f;    // laterales: por delante del eje...
   float diagLateralMm = 30.0f;  // ...y separados del centro hacia cada lado
-  float diagAngleDeg = 45.0f;   // angulo del rayo respecto a la marcha
+  // Angulo EFECTIVO del rayo lateral. Montados a 45 grados, pero el VL53L0X mide con un cono de 25 grados y
+  // devuelve el punto mas cercano de la pared: mide como un rayo a ~45 - 12.5 = 32 grados (los registros
+  // de la version anterior calibraron 31). Se calibra con "calside <ancho del pasillo>".
+  float diagAngleDeg = 32.0f;
   int frontOffsetMm = 0;        // se suma a cada lectura (calibracion)
   int leftOffsetMm = 0;
   int rightOffsetMm = 0;

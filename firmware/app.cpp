@@ -20,12 +20,12 @@ void serviceTrampoline() {
   if (gApp) gApp->service();
 }
 
-const char* const kModeNames[] = {"",          "1 EXPLORAR",  "2 CARRERA", "3 SOLO META",
+const char* const kModeNames[] = {"",          "1 EXPLORAR",  "2 CARRERA", "3 PRACTICA",
                                   "4 SENSORES", "5 CAL MOTOR", "6 RUEDAS",  "7 BORRAR MAPA"};
 const char* const kModeHelp[] = {"",
-                                 "meta+ruta+volver",
-                                 "ruta guardada",
-                                 "ir a la meta",
+                                 "competencia: meta+ruta",
+                                 "competencia: ruta guardada",
+                                 "pista cualquiera",
                                  "ver lecturas",
                                  "pasillo recto 2 celdas",
                                  "raton levantado",
@@ -389,7 +389,7 @@ void App::showResult(const raton::MissionResult& r, const char* title) {
   char l1[22], l2[22], l3[22], l4[22];
   if (r.reachedGoal) snprintf(l1, sizeof(l1), "Meta %d.%02d s", static_cast<int>(r.goalTime),
                               static_cast<int>(r.goalTime * 100) % 100);
-  else snprintf(l1, sizeof(l1), "SIN META");
+  else snprintf(l1, sizeof(l1), r.exploredAll ? "Explorado todo" : "SIN META");
   snprintf(l2, sizeof(l2), "Total %d s", static_cast<int>(r.totalTime));
   snprintf(l3, sizeof(l3), "%s%s", r.proven ? "Ruta demostrada" : "Ruta parcial", r.backHome ? " +S" : "");
   snprintf(l4, sizeof(l4), "Atascos %d max %dus", r.recoveries, static_cast<int>(board_.maxLoadUs()));
@@ -415,9 +415,8 @@ void App::runMode(int mode) {
       armStart();
       showResult(mouse_.race(true), "CARRERA");
       break;
-    case GOAL_ONLY:
-      armStart();
-      showResult(mouse_.explore(false, false), "SOLO META");
+    case PRACTICE:
+      practiceRun();
       break;
     case SENSORS:
       sensorsMode();
@@ -444,6 +443,29 @@ void App::runMode(int mode) {
 // ---------------------------------------------------------------------------------------------
 // Diagnostico y calibracion
 // ---------------------------------------------------------------------------------------------
+
+void App::practiceRun() {
+  // Pista de practica (cualquier medida y sin meta): no toca la geometria ni el mapa de la competencia.
+  // Mapa de 32 x 32 con la salida en el centro (cabe una pista de hasta 15 celdas hacia cada lado), pasillo
+  // medido al arrancar, explora todo lo alcanzable y vuelve a la salida.
+  static raton::Maze competitionMap;
+  competitionMap = mouse_.maze();
+  const raton::Params competition = params_;
+  params_.mazeW = params_.mazeH = 32;
+  params_.startX = params_.startY = 16;
+  params_.startDir = 0;
+  params_.goalX = params_.goalY = -1;
+  mouse_.resetMap();
+  armStart();
+  if (mouse_.measureCell(params_) < 0)
+    reply("CELDA no medida (hace falta pared a los dos lados en la salida): uso cellMm");
+  board_.saveEnabled = false;
+  showResult(mouse_.explore(false, true), "PRACTICA");
+  mouse_.setLearnCell(false);
+  board_.saveEnabled = true;
+  params_ = competition;
+  mouse_.maze() = competitionMap;
+}
 
 void App::sensorsMode() {
   // Lecturas en pantalla y por Bluetooth hasta 'x' o tapar el frontal 2 s.

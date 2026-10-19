@@ -20,6 +20,8 @@ class Board : public raton::Platform {
   bool saveMap(const raton::Maze& maze) override;
 
   void requestStop() { stop_ = true; }
+  // false en la practica: no se sobrescribe el mapa de la competencia guardado en flash.
+  bool saveEnabled = true;
   void clearStop() { stop_ = false; }
   // Atender Bluetooth y Serie mientras se espera (se llama desde tick y desde el menu).
   void (*service)() = nullptr;
