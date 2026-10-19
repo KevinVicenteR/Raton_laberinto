@@ -1,6 +1,5 @@
 #include "storage.h"
 
-#include <mbed.h>  // primero: carga la configuracion de mbed y PinMode del nucleo Arduino
 #include <FlashIAPBlockDevice.h>
 #include <TDBStore.h>
 #include <string.h>

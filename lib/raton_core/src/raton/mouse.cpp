@@ -32,7 +32,10 @@ MissionResult Mouse::explore(bool searchAfterGoal, bool returnHome) {
 
   explorer_.setPhase(Explorer::Phase::ToGoal);
   NavResult nr = nav_.run(explorer_, p_.searchSpeed, p_.smoothTurnsSearch);
-  if (nr != NavResult::Arrived || !maze_.isGoal(nav_.x(), nav_.y())) return finish(r, t0);
+  if (nr != NavResult::Arrived || !maze_.isGoal(nav_.x(), nav_.y())) {
+    io_.report(nr == NavResult::Aborted ? "PARADO" : "SIN_META: no encuentra camino a la meta", true);
+    return finish(r, t0);
+  }
   r.reachedGoal = true;
   r.goalTime = nav_.now() - t0;
   io_.report("META", true);
@@ -69,6 +72,8 @@ MissionResult Mouse::race(bool returnHome) {
   io_.report("INICIO_MAPA", true);
   explorer_.setPhase(Explorer::Phase::Run);
   NavResult nr = nav_.run(explorer_, p_.runSpeed, p_.smoothTurnsRun);
+  if (!(nr == NavResult::Arrived && maze_.isGoal(nav_.x(), nav_.y())))
+    io_.report(nr == NavResult::Aborted ? "PARADO" : "SIN_META: no encuentra camino a la meta", true);
   if (nr == NavResult::Arrived && maze_.isGoal(nav_.x(), nav_.y())) {
     r.reachedGoal = true;
     r.goalTime = nav_.now() - t0;
