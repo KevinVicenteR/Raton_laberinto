@@ -22,7 +22,7 @@ const raton::Sensors& Board::tick() {
     t0_ = micros();
     next_ = t0_;
   }
-  // Espera al siguiente periodo atendiendo comunicaciones solo si sobra tiempo.
+  // Espera al siguiente periodo atendiendo comunicaciones.
   // Tiempo de calculo del ciclo anterior (desde que se devolvieron los sensores hasta ahora).
   const float busy = static_cast<float>(micros() - lastReturn_);
   if (lastReturn_ && busy > maxLoad_) maxLoad_ = busy;
@@ -32,6 +32,9 @@ const raton::Sensors& Board::tick() {
     ++late_;
     next_ = micros();  // muy tarde (p. ej. escribiendo la flash): no intentar recuperar ciclos perdidos
   }
+  // Bluetooth y Serie en cada ciclo aunque no sobre tiempo (si no, con el I2C lento nunca se atienden y la
+  // web no recibe ni manda nada); y otra vez mientras sobre tiempo.
+  if (service) service();
   while (static_cast<int32_t>(next_ - micros()) > 600) {
     if (service) service();
   }
@@ -47,7 +50,8 @@ const raton::Sensors& Board::tick() {
   s_.encRightMm = r * mmPerCount;
 
   // Giroscopio (y sesgo con el raton quieto)
-  s_.gyroFresh = imu_.poll(s_.t);
+  // El giroscopio da una muestra cada 5 ms: preguntar cada 2 ciclos (4 ms) basta y ahorra I2C.
+  s_.gyroFresh = (++imuTick_ & 1) == 0 && imu_.poll(s_.t);
   if (s_.gyroFresh) s_.gyroDeg = imu_.yawDeg();
   const bool still = dutyL_ == 0 && dutyR_ == 0 && l == lastL_ && r == lastR_;
   stillT_ = still ? stillT_ + p_.dt : 0;

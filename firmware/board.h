@@ -40,6 +40,7 @@ class Board : public raton::Platform {
   uint32_t t0_ = 0;
   bool started_ = false;
   int laser_ = 0;
+  uint32_t imuTick_ = 0;
   float dutyL_ = 0, dutyR_ = 0;
   float stillT_ = 0;
   long lastL_ = 0, lastR_ = 0;

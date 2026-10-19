@@ -27,6 +27,7 @@ int readReg(uint8_t reg) {
 
 bool Imu::begin() {
   if (!IMU.begin()) return false;
+  Wire1.setClock(400000);  // el BMI270 admite hasta 1 MHz; la libreria lo deja a 100 kHz
   // 200 Hz, filtro normal, modo de alto rendimiento: 0x80 | 0x20 | 0x09.
   if (writeReg(kGyrConf, 0xA9) && readReg(kGyrConf) == 0xA9) odr_ = 200.0f;
   return true;
