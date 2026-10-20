@@ -720,7 +720,7 @@ void Navigator::plan(Brain& brain) {
       planVEnd_ = planArc_ ? arcSpeed() : 0.0f;
     } else {
       planActive_ = false;
-      motion_.cruise(vmax_);
+      motion_.cruise(cruiseSpeed(nx, ny));
     }
   } else if ((act_ == Act::Left || act_ == Act::Right) && smooth_ && smoothOk_ &&
              motion_.position() < cCenter - smoothDf_ - 5.0f) {
@@ -734,6 +734,15 @@ void Navigator::plan(Brain& brain) {
   arcStarted_ = false;
 }
 
+float Navigator::cruiseSpeed(int nx, int ny) const {
+  // Explorando, por celdas ya recorridas (paredes conocidas) y en recta, se puede ir mas rapido: no hay nada
+  // que mirar con calma y la parada siguiente se decide con tiempo para frenar. En lo nuevo, vmax.
+  const int fx = nx + dx(h_), fy = ny + dy(h_);
+  if (smooth_ || p_.knownSpeed <= vmax_ || !maze_.visited(nx, ny) || !maze_.visited(fx, fy)) return vmax_;
+  if (maze_.votes(nx, ny, h_) > -3) return vmax_;  // la salida de la celda siguiente, confirmada abierta
+  return p_.knownSpeed;
+}
+
 float Navigator::arcSpeed(float radius) const {
   // En la curva la rueda de fuera va mas rapido que el centro: que no pase de lo que dan los motores (con
   // bateria baja o motores lentos la curva se abriria y chocaria).
@@ -742,12 +751,12 @@ float Navigator::arcSpeed(float radius) const {
   return p_.turnSpeed < cap ? p_.turnSpeed : cap;
 }
 
-bool Navigator::waitStopped(float timeout) {
+bool Navigator::waitStopped(float timeout, float speedTol) {
   const float t0 = t_;
   while (t_ - t0 < timeout) {
     tick();
     if (io_.stopRequested()) return false;
-    if (motion_.arrived() && !motion_.turning() && fabsf(motion_.measuredSpeed()) < 15.0f &&
+    if (motion_.arrived() && !motion_.turning() && fabsf(motion_.measuredSpeed()) < speedTol &&
         fabsf(motion_.measuredRate()) < 30.0f)
       return true;
   }
@@ -785,9 +794,7 @@ bool Navigator::pivot(int q) {
   } else {
     lateral_.setY(0, 100.0f);  // el avance de antes es ahora el lateral: ~centrado por el frontal
   }
-  // Duda de rumbo por el error de escala del giroscopio (~2.5 % de lo girado): ~2 grados en un cuarto de
-  // vuelta y el doble en media vuelta.
-  lateral_.addHeadingVariance(1.5e-3f);
+  lateral_.addHeadingVariance(1.5e-3f);  // ~2 grados por el error de escala del giroscopio
   lastOdo_ = motion_.position();
   latAge_ = 1e9f;
   longVar_ += lateral_.varY() + 4.0f;  // el avance nuevo es el lateral de antes
@@ -1086,7 +1093,8 @@ NavResult Navigator::run(Brain& brain, float vmax, bool smoothTurns) {
     if (arcPlanned_) continue;
     // Parada en el centro de la celda de la accion (el objetivo ya se corrige arriba).
     if (motion_.arrived() && cx_ == actX_ && cy_ == actY_) {
-      waitStopped(0.4f);
+      // Casi parado basta para empezar a girar: los ultimos mm/s tardan en irse y el giro los absorbe.
+      waitStopped(0.4f, 40.0f);
       centerOdo_ = motion_.position();
       if (act_ == Act::Stop) {
         dep = Depart::Stop;

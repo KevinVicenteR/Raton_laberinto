@@ -71,7 +71,8 @@ Los laterales a 45° ven las paredes de la celda siguiente cuando el eje aún es
 
 Giros:
 - **Explorando:** en el sitio, en el centro de la celda. Tras girar, el frontal confirma que la salida está libre.
-- **En carrera (ruta conocida):** curvas suaves de radio calculado para que el cuerpo redondo pase con margen del poste interior y de la esquina exterior.
+- **En carrera (ruta conocida):** curvas suaves. De los radios que dejan al cuerpo redondo con margen del poste interior y de la esquina exterior, el más rápido con los motores reales: con un radio mayor la rueda de fuera va menos por encima del centro. Debe caber en media celda para enlazar dos curvas seguidas.
+- **Explorando por celdas ya recorridas:** en recta, crucero a `knownSpeed` (650) en vez de `searchSpeed` (400). Los giros siguen siendo en el sitio: probadas las curvas en lo conocido, empeoraban el mapa.
 
 Atascos:
 - **Detección:** ruedas que no siguen a la consigna, encoders que avanzan sin que el frontal se acerque, o pared inesperada.

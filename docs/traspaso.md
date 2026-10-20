@@ -42,7 +42,14 @@ Errores del simulador: `SIM_H` (altura real de los láseres), `SIM_MOTOR`, `SIM_
 `SIM_NOVERT` (sin errores en lo vertical), `SIM_SOLO=<grupo>`; opciones `--fuera <mm>` (objetos fuera del
 laberinto), `--sincal`, `--cono <grados>`.
 
-## Resultados de referencia (banco de 81 casos, nivel 2)
+## Resultados de referencia
+
+Banco grande (`scripts/banco.sh 160`, 161 casos, láseres a 40 mm), tras la tanda de rapidez: 161 cumplen,
+149 sin roce, meta explorando 63,8 s, exploración completa 118 s, carrera 16,4 s. Con 81 casos: láseres a
+25 mm 81/81 (77 sin roce); motores al 80 % 81/81 (74). **Con 81 casos el resultado varía bastante con
+cualquier cambio (el sistema es caótico): para decidir, 161 casos.**
+
+### Banco de 81 casos antes de la tanda de rapidez
 
 | Configuración | Cumplen | Sin roce | Paredes mal | Error de pose (avance/lateral/rumbo) |
 |---|---|---|---|---|
@@ -54,8 +61,29 @@ Antes de los cambios de esta tanda (con el modelo 3D del sensor ya en el simulad
 Tiempos medios con láseres a 40 mm: meta explorando 69 s, exploración completa 127 s, carrera 17 s.
 Práctica (`--practica 70`): 70 de 70 pistas exploradas completas.
 
-Probado y descartado como valor por defecto: `searchSpeed 500` (meta explorando 61 s, pero 79/81 y 253 roces
-en carrera).
+### Rapidez: probado
+
+Dónde se va el tiempo explorando hasta la meta (caso 1005, 78 s): 21 s girando en el sitio, 5 s parado, 15 s
+acelerando y frenando. En la carrera (24 s), 14 s en curvas a ~290 mm/s: la manda la rueda de fuera de
+la curva, que llega a lo que da el motor.
+
+Se quedó:
+- radio de curva elegido por tiempo con los motores reales y `turnSpeed` solo como tope: carrera −4 %;
+- `knownSpeed` (650): crucero rápido por rectas de celdas ya recorridas: exploración completa −4 %;
+- empezar el giro en el sitio con el ratón casi parado (< 40 mm/s): −1,5 %.
+
+Descartado (en 161 casos):
+- `searchSpeed 500`: meta −11 %, pero fallos y roces en carrera;
+- `runSpeed 900`: no cambia nada (ya manda el tope real de los motores, ~600 mm/s);
+- coste de giro de la ruta 12 o 16 (en vez de 8): igual o peor;
+- 95 % del motor para la rueda de fuera en curva (en vez de 85 %): −3 % de carrera pero muchos más roces;
+- giros en el sitio más rápidos (630–720°/s): −4 % pero más zigzag y paredes mal;
+- curvas sin parar explorando por celdas ya conocidas (`--smooth` para todo, o solo en lo conocido):
+  −6 % a −13 % de tiempo, pero el mapa empeora mucho (150–370 paredes mal) y fallan carreras;
+- girar con el ratón la posición y sus dudas en cada giro (el avance pasa a lateral): en teoría correcto,
+  en la práctica 158/161. La duda de rumbo proporcional al ángulo girado: 157/161;
+- corregir los láseres con el paso de celda aprendido (`rangeBiasFromCell 1`): se realimenta con el
+  aprendizaje del paso y supone el grosor de pared nominal.
 
 ## Hecho en esta tanda (sin subir aún si este documento no está en el último commit)
 
@@ -76,8 +104,9 @@ en carrera).
 
 ## Pendiente (por orden)
 
-1. **Rapidez** (petición del usuario): carrera y vuelta a casa más rápidas por camino conocido, curvas suaves
-   también explorando por celdas ya conocidas, menos paradas.
+1. **Rapidez** (petición del usuario): lo que queda es menos paradas al explorar. Las curvas sin parar en
+   lo conocido ganan mucho tiempo pero empeoran el mapa: habría que entender por qué (pose tras la curva,
+   votos con la pose dudosa) antes de activarlas. También: rutas en diagonal en la carrera.
 2. **Movimiento fluido:** compensación de zona muerta gradual en `Motion::update` (ahora es todo o nada con
    `kS`), retroceso de los atascos más suave, barrido continuo en la calibración en vez de 6 paradas.
 3. **Autoprueba al arrancar** (motores, encoders, giroscopio, láseres) y seguir funcionando con un láser roto.

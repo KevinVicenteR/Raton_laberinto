@@ -23,7 +23,7 @@ const Entry kTable[] = {
     PI(leftOffsetMm, -60, 60), PI(rightOffsetMm, -60, 60), PF(sensorLatencyS, 0, 0.1f), PI(sensorMaxMm, 100, 2000),
     PF(kS, 0, 0.5f), PF(kV, 0.0002f, 0.02f), PF(motorTauS, 0, 0.3f), PF(maxDuty, 0.2f, 1), PF(kpFwd, 0, 0.2f),
     PF(kdFwd, 0, 0.02f), PF(kiFwd, 0, 1), PF(kpRot, 0, 0.2f), PF(kdRot, 0, 0.02f), PF(kiRot, 0, 1),
-    PF(kSteer, 0, 2), PF(steerMaxDeg, 0, 20), PF(steerRateGain, 0, 1), PF(searchSpeed, 50, 1500),
+    PF(kSteer, 0, 2), PF(steerMaxDeg, 0, 20), PF(steerRateGain, 0, 1), PF(searchSpeed, 50, 1500), PF(knownSpeed, 50, 2500),
     PF(runSpeed, 50, 2500), PF(turnSpeed, 50, 1500), PF(accel, 200, 20000), PF(decel, 200, 20000),
     PF(rotSpeed, 60, 2000), PF(rotAccel, 200, 30000), PF(smoothRadiusMm, 20, 120), PF(sideWallRatio, 1, 3),
     PF(frontWallRatio, 0.1f, 0.9f), PI(frontStopMm, -1, 300), PF(exploreBudgetS, 0, 600), PF(areaLimitS, 2, 29),

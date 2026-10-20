@@ -84,6 +84,7 @@ struct Params {
 
   // ---------- Velocidades ----------
   float searchSpeed = 400.0f;   // explorando (mm/s)
+  float knownSpeed = 650.0f;    // explorando, en recta por celdas ya recorridas
   float runSpeed = 650.0f;      // carrera con ruta conocida
   float turnSpeed = 450.0f;     // curvas suaves: tope (manda lo que dan los motores, ver Navigator::arcSpeed)
   float accel = 3000.0f;        // mm/s^2 (0.3 g: las ruedas no patinan)

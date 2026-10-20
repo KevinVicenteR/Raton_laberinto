@@ -118,8 +118,9 @@ class Navigator {
   void learnGyroScale();
   void applyCorrection(float e, float gain);
   void startStraight();
-  bool waitStopped(float timeout);
+  bool waitStopped(float timeout, float speedTol = 15.0f);
   float arcSpeed(float radius = 0) const;  // 0 = el de la curva elegida
+  float cruiseSpeed(int nx, int ny) const;
   bool recover(Brain& brain);
   void checkStall();
   void computeSmoothGeometry();
