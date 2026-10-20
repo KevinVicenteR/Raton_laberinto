@@ -2,6 +2,8 @@
 
 #include <math.h>
 #include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 
 #include <algorithm>
 #include <fstream>
@@ -42,12 +44,17 @@ World::World(const Maze& truth, const Physical& ph) : truth_(truth), ph_(ph) {
     }
 }
 
-float World::raycast(float x, float y, float ang, float maxd) const {
+float gFovDeg = 25.0f;
+bool gAutoCal = true;
+
+float World::raycast(float x, float y, float ang, float maxd, int* axis) const {
   const float ddx = cosf(ang), ddy = sinf(ang);
   float best = maxd;
+  int bestAxis = 0;
   for (const Rect& r : rects_) {
     // Interseccion rayo-caja (slabs).
     float t0 = 0, t1 = best;
+    int ax = 0;
     if (fabsf(ddx) < 1e-9f) {
       if (x < r.x0 || x > r.x1) continue;
     } else {
@@ -62,13 +69,40 @@ float World::raycast(float x, float y, float ang, float maxd) const {
     } else {
       float a = (r.y0 - y) / ddy, b = (r.y1 - y) / ddy;
       if (a > b) std::swap(a, b);
+      if (a > t0) ax = 1;
       t0 = std::max(t0, a);
       t1 = std::min(t1, b);
       if (t0 > t1) continue;
     }
-    if (t0 < best) best = t0;
+    if (t0 < best) {
+      best = t0;
+      bestAxis = ax;
+    }
   }
+  if (axis) *axis = bestAxis;
   return best;
+}
+
+float World::coneReading(float x, float y, float ang, float fovDeg) const {
+  // Cono: rayos repartidos en el angulo, cada uno con el peso de la luz que devuelve (seccion del cono,
+  // coseno de incidencia / distancia^2). La lectura es la media pesada; con poca senal, 2000 (nada).
+  const int kRays = 13;
+  float sw = 0, swd = 0;
+  for (int j = 0; j < kRays; ++j) {
+    const float f = -1.0f + (2.0f * j + 1.0f) / kRays;  // -1..1 dentro del cono
+    const float a = ang + f * 0.5f * fovDeg / kDeg;
+    int axis = 0;
+    const float dj = raycast(x, y, a, 2000.0f, &axis);
+    if (dj >= 2000.0f) continue;
+    const float inc = axis == 0 ? fabsf(cosf(a)) : fabsf(sinf(a));
+    const float dd = std::max(dj, 10.0f);
+    const float w = sqrtf(1.0f - f * f) * inc / (dd * dd);
+    sw += w;
+    swd += w * dj;
+  }
+  // Umbral: una pared de frente que llena el cono a 1200 mm (media de sqrt(1 - f^2) = pi / 4).
+  const float ref = 0.785f / (1200.0f * 1200.0f);
+  return sw / kRays >= ref ? swd / sw : 2000.0f;
 }
 
 bool World::collides(float x, float y, float rad) const {
@@ -142,6 +176,8 @@ void SimPlatform::physics(float dt) {
     // Contra la pared: puede girar en el sitio si no choca, pero no avanzar.
     if (!touching_) {
       ++contacts_;
+      if (getenv("SIM_CONTACTLOG"))
+        printf("CONTACTO t=%.2f v=%.0f w=%.0f err=%.0f/%.0f/%.1f\n", t_, v, w * kDeg, lastErr_[0], lastErr_[1], lastErr_[2]);
       if (verbose) printf("%8.3f  !! choque en %.0f,%.0f rumbo %.0f v=%.0f\n", t_, x_, y_, th_ * kDeg, v);
     }
     touching_ = true;
@@ -162,6 +198,7 @@ void SimPlatform::physics(float dt) {
 int SimPlatform::readLaser(int i) {
   const float c = cosf(th_), s = sinf(th_);
   float fx, fy, ang;
+  const bool cone = ph_.fovDeg > 0;
   if (i == 1) {
     fx = p_.frontAheadMm;
     fy = 0;
@@ -170,10 +207,10 @@ int SimPlatform::readLaser(int i) {
     const float sign = i == 0 ? 1.0f : -1.0f;
     fx = p_.diagAheadMm;
     fy = sign * p_.diagLateralMm;
-    ang = sign * ph_.diagAngleDeg / kDeg;
+    ang = sign * (cone ? ph_.mountDeg : ph_.diagAngleDeg) / kDeg;
   }
   const float sx = x_ + fx * c - fy * s, sy = y_ + fx * s + fy * c;
-  const float d = world_.raycast(sx, sy, th_ + ang, 2000.0f);
+  const float d = cone ? world_.coneReading(sx, sy, th_ + ang, ph_.fovDeg) : world_.raycast(sx, sy, th_ + ang, 2000.0f);
   std::uniform_real_distribution<float> u(0, 1);
   std::normal_distribution<float> n(0, 1);
   if (d > 1200.0f) return -1;
@@ -277,6 +314,60 @@ const raton::Sensors& SimPlatform::tick() {
 }
 
 void SimPlatform::report(const char* line, bool important) {
+  if (!strncmp(line, "NAV ", 4)) {
+    // Error de la pose estimada frente a la real, en el marco del raton (avance / lateral / rumbo).
+    const char* px = strstr(line, " x");
+    const char* py = strstr(line, " y");
+    const char* pc = strstr(line, " P");
+    const char* ph = strstr(line, " H");
+    const char* pg = strstr(line, " G");
+    if (px && py && pc && ph && pg && pg[2] == '1') {  // solo en tramos rectos (girando la pose es otra cosa)
+      const float cellB = static_cast<float>(atoi(pc + 2)) / 10.0f;
+      const float s = ph_.cellMm / cellB;  // la pose estimada en celdas, pasada a mm reales
+      const float ex = atoi(px + 2) * s - x_, ey = atoi(py + 2) * s - y_;
+      float eh = static_cast<float>(atoi(ph + 2)) / 10.0f - th_ * kDeg;
+      while (eh > 180) eh -= 360;
+      while (eh < -180) eh += 360;
+      const float c = cosf(th_), sn = sinf(th_);
+      const float el = ex * c + ey * sn, et = -ex * sn + ey * c;
+      if (getenv("SIM_LOCLOG"))
+        printf("%8.3f LOC err=%.0f/%.0f/%.1f real=%.0f,%.0f,%.0f\n", t_, el, et, eh, x_, y_, th_ * kDeg);
+      // Rumbo real respecto a la cuadricula y distancia real al centro del pasillo (zigzag y "se pega").
+      {
+        float a = th_ * kDeg;
+        a -= 90.0f * floorf(a / 90.0f + 0.5f);
+        const float c = ph_.cellMm;
+        const bool alongX = fabsf(cosf(th_)) > 0.7f;
+        const float lat = alongX ? y_ - (floorf(y_ / c) + 0.5f) * c : x_ - (floorf(x_ / c) + 0.5f) * c;
+        wob2_ += a * a;
+        off2_ += lat * lat;
+        if (fabsf(lat) > offMax_) offMax_ = fabsf(lat);
+      }
+      lastErr_[0] = el;
+      lastErr_[1] = et;
+      lastErr_[2] = eh;
+      locN_ += 1;
+      locLong2_ += el * el;
+      locLat2_ += et * et;
+      locHead2_ += eh * eh;
+      if (fabsf(el) > locLongMax_) locLongMax_ = fabsf(el);
+      if (fabsf(et) > locLatMax_) locLatMax_ = fabsf(et);
+      if (fabsf(eh) > locHeadMax_) locHeadMax_ = fabsf(eh);
+      // Celda creida distinta de la real (lejos de las fronteras, donde no hay duda): perdido.
+      const float bx = atoi(px + 2) / cellB, by = atoi(py + 2) / cellB;
+      const float fx = bx - floorf(bx), fy = by - floorf(by);
+      if (fx > 0.25f && fx < 0.75f && fy > 0.25f && fy < 0.75f) {
+        const bool lost = static_cast<int>(floorf(bx)) != cellX() || static_cast<int>(floorf(by)) != cellY();
+        if (lost && !lost_) {
+          ++lostEvents_;
+          if (verbose)
+            printf("%8.3f  !! PERDIDO cree (%d,%d) esta en (%d,%d) error avance %.0f lateral %.0f rumbo %.1f\n", t_,
+                   static_cast<int>(floorf(bx)), static_cast<int>(floorf(by)), cellX(), cellY(), el, et, eh);
+        }
+        lost_ = lost;
+      }
+    }
+  }
   if (!important) return;
   events.push_back({t_, line});
   if (verbose) printf("%8.3f  %s\n", t_, line);
@@ -343,6 +434,44 @@ void randomMaze(int w, int h, int loops, uint32_t seed, Maze& out) {
   for (int i = 0; i < loops; ++i) {
     const int x = 1 + static_cast<int>(rng() % (w - 2)), y = 1 + static_cast<int>(rng() % (h - 2));
     out.set(x, y, static_cast<Dir>(rng() % 4), Wall::Open);
+  }
+}
+
+void makeStartCell(Maze& m, int x, int y, raton::Dir d, uint32_t seed) {
+  // Salida de competencia: pared a la izquierda y a la derecha, abierta al frente. Si eso deja celdas
+  // aisladas, se abre una pared entre lo aislado y lo alcanzable hasta que todo vuelve a estar conectado.
+  m.set(x, y, raton::turnLeft(d), Wall::Closed);
+  m.set(x, y, raton::turnRight(d), Wall::Closed);
+  m.set(x, y, d, Wall::Open);
+  std::mt19937 rng(seed * 17u + 3u);
+  for (int guard = 0; guard < 1000; ++guard) {
+    std::vector<bool> seen(m.width() * m.height(), false);
+    std::vector<int> q{m.index(x, y)};
+    seen[q[0]] = true;
+    for (size_t i = 0; i < q.size(); ++i) {
+      const int cx = q[i] % m.width(), cy = q[i] / m.width();
+      for (int k = 0; k < 4; ++k) {
+        const Dir dd = static_cast<Dir>(k);
+        const int nx = cx + raton::dx(dd), ny = cy + raton::dy(dd);
+        if (!m.inside(nx, ny) || m.wall(cx, cy, dd) != Wall::Open || seen[m.index(nx, ny)]) continue;
+        seen[m.index(nx, ny)] = true;
+        q.push_back(m.index(nx, ny));
+      }
+    }
+    if (static_cast<int>(q.size()) == m.cells()) return;
+    // Paredes entre lo alcanzable y lo aislado (sin tocar la salida).
+    std::vector<std::pair<int, int>> cut;
+    for (int c : q) {
+      const int cx = c % m.width(), cy = c / m.width();
+      if (cx == x && cy == y) continue;
+      for (int k = 0; k < 4; ++k) {
+        const int nx = cx + raton::dx(static_cast<Dir>(k)), ny = cy + raton::dy(static_cast<Dir>(k));
+        if (m.inside(nx, ny) && !seen[m.index(nx, ny)] && !(nx == x && ny == y)) cut.push_back({c, k});
+      }
+    }
+    if (cut.empty()) return;
+    const auto& e = cut[rng() % cut.size()];
+    m.set(e.first % m.width(), e.first / m.width(), static_cast<Dir>(e.second), Wall::Open);
   }
 }
 

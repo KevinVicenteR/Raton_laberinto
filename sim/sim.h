@@ -9,6 +9,7 @@
 //  - Choques: el cuerpo redondo no atraviesa paredes; el contacto se cuenta.
 #pragma once
 
+#include <math.h>
 #include <stdint.h>
 
 #include <random>
@@ -29,7 +30,11 @@ struct Physical {
   float wheelDiamR = 34.0f;
   float trackMm = 75.0f;
   float bodyDiamMm = 90.0f;
-  float diagAngleDeg = 45.0f;
+  float diagAngleDeg = 45.0f;  // rayo unico (modelo antiguo, fovDeg = 0)
+  // Modelo real del VL53L0X: cono de fovDeg; devuelve la media de las distancias pesada por la senal que
+  // vuelve (mas fuerte de cerca y de frente). Los laterales montados a mountDeg.
+  float fovDeg = 0.0f;
+  float mountDeg = 45.0f;
   float motorTau = 0.04f;     // s
   float vmaxFull = 750.0f;    // mm/s con duty 1
   float stictionDuty = 0.05f;
@@ -54,7 +59,10 @@ struct Rect {
 class World {
  public:
   World(const raton::Maze& truth, const Physical& ph);
-  float raycast(float x, float y, float ang, float maxd) const;
+  // Distancia hasta la primera caja; axis = 0 si choca con una cara vertical (normal en x), 1 si horizontal.
+  float raycast(float x, float y, float ang, float maxd, int* axis = nullptr) const;
+  // Lectura sin ruido de un VL53L0X con cono de fovDeg (2000 = sin senal).
+  float coneReading(float x, float y, float ang, float fovDeg) const;
   bool collides(float x, float y, float r) const;
   const raton::Maze& truth() const { return truth_; }
 
@@ -99,6 +107,17 @@ class SimPlatform : public raton::Platform {
   bool saved = false;
   const raton::Maze* watch = nullptr;  // avisa cuando una pared del mapa del raton contradice la real
   int wrongEvents = 0;
+  // Error de localizacion (estimada - real): rms y maximo del avance, lateral (mm) y rumbo (grados).
+  float locRms(int which) const {
+    const float v = which == 0 ? locLong2_ : (which == 1 ? locLat2_ : locHead2_);
+    return locN_ > 0 ? sqrtf(v / locN_) : 0.0f;
+  }
+  int lostEvents() const { return lostEvents_; }
+  // Real: rumbo respecto a la cuadricula (grados rms), descentrado (mm rms y maximo) en los tramos rectos.
+  float wobbleRms() const { return locN_ > 0 ? sqrtf(wob2_ / locN_) : 0.0f; }
+  float offsetRms() const { return locN_ > 0 ? sqrtf(off2_ / locN_) : 0.0f; }
+  float offsetMax() const { return offMax_; }
+  float locMax(int which) const { return which == 0 ? locLongMax_ : (which == 1 ? locLatMax_ : locHeadMax_); }
 
  private:
   void physics(float dt);
@@ -134,11 +153,23 @@ class SimPlatform : public raton::Platform {
   float anchorT_ = 0;
   float maxArea_ = 0;
   uint8_t wrongState_[raton::Maze::kMax * raton::Maze::kMax] = {};
+  bool lost_ = false;
+  float wob2_ = 0, off2_ = 0, offMax_ = 0;
+  float lastErr_[3] = {0, 0, 0};
+  int lostEvents_ = 0;
+  float locN_ = 0, locLong2_ = 0, locLat2_ = 0, locHead2_ = 0, locLongMax_ = 0, locLatMax_ = 0, locHeadMax_ = 0;
 };
+
+// Cono de los sensores para todos los casos (25 = VL53L0X real, 0 = rayo unico). --cono en el simulador.
+extern float gFovDeg;
+// Calibrar los sensores al arrancar (como el modo 1). --sincal lo quita.
+extern bool gAutoCal;
 
 // Laberintos de prueba
 bool loadMazeFile(const std::string& path, raton::Maze& out, std::vector<std::string>* rows = nullptr);
 // Laberinto aleatorio perfecto (un solo camino) de w x h, con loops extra paredes quitadas.
 void randomMaze(int w, int h, int loops, uint32_t seed, raton::Maze& out);
+// Salida como en la competencia: pared a los dos lados y abierta al frente (y todo sigue conectado).
+void makeStartCell(raton::Maze& m, int x, int y, raton::Dir d, uint32_t seed);
 
 }  // namespace sim

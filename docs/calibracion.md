@@ -30,10 +30,14 @@ Recomendación de hardware: un sensor de reflexión (TCRT5000/QRE1113) mirando a
 
 ## 3. Sensores
 
-- **Frontal:** ratón en el **centro** de una celda mirando a una pared → `calfront` (fija `frontStopMm`).
-- **Laterales:** ratón centrado y recto en un pasillo con pared a los dos lados → `calside <ancho del pasillo en mm>`. Fija el ángulo real de los laterales y el tamaño de celda.
-- Haz estas dos calibraciones en la pista de la competencia y `save`. El modo práctica (3) las usa en cualquier otra pista sin cambiarlas: mide su propio pasillo al arrancar.
-- **Offsets:** si un sensor lee distinto de la regla, `set leftOffsetMm <real - lectura>` (también `rightOffsetMm` y `frontOffsetMm`).
+Cada VL53L0X sale de fábrica con su propio desfase (1–2 cm). Sin calibrar, el ratón cree estar descentrado y se pega a una pared. En el simulador es lo que más cuenta: con desfases de hasta 16 mm cumple 123 de 161 casos sin calibrar y 158 calibrando.
+
+- **`calsonda`** (o el botón "Calibrar sensores" de la web): ratón en el suelo, en el **centro** de una celda de la competencia con pared a los dos lados. Gira en el sitio: mira cada pared de frente con el frontal y pone cada lateral perpendicular a su pared. Corrige `frontOffsetMm`, `leftOffsetMm` y `rightOffsetMm`. Después `save`.
+- El **modo 1 lo hace solo al arrancar** en la salida (la salida de la competencia tiene pared a los dos lados). Si la salida está a otra distancia que la de `cellMm`, avisa `PISTA_DISTINTA` y no sale.
+- El **modo 3** (práctica) también calibra los laterales al arrancar, pero el frontal tiene que venir calibrado de antes (`calsonda` en la pista de la competencia + `save`).
+- `calfront`: solo el frontal (centrado en una celda, mirando a una pared).
+- `calside <ancho del pasillo>`: fija `cellMm` = pasillo + pared y hace `calsonda`.
+- `diagMountDeg` (45) y `sensorFovDeg` (25) describen el montaje y el cono; solo cambiarlos si el montaje es otro.
 
 ## 4. Motores
 
@@ -42,12 +46,13 @@ Modo 5, con el ratón en el suelo al principio de un pasillo recto de al menos 2
 ## 5. Velocidad
 
 Empieza con los valores por defecto:
-- explorar: `searchSpeed 320`;
+- explorar: `searchSpeed 400` (aceleración `accel`/`decel` 3000 mm/s²);
 - carrera: `runSpeed 650`, `turnSpeed 280`.
 
-Sube en pasos de 10 % solo si el ratón va limpio. Si en la carrera roza en las curvas, baja `turnSpeed` o usa giros en el sitio. Para el bloque de explorar se puede probar `searchSpeed 380–420`: en el simulador llega antes pero con algún roce. En el simulador se puede probar antes: `scripts/run.sh bateria 20 --set searchSpeed=380`.
+Sube en pasos de 10 % solo si el ratón va limpio. Si en la carrera roza en las curvas, baja `turnSpeed` o usa giros en el sitio. Explorando, los giros son siempre en el sitio: con curvas y paredes aún sin conocer el simulador falla mucho más. En el simulador se puede probar antes: `scripts/run.sh bateria 20 --set searchSpeed=450`.
 
 ## 6. Comprobación
 
 - `estado`: tiempo máximo de cálculo de un ciclo (debe quedar muy por debajo de 2000 µs), ciclos tarde y escala del giroscopio aprendida.
-- La web muestra la línea `NAV` (sensores, velocidad, posición) y las celdas del mapa en directo.
+- La web muestra la línea `NAV` (sensores, velocidad, posición), el **radar** (los tres conos con su lectura y las paredes de un pasillo centrado como referencia) y las celdas del mapa en directo.
+- Tras actualizar el firmware los parámetros guardados vuelven a los de fábrica (cambió la estructura): repite modo 5 y `calsonda`, y `save`.

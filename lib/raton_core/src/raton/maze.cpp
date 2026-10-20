@@ -83,6 +83,46 @@ int Maze::forgetWeak(int minVotes) {
   return n;
 }
 
+bool Maze::segBorder(int seg) const {
+  const int x = seg & 63, y = (seg >> 6) & 63;
+  if (seg & kVertical) return y >= h_ || x <= 0 || x >= w_;
+  return x >= w_ || y <= 0 || y >= h_;
+}
+
+int8_t Maze::segVotes(int seg) const {
+  if (segBorder(seg)) return kVoteMax;
+  const int x = seg & 63, y = (seg >> 6) & 63;
+  return (seg & kVertical) ? v_votes_[y][x] : h_votes_[y][x];
+}
+
+void Maze::segObserve(int seg, bool closed, int weight) {
+  if (segBorder(seg)) return;
+  const int x = seg & 63, y = (seg >> 6) & 63;
+  int8_t& s = (seg & kVertical) ? v_votes_[y][x] : h_votes_[y][x];
+  int v = s + (closed ? weight : -weight);
+  if (v > kVoteMax) v = kVoteMax;
+  if (v < -kVoteMax) v = -kVoteMax;
+  s = static_cast<int8_t>(v);
+}
+
+void Maze::segCell(int seg, int& x, int& y, Dir& d) const {
+  x = seg & 63;
+  y = (seg >> 6) & 63;
+  if (seg & kVertical) {
+    d = WEST;
+    if (x >= w_) {
+      x = w_ - 1;
+      d = EAST;
+    }
+  } else {
+    d = SOUTH;
+    if (y >= h_) {
+      y = h_ - 1;
+      d = NORTH;
+    }
+  }
+}
+
 void Maze::markVisited(int x, int y) {
   if (inside(x, y) && visits_[index(x, y)] < 255) ++visits_[index(x, y)];
 }

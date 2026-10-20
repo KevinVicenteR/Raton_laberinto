@@ -20,11 +20,15 @@ struct CaseResult {
   bool goal2 = false;        // carrera
   float goalTime2 = -1;
   int contacts = 0;          // choques con paredes (cuerpo)
+  int contactsExplore = 0;   // de ellos, explorando (el resto en la carrera)
   float contactTime = 0;
   float maxArea = 0;         // s maximos en la misma zona (posicion real)
   int recoveries = 0;
   int escapes = 0;
   int wrongWalls = 0;        // paredes del mapa final que no coinciden con la realidad
+  float loc[3] = {0, 0, 0};     // error rms de la pose estimada: avance, lateral (mm), rumbo (grados)
+  float locMax[3] = {0, 0, 0};  // y maximo
+  float wobble = 0, offRms = 0, offMax = 0;  // real: rumbo (grados rms) y descentrado (mm rms / max)
   // Cumple el reglamento: llega a la meta en las dos pasadas y nunca pasa 30 s en la misma zona.
   bool ok() const { return goal1 && goal2 && maxArea < 30.0f; }
   // Ademas sin tocar ninguna pared.

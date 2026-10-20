@@ -2,7 +2,7 @@ import { useState } from 'react';
 // Parametros del firmware v2 (mismo nombre que en lib/raton_core/src/raton/params.h). Se envian con
 // "set nombre valor"; "save" los guarda en la flash de la placa.
 const definitions = [
-  ['searchSpeed', 'Velocidad explorando (mm/s)', 320, 50, 1500, 10],
+  ['searchSpeed', 'Velocidad explorando (mm/s)', 400, 50, 1500, 10],
   ['runSpeed', 'Velocidad en carrera (mm/s)', 650, 50, 2500, 10],
   ['turnSpeed', 'Velocidad en curvas (mm/s)', 280, 50, 1500, 10],
   ['cellMm', 'Celda: pasillo + pared (mm)', 155, 100, 400, 1],
@@ -82,8 +82,24 @@ export function Parameters({
           <button onClick={() => void send('params')}>Ver valores</button>
         </div>
         <hr />
-        <p className="status">Calibración: ratón en el centro de una celda.</p>
-        <button onClick={() => void send('calfront')}>Frontal (mirando a una pared)</button>
+        <p className="status">
+          Calibración en la pista de la competencia: ratón en el centro de una celda con pared a los dos
+          lados. Gira en el sitio y mide los desfases de los tres sensores (el modo 1 lo hace solo al
+          arrancar). Después, «Guardar en la placa».
+        </p>
+        <button
+          onClick={() => {
+            if (
+              window.confirm(
+                '¿Ratón en el suelo, en el centro de una celda con pared a los dos lados? Va a girar.',
+              )
+            )
+              void send('calsonda');
+          }}
+        >
+          Calibrar sensores (gira en el sitio)
+        </button>
+        <button onClick={() => void send('calfront')}>Solo frontal (centrado, mirando a una pared)</button>
         <label className="field">
           Ancho del pasillo (mm)
           <input
@@ -103,7 +119,7 @@ export function Parameters({
             void send(`calside ${corridor}`);
           }}
         >
-          Laterales (pared a los dos lados)
+          Fijar pasillo y calibrar (gira en el sitio)
         </button>
         <button
           onClick={() => {

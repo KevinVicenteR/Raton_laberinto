@@ -19,7 +19,7 @@ export function Track({
   const [offset, setOffset] = useState<Cell>([0, 0]),
     [action, setAction] = useState('pose');
   const pose = last ? worldPose(last, maze, offset) : null,
-    cell = pose && last ? poseCell(pose, last.a, maze.PITCH) : maze.start,
+    cell = pose && last ? poseCell(pose, last.a, maze.PITCH, !!last.pitch) : maze.start,
     dist = floodFill(maze)[cell[0]]?.[cell[1]],
     route = shortestRoute(maze, maze.start),
     remaining = shortestRoute(maze, cell);

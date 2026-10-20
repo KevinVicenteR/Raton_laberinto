@@ -4,7 +4,16 @@
 #include <stdio.h>
 #include <stdlib.h>
 
+#ifdef RATON_DEBUG
+#include <chrono>
+#endif
+
 namespace raton {
+
+#ifdef RATON_DEBUG
+double gRadarSeconds = 0, gRadarMax = 0;  // tiempo del radar en el PC (para estimar la placa)
+long gRadarCalls = 0;
+#endif
 
 namespace {
 
@@ -96,14 +105,14 @@ void Navigator::begin(int x, int y, Dir h) {
   cellRef_ = cell_;
   startStraight();
   halfCorr_ = 0.5f * (cell_ - p_.wallMm);
-  sideLatOdo_[0] = sideLatOdo_[1] = -1e9f;
+  sonda_.setup(cell_, p_.wallMm, p_.sensorFovDeg, p_.sensorMaxMm);
+  longVar_ = 25.0f;
   computeSmoothGeometry();
   char line[64];
   snprintf(line, sizeof(line), "CURVA radio=%d avance=%d %s", static_cast<int>(smoothRadius_),
            static_cast<int>(smoothDf_), smoothOk_ ? "ok" : "NO CABE: giros en el sitio");
   io_.report(line, true);
-  side_[0] = SideTrack();
-  side_[1] = SideTrack();
+  resetBeams();
   maze_.markVisited(cx_, cy_);
 }
 
@@ -131,8 +140,7 @@ void Navigator::tick() {
   const bool straight = !motion_.turning();
   if (straight) {
     while (cellPos() > 0.5f * cell_) enterNextCell();
-    senseSides();
-    senseFront();
+    sense();
     steer();
     checkStall();
   } else {
@@ -169,182 +177,286 @@ void Navigator::enterNextCell() {
 // Sensado
 // ---------------------------------------------------------------------------------------------
 
-void Navigator::senseSides() {
-  // Prediccion lateral con lo avanzado desde el ultimo ciclo; el error de rumbo estimado pasa a la
-  // cuadricula (gridAngle_) para que el control vaya realmente recto.
+void Navigator::resetBeams() {
+  for (int i = 0; i < 3; ++i) beam_[i] = Beam();
+  blockedHits_ = 0;
+}
+
+void Navigator::sensorPose(int sensor, float fwd, float lat, float dpsi, float& x, float& y, float& ang) const {
+  // Pose del eje en el instante de la medida (la lectura llega sensorLatencyS tarde).
+  const float pos = cellPos() - motion_.measuredSpeed() * p_.sensorLatencyS + fwd;
+  const float yl = lateral_.y() + lat;
+  const float fx = static_cast<float>(dx(h_)), fy = static_cast<float>(dy(h_));
+  const float ax = (cx_ + 0.5f) * cell_ + fx * pos - fy * yl;
+  const float ay = (cy_ + 0.5f) * cell_ + fy * pos + fx * yl;
+  const float th = atan2f(fy, fx) + headingError() / kDeg + dpsi;
+  const float c = cosf(th), sn = sinf(th);
+  float ahead = p_.frontAheadMm, side = 0, mount = 0;
+  if (sensor != 1) {
+    const float sign = sensor == 0 ? 1.0f : -1.0f;
+    ahead = p_.diagAheadMm;
+    side = sign * p_.diagLateralMm;
+    mount = sign * p_.diagMountDeg / kDeg;
+  }
+  x = ax + ahead * c - side * sn;
+  y = ay + ahead * sn + side * c;
+  ang = th + mount;
+}
+
+void Navigator::sense() {
+  // Prediccion lateral con lo avanzado; el error de rumbo estimado pasa a la cuadricula (gridAngle_) para
+  // que el control vaya realmente recto.
   const float odo = motion_.position();
-  lateral_.predict(odo - lastOdo_, headingError() / kDeg);
+  const float ds = odo - lastOdo_;
+  lateral_.predict(ds, headingError() / kDeg);
+  longVar_ += (learnCell_ ? 0.3f : 0.2f) * fabsf(ds);
   lastOdo_ = odo;
   const float bias = clampf(lateral_.takeBias() * kDeg, -0.5f, 0.5f);
   gridAngle_ -= bias;
   gridCorr_ += bias;
   latAge_ += p_.dt;
-  const float psiDeg = headingError();
-  if (fabsf(psiDeg) > 8.0f) return;
-  const float psi = psiDeg / kDeg;
-  const float a = p_.diagAngleDeg / kDeg;
-  const float cell = cell_;
-  const float v = motion_.measuredSpeed();
-  const Range* rr[2] = {&s_.left, &s_.right};
-  for (int side = 0; side < 2; ++side) {
-    const Range& r = *rr[side];
-    SideTrack& tr = side_[side];
+  const Range* rr[3] = {&s_.left, &s_.front, &s_.right};
+  for (int i = 0; i < 3; ++i) {
+    const Range& r = *rr[i];
     if (!r.fresh) continue;
-    const float sign = side == 0 ? 1.0f : -1.0f;  // izquierda +, derecha -
-    // Distancia sin medida: si justo antes veia la pared muy cerca, es pared (demasiado cerca para medir).
+    Beam& b = beam_[i];
     int mm = r.mm;
     if (mm >= 0) {
-      tr.near = mm < 45 ? tr.near + 1 : 0;
-      tr.lastValidMm = mm;
-      tr.lastValidT = t_;
-    } else if (tr.near >= 2 && t_ - tr.lastValidT < 0.06f) {
-      mm = tr.lastValidMm;
+      b.near = mm < 45 ? b.near + 1 : 0;
+      b.lastValidMm = mm;
+      b.lastValidT = t_;
+      b.misses = 0;
+    } else {
+      ++b.misses;
+      // Dos lecturas seguidas muy cerca y ahora ninguna: demasiado cerca para medir, sigue habiendo pared.
+      if (b.near >= 2 && t_ - b.lastValidT < 0.06f) mm = b.lastValidMm;
     }
-    const float odoSample = motion_.position() - v * p_.sensorLatencyS;
-    const float rayAng = psi + sign * a;
-    // Posicion del sensor (eje en el origen, x = avance, y = izquierda) girada psi.
-    const float sx = p_.diagAheadMm * cosf(psi) - sign * p_.diagLateralMm * sinf(psi);
-    const float sy = p_.diagAheadMm * sinf(psi) + sign * p_.diagLateralMm * cosf(psi);
-    const float ray = mm >= 0 ? static_cast<float>(mm) : 1000.0f;
-    float hx = sx + ray * cosf(rayAng);
-    const float hy = sy + ray * sinf(rayAng);
-    const float lateral = sign * hy;  // distancia perpendicular del eje a la pared, hacia ese lado
-    // Pasillo ancho (pista de practica): una lectura mas lejos que la pared lateral pero por debajo del
-    // umbral suele ser el rayo que cruza un hueco y da en una pared de la celda vecina. No se usa para
-    // nada. En el pasillo estrecho de la competencia esa franja es el propio descentrado: se usa.
-    if (mm >= 0 && halfCorr_ > 90.0f && lateral > halfCorr_ + 0.5f * p_.wallMm + 25.0f &&
-        lateral < p_.sideWallRatio * halfCorr_)
-      continue;
-    const bool wall = mm >= 0 && lateral < p_.sideWallRatio * halfCorr_;
-    if (!wall) {
-      // Sin pared: el rayo "cruza" el lateral a la altura del pasillo nominal.
-      hx = sx + (halfCorr_ - sign * sy) / tanf(a);
-    }
-    const float hitOdo = odoSample + hx;
-    const float hitRel = hitOdo - centerOdo_;
-
-    // Correccion del avance con el poste: cambio de pared a hueco (o al reves) entre dos muestras.
-    if (tr.valid && tr.wall != wall && fabsf(psiDeg) < 4.0f && hitOdo - tr.hitOdo > 0 && hitOdo - tr.hitOdo < 30.0f) {
-      const float mid = 0.5f * (hitOdo + tr.hitOdo);
-      const float k = floorf((mid - centerOdo_ - 0.5f * cell) / cell + 0.5f);
-      const float boundary = centerOdo_ + 0.5f * cell + k * cell;
-      const float expected = boundary + (wall ? -0.5f : 0.5f) * p_.wallMm;
-      const float e = mid - expected;
-      if (fabsf(e) < 25.0f) applyCorrection(e, 0.3f);
-    }
-    tr.valid = true;
-    tr.wall = wall;
-    tr.hitOdo = hitOdo;
-
-    // Voto sobre la pared de la celda donde cae el rayo, lejos de los postes.
-    const int k = static_cast<int>(floorf((hitRel + 0.5f * cell) / cell));
-    const float u = hitRel + 0.5f * cell - k * cell;
-    // En pasillos anchos el rayo da mucho mas lejos y el error de angulo pesa mas: mas margen.
-    const float margin = 0.5f * p_.wallMm + 14.0f + fmaxf(0.0f, 0.15f * (cell_ - 160.0f));
-    if (k >= 0 && k <= 1 && u > margin && u < cell - margin) {
-      const int x = cx_ + k * dx(h_), y = cy_ + k * dy(h_);
-      const Dir d = side == 0 ? turnLeft(h_) : turnRight(h_);
-      if (maze_.inside(x, y)) maze_.observe(x, y, d, wall, 1);
-      // Medida lateral (centrado y correccion del rumbo), solo sobre pared y lejos de los postes.
-      if (wall && u > margin + 8.0f && u < cell - margin - 8.0f) {
-        // Ancho real del pasillo: izquierda + derecha casi no depende del rumbo ni del descentrado.
-        // Asi se calibra solo el "~14 cm aproximadamente" del reglamento y el error de angulo de montaje.
-        sideLat_[side] = lateral;
-        sideLatOdo_[side] = odoSample;
-        const int other = 1 - side;
-        if (sideLatOdo_[other] > -1e8f && fabsf(odoSample - sideLatOdo_[other]) < 25.0f) {
-          const float half = 0.5f * (lateral + sideLat_[other]);
-          const float nominal = 0.5f * (p_.cellMm - p_.wallMm);
-          if (fabsf(half - nominal) < 25.0f) halfCorr_ += 0.05f * (half - halfCorr_);
-        }
-        const float y0 = side == 0 ? halfCorr_ - lateral : lateral - halfCorr_;
-        if (fabsf(y0) < 45.0f && lateral_.update(y0, 25.0f)) {
-          latAge_ = 0;
-          ++wallUpdates_;
-        }
-      }
-    }
+    if (i == 1) frontCheck(mm);
+    // Girando (o acabando de girar) la lectura es de otro rumbo: con 12 ms de retraso, a 100 grados/s ya
+    // son mas de 1 grado.
+    if (fabsf(headingError()) > 8.0f || fabsf(motion_.measuredRate()) > 40.0f) continue;
+    // Una lectura perdida suelta no dice nada (pasa a veces); dos seguidas = no hay nada a su alcance.
+    if (mm < 0 && b.misses < 2) continue;
+#ifdef RATON_DEBUG
+    const auto t0 = std::chrono::steady_clock::now();
+    radar(i, mm);
+    const double dtr = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+    gRadarSeconds += dtr;
+    if (dtr > gRadarMax) gRadarMax = dtr;
+    ++gRadarCalls;
+#else
+    radar(i, mm);
+#endif
   }
 }
 
-void Navigator::senseFront() {
-  Range r = s_.front;
-  if (!r.fresh) return;
-  if (r.mm >= 0) {
-    // Dos lecturas seguidas muy cerca: de verdad hay pared encima (una lectura falsa suelta no cuenta).
-    frontNear_ = r.mm < 45 ? frontNear_ + 1 : 0;
-    frontLastMm_ = r.mm;
-    frontLastT_ = t_;
-  } else if (frontNear_ >= 2 && t_ - frontLastT_ < 0.06f) {
-    r.mm = frontLastMm_;  // demasiado cerca para medir: sigue habiendo pared
+bool Navigator::confident(const Sonda::Scan& scan, float reach) const {
+  for (int j = 0; j < Sonda::kRays; ++j) {
+    const Sonda::Ray& r = scan.rays[j];
+    for (int k = 0; k < r.n; ++k) {
+      const Sonda::Hit& h = r.hits[k];
+      if (h.t > reach || h.seg == Sonda::kSolid) break;
+      const int v = maze_.segVotes(h.seg);
+      if (v < 3 && v > -3) return false;
+      if (v > 0) break;
+    }
   }
-  const float psiDeg = headingError();
-  if (fabsf(psiDeg) > 6.0f) return;
-  const float cell = cell_;
-  const float v = motion_.measuredSpeed();
-  const float odoSample = motion_.position() - v * p_.sensorLatencyS;
-  const float sensorRel = odoSample - centerOdo_ + p_.frontAheadMm;  // posicion del sensor en la celda
-  const float halfWall = 0.5f * p_.wallMm;
-  // Distancia del sensor a la pared de cada frontera k (k = 0: salida de la celda actual).
-  int hitK = -1;
-  if (r.mm >= 0) {
-    // Lectura desde el sensor; la pared esta a r.mm + el offset de parada calibrado frente a la geometria.
-    const float calib = frontStopReading() - (0.5f * cell - halfWall - p_.frontAheadMm);
-    const float face = sensorRel + static_cast<float>(r.mm) - calib;  // cara de la pared, relativa al centro
-    const float kf = (face + halfWall - 0.5f * cell) / cell;
-    const int k = static_cast<int>(floorf(kf + 0.5f));
-    const float residual = face + halfWall - (0.5f * cell + k * cell);
-    if (k >= 0 && k <= 2 && fabsf(residual) < 0.3f * cell) {
-      hitK = k;
-      const int x = cx_ + k * dx(h_), y = cy_ + k * dy(h_);
-      const float dist = face - sensorRel;
-      if (maze_.inside(x, y)) {
-        maze_.observe(x, y, h_, true, k == 0 ? 2 : 1);
-#ifdef RATON_DEBUG
-        if (getenv("NAVDBG")) printf("%.3f FRONT k=%d r=%d face=%.0f sensorRel=%.0f psi=%.1f\n", t_, k, r.mm, face, sensorRel, psiDeg);
-#endif
-        // Corregir el avance con una pared confirmada y cercana (el VL53L0X es preciso a corta distancia).
-        if (maze_.votes(x, y, h_) >= 3 && dist < 260.0f && fabsf(psiDeg) < 4.0f) {
-          if (learnCell_ && !cellLearned_ && straightCells_ + k >= 2) {
-            // Error acumulado desde el inicio del tramo recto repartido entre las celdas recorridas: es lo
-            // que le falta (o sobra) al paso de celda. Una vez por tramo.
-            cellLearned_ = true;
-            const float err = (straightCorr_ + residual) / (straightCells_ + k + 0.5f);
-            const float before = cell_;
-            cell_ = clampf(cell_ + 0.6f * err, 0.92f * cellRef_, 1.08f * cellRef_);
-            if (fabsf(cell_ - before) >= 1.0f) {
-              char line[40];
-              snprintf(line, sizeof(line), "PASO_CELDA %d mm", static_cast<int>(cell_ + 0.5f));
-              io_.report(line, false);
-            }
-          }
-          applyCorrection(residual, 0.3f);
-        }
-        // Pared justo delante que no deberia estar: parar.
-        const bool passing = !decided_ || act_ == Act::Forward || !(cx_ == actX_ && cy_ == actY_);
-        const float vv = motion_.speed();
-        const float stopDist = vv * vv / (2.0f * p_.decel);
-        if (k == 0 && passing && !motion_.turning() && dist < frontStopReading() + stopDist + 30.0f) {
-          if (++blockedHits_ >= 2) blocked_ = true;
-        }
+  return true;
+}
+
+void Navigator::radar(int sensor, int mm) {
+  float x, y, ang;
+  sensorPose(sensor, 0, 0, 0, x, y, ang);
+  sonda_.trace(maze_, x, y, ang, scan_);
+  const float far = static_cast<float>(sonda_.maxMm()) + 100.0f;
+  auto val = [far](float r) { return r < 0 ? far : r; };
+  const float m = val(static_cast<float>(mm));
+
+  // Sensibilidad de la lectura a la pose (con el mapa de ahora): cuanto cambia al mover el raton 2 mm
+  // adelante o a la izquierda. Sirve para la tolerancia del mapa y para corregir la pose.
+  const float h0 = sonda_.predict(maze_, scan_);
+  float hx = 0, hy = 0;
+  bool slopes = h0 >= 0;
+  if (slopes) {
+    for (int q = 0; q < 2; ++q) {
+      sensorPose(sensor, q == 0 ? 2.0f : 0, q == 1 ? 2.0f : 0, 0, x, y, ang);
+      sonda_.trace(maze_, x, y, ang, scanJ_);
+      const float hq = sonda_.predict(maze_, scanJ_);
+      if (hq < 0) {
+        slopes = false;
+        break;
+      }
+      (q == 0 ? hx : hy) = (hq - h0) * 0.5f;
+    }
+  }
+  // Tolerancia: ruido del sensor, error del modelo y lo que la pose dudosa mueve esta lectura. Junto a un
+  // salto (borde de un poste) la pendiente es enorme y la tolerancia tambien: casi no vota.
+  const float hxc = slopes ? clampf(fabsf(hx), 0, 6.0f) : 1.0f, hyc = slopes ? clampf(fabsf(hy), 0, 6.0f) : 1.0f;
+  const float range = static_cast<float>(mm >= 0 ? mm : sonda_.maxMm());
+  const float noise = 3.0f + 0.035f * range;
+  // Error del modelo: crece con la distancia (angulo de montaje, desfase del sensor, pista de otra medida).
+  const float model2 = 9.0f + 0.0025f * range * range;
+  const float tol = 1.3f * sqrtf(noise * noise + model2 + hxc * hxc * longVar_ + hyc * hyc * lateral_.varY());
+
+  // ---- Mapa: paredes que el cono alcanza, de la mas cercana a la mas lejana ----
+  int cand[8];
+  float candT[8];
+  int nc = 0;
+  for (int j = 0; j < Sonda::kRays; ++j) {
+    const Sonda::Ray& r = scan_.rays[j];
+    for (int k = 0; k < r.n; ++k) {
+      const Sonda::Hit& h = r.hits[k];
+      if (h.seg == Sonda::kSolid) break;
+      int q = 0;
+      while (q < nc && cand[q] != h.seg) ++q;
+      if (q < nc) {
+        if (h.t < candT[q]) candT[q] = h.t;
+      } else if (nc < 8) {
+        cand[nc] = h.seg;
+        candT[nc] = h.t;
+        ++nc;
       }
     }
   }
-  if (hitK != 0) blockedHits_ = 0;
-  // Fronteras que el rayo cruza sin chocar = abiertas (solo las dos mas cercanas, que se ven bien).
-  const float reach = r.mm >= 0 ? sensorRel + static_cast<float>(r.mm) : sensorRel + 260.0f;
-  // Sin medida (fuera de alcance o perdida) vale medio voto: dos seguidas para dar la pared por abierta.
-  if (r.mm < 0 && ++frontMisses_ < 2) return;
-  if (r.mm >= 0) frontMisses_ = 0;
-  for (int k = 0; k <= 1; ++k) {
-    if (hitK >= 0 && k >= hitK) break;
-    const float face = 0.5f * cell + k * cell - halfWall;
-    if (face - sensorRel < 20.0f) continue;   // ya la tiene encima
-    if (face + 40.0f > reach) break;          // no llega a verla
-    const int x = cx_ + k * dx(h_), y = cy_ + k * dy(h_);
-    if (maze_.inside(x, y)) maze_.observe(x, y, h_, false, 1);
+  for (int a = 1; a < nc; ++a)
+    for (int b = a; b > 0 && candT[b] < candT[b - 1]; --b) {
+      const int ts = cand[b];
+      cand[b] = cand[b - 1];
+      cand[b - 1] = ts;
+      const float tt = candT[b];
+      candT[b] = candT[b - 1];
+      candT[b - 1] = tt;
+    }
+  // Todas las combinaciones de las paredes mas cercanas (hasta 5): las que explican la lectura dicen que
+  // se sabe. Una pared se vota solo si todas las explicaciones buenas coinciden en ella; si las hay con
+  // pared y sin pared, esta lectura no dice nada de ella. Las mas lejanas quedan como estan en el mapa.
+  // Solo paredes que el sensor ha podido ver y no muy lejos (de lejos el cono es una mancha grande y la
+  // lectura poco fiable).
+  // Laterales: las paredes de esta celda y la siguiente; frontal: hasta dos celdas por delante.
+  const float reachMax = 0.75f * static_cast<float>(sonda_.maxMm());
+  const float voteReach = clampf(sensor == 1 ? 2.2f * cell_ : cell_ + 40.0f, 0, reachMax);
+  // Se prueban todas las que el sensor ha podido ver (las lejanas tambien explican la lectura), pero solo se
+  // votan las cercanas.
+  while (nc > 0 && candT[nc - 1] > m + tol) --nc;
+  if (nc > 6) nc = 6;
+  sonda_.prepare(maze_, scan_, cand, nc, combo_);
+  int allClosed = (1 << nc) - 1, allOpen = (1 << nc) - 1;  // bits que valen 1 / 0 en todas las buenas
+  int good = 0;
+  const float goodTol = 1.5f * tol;
+  for (int mask = 0; mask < (1 << nc); ++mask) {
+    const float pr = sonda_.predictMask(combo_, mask);
+    // Sin medida = la media del cono pasa del alcance: cualquier prediccion lejana (> 60 % del alcance) lo
+    // explica, el modelo de lejos no es fino. Solo descarta paredes que darian un eco claro y cercano.
+    const bool ok = mm >= 0 ? (pr >= 0 && fabsf(pr - m) < goodTol)
+                            : (pr < 0 || pr > 0.6f * static_cast<float>(sonda_.maxMm()));
+    if (!ok) continue;
+    ++good;
+    allClosed &= mask;
+    allOpen &= ~mask;
   }
-  if (r.mm < 0) frontMisses_ = 0;
+  // Ninguna explica la lectura: la pose esta mal, no se vota (abajo puede corregirse con lo confirmado).
+  if (good > 0 && good < (1 << nc)) {
+    for (int k = 0; k < nc; ++k) {
+      if (candT[k] > voteReach) break;
+#ifdef RATON_DEBUG
+      if (getenv("VOTEDBG") && atoi(getenv("VOTEDBG")) == cand[k])
+        printf("%.3f VOTO seg %d s%d mm=%d tol=%.1f buenas=%d/%d pared=%d hueco=%d t=%.0f h0=%.1f\n", t_, cand[k], sensor,
+               mm, tol, good, 1 << nc, (allClosed >> k) & 1, (allOpen >> k) & 1, candT[k], h0);
+#endif
+      // Sin medida no se deduce ninguna pared cerrada (solo que lo cercano esta libre).
+      if (((allClosed >> k) & 1) && mm >= 0) maze_.segObserve(cand[k], true, 1);
+      else if ((allOpen >> k) & 1) maze_.segObserve(cand[k], false, 1);
+    }
+  }
+
+  // ---- Pose: solo con lo que ya esta confirmado y cerca (de lejos el cono roza paredes en angulo y un
+  //      pequeno error del modelo moveria mucho la pose) ----
+  const float nearMax = sensor == 1 ? 1.5f * cell_ : 0.9f * cell_ + 40.0f;
+  if (mm < 0 || mm > nearMax || !slopes || !confident(scan_, m + tol)) return;
+  // Un salto en la prediccion (el cono justo en el borde de un poste) no es una pendiente: no usar.
+  if (fabsf(hx) > 4.0f || fabsf(hy) > 4.0f) return;
+  float inn = static_cast<float>(mm) - h0;
+  if (fabsf(inn) > 3.0f * tol + 10.0f) return;
+  const float r = noise * noise + model2;
+  if (fabsf(hy) > 0.15f) {
+    // El rumbo NO se corrige con la forma de una sola lectura: un desfase de unos mm de un sensor (o su
+    // angulo de montaje) lo torceria grados. El rumbo sale de como cambia el desplazamiento al avanzar.
+    float dyc, dbc;
+    const bool okU = lateral_.updateLinear(inn, hy, 0.0f, r, dyc, dbc);
+#ifdef RATON_DEBUG
+    if (getenv("RADARDBG") && t_ > atof(getenv("RADARDBG")) && t_ < atof(getenv("RADARDBG")) + 1.5)
+      printf("%.3f LAT s%d mm=%d h0=%.1f inn=%.1f hx=%.2f hy=%.2f ok=%d dy=%.2f y=%.1f varY=%.1f\n", t_, sensor, mm, h0,
+             inn, hx, hy, okU, dyc, lateral_.y(), lateral_.varY());
+#endif
+    if (!okU) return;
+    latAge_ = 0;
+    ++wallUpdates_;
+    inn -= hy * dyc;
+  }
+  if (fabsf(hx) > 0.2f) {
+    const float sv = hx * hx * longVar_ + r;
+    if (inn * inn > 9.0f * sv) return;
+    // Cerca del borde de una pared la lectura no es lineal: comprobar con la sonda que el desplazamiento
+    // que pide la lectura de verdad la explica antes de creerla.
+    const float full = clampf(inn / hx, -40.0f, 40.0f);
+    if (fabsf(inn) > 2.0f * sqrtf(r)) {
+      sensorPose(sensor, full, 0, 0, x, y, ang);
+      sonda_.trace(maze_, x, y, ang, scanJ_);
+      const float hv = sonda_.predict(maze_, scanJ_);
+      if (hv < 0 || fabsf(static_cast<float>(mm) - hv) > 0.5f * fabsf(inn)) return;
+    }
+    const float kx = longVar_ * hx / sv;
+    const float dxf = kx * inn;  // el raton esta dxf mm mas adelante de lo que creia
+#ifdef RATON_DEBUG
+    if (getenv("RADARDBG") && t_ > atof(getenv("RADARDBG")) && t_ < atof(getenv("RADARDBG")) + 1.5)
+      printf("%.3f LONG s%d mm=%d h0=%.1f inn=%.1f hx=%.2f hy=%.2f dx=%.2f var=%.1f pos=%.1f\n", t_, sensor, mm, h0, inn,
+             hx, hy, dxf, longVar_, cellPos());
+#endif
+    longVar_ -= kx * hx * longVar_;
+    if (learnCell_ && !cellLearned_ && sensor == 1 && fabsf(hx) > 0.7f) {
+      // Paso de celda: error acumulado desde el inicio del tramo recto repartido entre las celdas que lleva.
+      const float facePos = cellPos() + p_.frontAheadMm + h0 + 0.5f * p_.wallMm - 0.5f * cell_;
+      const int k = static_cast<int>(floorf(facePos / cell_ + 0.5f));
+      if (straightCells_ + k >= 2) {
+        cellLearned_ = true;
+        const float err = (straightCorr_ - inn / hx) / (straightCells_ + k + 0.5f);
+        const float before = cell_;
+        cell_ = clampf(cell_ + 0.6f * err, 0.92f * cellRef_, 1.08f * cellRef_);
+        halfCorr_ = 0.5f * (cell_ - p_.wallMm);
+        sonda_.setup(cell_, p_.wallMm, p_.sensorFovDeg, p_.sensorMaxMm);
+        if (fabsf(cell_ - before) >= 1.0f) {
+          char line[40];
+          snprintf(line, sizeof(line), "PASO_CELDA %d mm", static_cast<int>(cell_ + 0.5f));
+          io_.report(line, false);
+        }
+      }
+    }
+    applyCorrection(-dxf, 1.0f);
+  }
+}
+
+void Navigator::frontCheck(int mm) {
+  // Pared justo delante que no deberia estar (el plan era pasar): parar antes de tocarla.
+  if (mm < 0 || motion_.turning() || fabsf(headingError()) > 6.0f) {
+    blockedHits_ = 0;
+    return;
+  }
+  const float sensorRel = cellPos() - motion_.measuredSpeed() * p_.sensorLatencyS + p_.frontAheadMm;
+  const float halfWall = 0.5f * p_.wallMm;
+  const float calib = frontStopReading() - (0.5f * cell_ - halfWall - p_.frontAheadMm);
+  const float dist = static_cast<float>(mm) - calib;              // del sensor a la cara
+  const float residual = sensorRel + dist + halfWall - 0.5f * cell_;  // respecto a la frontera de esta celda
+  const bool passing = !decided_ || act_ == Act::Forward || !(cx_ == actX_ && cy_ == actY_);
+  const float vv = motion_.speed();
+  const float stopDist = vv * vv / (2.0f * p_.decel);
+  if (fabsf(residual) < 0.3f * cell_ && passing && dist < frontStopReading() + stopDist + 30.0f) {
+    if (++blockedHits_ >= 2) {
+      blocked_ = true;
+      maze_.observe(cx_, cy_, h_, true, 2);
+    }
+  } else {
+    blockedHits_ = 0;
+  }
 }
 
 void Navigator::applyCorrection(float e, float gain) {
@@ -404,14 +516,19 @@ void Navigator::checkStall() {
 void Navigator::report() {
   if (t_ - lastReport_ < 0.1f) return;
   lastReport_ = t_;
-  const float pos = cellPos();
-  const float xmm = (cx_ + 0.5f) * cell_ + pos * dx(h_);
-  const float ymm = (cy_ + 0.5f) * cell_ + pos * dy(h_);
-  char line[120];
-  snprintf(line, sizeof(line), "NAV I%d F%d D%d v%d r%d p%d x%d y%d a%d", s_.left.mm, s_.front.mm, s_.right.mm,
-           static_cast<int>(motion_.measuredSpeed()), static_cast<int>(wrap180(motion_.angle())),
+  // Pose estimada en el marco del laberinto: x, y = eje en mm (x este, y norte, desde la esquina de la celda
+  // 0,0), a = rumbo de brujula (grados, 0 = norte, + = izquierda), P = paso de celda x10, H = rumbo x10
+  // (0 = este), G = 1 en tramo recto.
+  const float pos = cellPos(), yl = lateral_.y();
+  const float xmm = (cx_ + 0.5f) * cell_ + pos * dx(h_) - yl * dy(h_);
+  const float ymm = (cy_ + 0.5f) * cell_ + pos * dy(h_) + yl * dx(h_);
+  const float head = atan2f(static_cast<float>(dy(h_)), static_cast<float>(dx(h_))) * kDeg + headingError();
+  char line[140];
+  snprintf(line, sizeof(line), "NAV I%d F%d D%d v%d r%d p%d x%d y%d a%d P%d H%d G%d", s_.left.mm, s_.front.mm,
+           s_.right.mm, static_cast<int>(motion_.measuredSpeed()), static_cast<int>(wrap180(motion_.angle())),
            static_cast<int>(cell_ - p_.wallMm), static_cast<int>(xmm), static_cast<int>(ymm),
-           static_cast<int>(wrap180(headingError())));
+           static_cast<int>(wrap180(head - 90.0f)), static_cast<int>(cell_ * 10.0f),
+           static_cast<int>(wrap180(head) * 10.0f), motion_.turning() ? 0 : 1);
   io_.report(line, false);
 }
 
@@ -513,11 +630,8 @@ bool Navigator::pivot(int q) {
   lateral_.addHeadingVariance(1.5e-3f);  // ~2 grados por el error de escala del giroscopio
   lastOdo_ = motion_.position();
   latAge_ = 1e9f;
-  side_[0] = SideTrack();
-  side_[1] = SideTrack();
-  blockedHits_ = 0;
-  frontNear_ = 0;
-  frontLastT_ = -1;
+  longVar_ += lateral_.varY() + 4.0f;  // el avance nuevo es el lateral de antes
+  resetBeams();
   return true;
 }
 
@@ -539,8 +653,14 @@ void Navigator::learnGyroScale() {
 void Navigator::face(Dir d) {
   const int q = ((h_ - d) + 4) & 3;  // vueltas a la izquierda
   pivot(q == 3 ? -1 : q);
-  motion_.hold(s_);
-  waitStopped(0.3f);
+  // El giro acaba a menos de 3 grados: terminar de alinearse con la cuadricula (parado, sin prisa).
+  motion_.turnTo(gridAngle_, 0.3f * p_.rotSpeed, p_.rotAccel);
+  waitStopped(0.5f);
+}
+
+void Navigator::aim(float deg) {
+  motion_.turnTo(gridAngle_ + deg, 0.5f * p_.rotSpeed, p_.rotAccel);
+  waitStopped(1.2f);
 }
 
 bool Navigator::wallAheadOpenConfirmed() const { return maze_.votes(cx_, cy_, h_) <= -3; }
@@ -606,6 +726,7 @@ void Navigator::centerOnFront(int k) {
     }
   }
   centerOdo_ = motion_.position();
+  if (f >= 0) longVar_ = 9.0f;
   startStraight();
   decided_ = false;
   act_ = Act::None;
@@ -638,9 +759,10 @@ bool Navigator::recover(Brain& brain) {
   int l, f, r;
   sample(3, l, f, r);
   {
-    const float sa = sinf(p_.diagAngleDeg / kDeg);
-    const float latL = l >= 0 ? p_.diagLateralMm + l * sa : 1e9f;
-    const float latR = r >= 0 ? p_.diagLateralMm + r * sa : 1e9f;
+    // Pared lateral plana: lectura = distancia perpendicular x factor del cono.
+    const float g = sonda_.parallelFactor(p_.diagMountDeg / kDeg);
+    const float latL = l >= 0 ? p_.diagLateralMm + l / g : 1e9f;
+    const float latR = r >= 0 ? p_.diagLateralMm + r / g : 1e9f;
     const float wallMax = p_.sideWallRatio * halfCorr_;
     float y = 0;
     bool known = true;
@@ -791,10 +913,8 @@ NavResult Navigator::run(Brain& brain, float vmax, bool smoothTurns) {
       lateral_.addHeadingVariance(7e-4f);
       lastOdo_ = motion_.position();
       latAge_ = 1e9f;
-      side_[0] = SideTrack();
-      side_[1] = SideTrack();
-      frontNear_ = 0;
-      frontLastT_ = -1;
+      longVar_ += 100.0f;
+      resetBeams();
       arcStarted_ = false;
       arcPlanned_ = false;
       decided_ = false;

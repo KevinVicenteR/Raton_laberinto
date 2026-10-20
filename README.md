@@ -16,22 +16,20 @@ Hardware:
 
 ## Por qué se rehízo
 
-En los videos de la versión anterior el ratón:
-- se pegaba a las paredes;
-- se quedaba moviéndose sin avanzar en esquinas y callejones;
-- dudaba girando de un lado a otro;
-- quedaba torcido tras los giros.
+En los videos el ratón se pegaba a las paredes, se atoraba en sitios sencillos, iba en zigzag, era lento y volvía a sitios por donde ya había pasado. Dos causas de fondo:
 
-La versión 2 ataca cada causa:
+1. **El VL53L0X ve un cono de 25°, no un rayo.** El simulador anterior usaba un rayo fino y por eso todo salía bien en el PC. Con el cono real en el simulador, el código anterior cumplía 34 de 42 casos y fallaba como en la pista de madera: paredes fantasma en los huecos, celdas mal contadas, vuelta a sitios ya vistos.
+2. **Cada sensor tiene su propio desfase** (1–2 cm de fábrica). Sin calibrar, el ratón cree que está descentrado y se pega a una pared.
 
 | Problema | Solución |
 |---|---|
-| Decide parado y "duda" | Las paredes de la celda **siguiente** se leen mientras avanza (el rayo a 45° cae ~70 mm por delante del eje). La decisión (inundación, < 1 ms) está lista antes de entrar en la celda. |
-| Queda torcido y roza | Filtro de Kalman lateral: calcula el desplazamiento y el **error del giroscopio** con las paredes. Además aprende solo la escala del giroscopio y el ancho real del pasillo. |
-| Empuja la pared sin avanzar | Tres detectores de atasco: ruedas que no siguen la consigna, encoders que avanzan sin que el frontal se acerque, y pared inesperada delante. Recuperación determinista: retroceder, enderezarse, recentrarse en "S" y replanificar. |
-| Lecturas fantasma | Cada lectura es un **voto** sobre una pared concreta. Se descartan las que caen cerca de los postes. Una pared solo cuenta con 2 votos netos. |
-| Regla de los 30 s | Vigilante de zona: si lleva 10 s en la misma zona, fuerza un objetivo fuera de ella. Si el mapa quedó sin camino, olvida las paredes dudosas y sigue. |
-| Lento | Velocidad trapezoidal de 320 mm/s explorando y 650 mm/s en carrera, con curvas suaves sin parar. Si en la carrera hay un atasco, termina en modo seguro. |
+| Ve mal, mapea mal, vuelve a sitios ya vistos | **Sonda/radar:** cada lectura se compara con lo que el sensor debería leer con su cono real, el mapa y la posición. Se prueban todas las combinaciones de paredes que el cono alcanza y solo se vota lo que todas las explicaciones aceptan. |
+| Se pega a las paredes | **Calibración automática** de los desfases de los tres sensores al arrancar (gira en el sitio en la salida) y posición lateral corregida con la sonda. |
+| Pierde la cuenta de celdas | El avance se corrige con postes, huecos y paredes de frente usando la sonda, comprobando cada corrección antes de aplicarla. |
+| Zigzag, torcido tras girar | Filtro de Kalman lateral; cada giro en el sitio termina alineado con la cuadrícula. |
+| Empuja la pared sin avanzar | Tres detectores de atasco y recuperación determinista: retroceder, enderezarse, recentrarse en "S" y replanificar. |
+| Regla de los 30 s | Vigilante de zona: si lleva 10 s en la misma zona, fuerza un objetivo fuera de ella. |
+| Lento | 400 mm/s explorando con 0.3 g de aceleración (−12 % de tiempo), decisión de la celda siguiente antes de llegar, 650 mm/s en carrera con curvas suaves. |
 
 ## Resultados en el simulador
 
@@ -39,16 +37,19 @@ El simulador ejecuta **exactamente el mismo código** que la placa (`lib/raton_c
 - motor con inercia y rozamiento, y ruedas que patinan;
 - encoders con cuentas enteras;
 - giroscopio con sesgo, deriva y error de escala;
-- VL53L0X con rayo real, latencia, ruido, lecturas perdidas y falsas;
+- **VL53L0X con cono de 25°** (lectura = media pesada por la señal), latencia, ruido, lecturas perdidas y falsas, desfase propio de cada sensor;
 - cuerpo redondo que no atraviesa paredes.
 
-`scripts/run.sh bateria 40` corre el laberinto del reglamento y 40 laberintos aleatorios de 19 × 10, cada uno con física ideal y con errores. Los errores son: celda de 149–161 mm, ruedas ±2 %, ángulo de los sensores ±4°, giroscopio ±2 %, offsets de los sensores y colocación en la salida.
+Errores del nivel 2: celda ±6 mm, pared ±4, ruedas ±2 %, eje ±4 %, motores, giroscopio, ruido de los láseres 4 %, desfases de cada láser ±16 mm, montaje de los laterales ±3°, colocación en la salida.
 
-| Prueba | Resultado |
-|---|---|
-| Laberinto del reglamento | meta explorando en ~55 s, ruta más corta demostrada, vuelve a la salida; carrera en **~12 s**; 0 roces y 0 paredes mal leídas |
-| 82 casos | todos llegan a la meta en las dos pasadas, ninguno pasa 30 s en una zona; ~80 sin ningún roce (los otros, roces leves en la física con errores) |
-| Medias | meta explorando ~80 s, exploración completa ~150 s, carrera ~16 s |
+| Prueba (laberintos de 19 × 10) | Antes (con el cono real) | Ahora |
+|---|---|---|
+| 161 casos con errores: cumplen el reglamento | 119 | **158–159** |
+| … sin ningún roce | 90 | **~146** |
+| … paredes mal en el mapa final (total) | 694 | **~30** |
+| 81 casos sin errores | — | **81/81 sin roce** |
+| Pistas de práctica de 170–300 mm completas | 18 de 28 | **67 de 70** |
+| Laberinto del reglamento | | meta explorando ~50 s, carrera ~12 s, 0 roces |
 
 El simulador es un modelo: la pista real tiene diferencias. Por eso hay que **calibrar en la pista**
 ([docs/calibracion.md](docs/calibracion.md)) antes de competir.
@@ -71,9 +72,9 @@ scripts/run.sh subir                # compila y sube el firmware (PlatformIO)
 
 | Modo | Qué hace |
 |---|---|
-| 1 Explorar (competencia) | Geometría de la competencia (`cellMm`, tamaño, salida y meta guardados). Va a la meta, busca la ruta más corta, vuelve a la salida y guarda el mapa en flash |
+| 1 Explorar (competencia) | Geometría de la competencia (`cellMm`, tamaño, salida y meta guardados). Calibra los sensores en la salida, va a la meta, busca la ruta más corta, vuelve a la salida y guarda el mapa en flash |
 | 2 Carrera (competencia) | Ruta más rápida con el mapa guardado (curvas suaves, rectas a 650 mm/s) |
-| 3 Práctica (cualquier medida) | Cualquier pista: mide el pasillo en la salida (gira a cada lado y mide con el frontal), afina el paso de celda en marcha, explora todo recordando por dónde pasó y vuelve a la salida. No toca la geometría ni el mapa de la competencia |
+| 3 Práctica (cualquier medida) | Cualquier pista: calibra los laterales y mide el pasillo en la salida (gira a cada lado), afina el paso de celda en marcha, explora todo recordando por dónde pasó y vuelve a la salida. No toca la geometría ni el mapa de la competencia |
 | 4 Sensores | Lecturas en pantalla y Bluetooth |
 | 5 Cal. motor | Mide kV, kS y τ de los motores en un pasillo recto |
 | 6 Ruedas | Prueba de sentido de motores y encoders (ratón levantado) |
@@ -85,7 +86,7 @@ scripts/run.sh subir                # compila y sube el firmware (PlatformIO)
 
 Si el laberinto real no es el del ejemplo, configura tamaño, salida y meta antes (ver calibración).
 
-**Modo práctica (3):** pon el ratón en el centro de una celda con pared a la izquierda y a la derecha y la salida libre delante. El mapa es de 32 × 32 con la salida en el centro, así que la pista puede extenderse hasta 15 celdas hacia cada lado. Sin meta: explora hasta conocer todo lo alcanzable (no vuelve a pasar por donde ya conoce salvo para llegar a lo que falta) y regresa. Si antes hiciste `calfront` en la pista de la competencia, el desfase del frontal se traslada solo a la pista nueva.
+**Modo práctica (3):** pon el ratón en el centro de una celda con pared a la izquierda y a la derecha y la salida libre delante. El mapa es de 32 × 32 con la salida en el centro, así que la pista puede extenderse hasta 15 celdas hacia cada lado. Sin meta: explora hasta conocer todo lo alcanzable (no vuelve a pasar por donde ya conoce salvo para llegar a lo que falta) y regresa. Al arrancar gira a cada lado para calibrar los laterales y medir el pasillo; el frontal tiene que venir calibrado de antes (`calsonda` en la pista de la competencia + `save`).
 
 ## Estructura
 

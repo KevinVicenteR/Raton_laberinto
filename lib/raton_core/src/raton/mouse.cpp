@@ -4,6 +4,7 @@
 
 #include <math.h>
 #include <stdio.h>
+#include <stdlib.h>
 
 namespace raton {
 
@@ -30,6 +31,7 @@ MissionResult Mouse::explore(bool searchAfterGoal, bool returnHome) {
   maze_.setGoal(p_.goalX, p_.goalY, p_.goalW, p_.goalH);
   nav_.begin(p_.startX, p_.startY, static_cast<Dir>(p_.startDir & 3));
   const float t0 = nav_.now();
+  const int resets = explorer_.wallResets();
   explorer_.setHardDeadline(t0 + 595.0f);  // reglamento: 10 minutos por intento
   io_.report("INICIO_MAPA", true);
 
@@ -58,7 +60,8 @@ MissionResult Mouse::explore(bool searchAfterGoal, bool returnHome) {
     if (returnHome) goHome(r);
     // Sin meta (practica): si al volver se corrigio alguna pared y aparece algo sin conocer alcanzable,
     // otra vuelta de exploracion (como mucho dos).
-    for (int extra = 0; extra < 2 && goals.count == 0 && r.exploredAll && explorer_.somethingLeft(nav_.x(), nav_.y());
+    for (int extra = 0; extra < 2 && goals.count == 0 && r.exploredAll && explorer_.wallResets() == resets &&
+                        explorer_.somethingLeft(nav_.x(), nav_.y());
          ++extra) {
       io_.report("QUEDA_POR_EXPLORAR", true);
       explorer_.setPhase(Explorer::Phase::ExploreAll);
@@ -105,52 +108,106 @@ void Mouse::goHome(MissionResult& r) {
   }
 }
 
-float Mouse::measureCell(Params& out) {
-  // Raton quieto en el centro de la salida: gira a la izquierda y a la derecha y mide cada pared lateral con
-  // el frontal (perpendicular a la pared, el sensor mas preciso). Ancho del pasillo = las dos distancias +
-  // 2 x lo que el frontal va por delante del eje. Celda = pasillo + pared. Si solo hay pared a un lado, se
-  // supone el raton centrado (colocado a mano).
+namespace {
+// Mediana de tres tandas de n lecturas de un sensor (una lectura mala suelta no cambia nada). -1 sin medida.
+int medianReading(Navigator& nav, int sensor) {
+  int l, f, r, v[3];
+  nav.sample(2, l, f, r);  // descartar: pudieron empezar aun girando
+  for (int k = 0; k < 3; ++k) {
+    nav.sample(3, l, f, r);
+    v[k] = sensor == 0 ? l : (sensor == 1 ? f : r);
+    if (v[k] < 0) return -1;
+  }
+  return v[0] > v[1] ? (v[1] > v[2] ? v[1] : (v[0] > v[2] ? v[2] : v[0]))
+                     : (v[0] > v[2] ? v[0] : (v[1] > v[2] ? v[2] : v[1]));
+}
+}  // namespace
+
+float Mouse::calibrateSensors(Params& out, bool cellKnown) {
+  // Quieto en el centro de una celda mirando a start, con pared a los dos lados:
+  //  1) mira a la izquierda: el frontal, perpendicular a esa pared, da la distancia del eje a ella;
+  //  2) gira 45 grados atras: ahora el lateral izquierdo es el perpendicular a la misma pared;
+  //  3) lo mismo a la derecha y vuelve. Un cuarto de vuelta a cada mano: el error del giroscopio se anula.
+  // Con el cono del VL53L0X una pared de frente lee la distancia x G(90) (~1.006).
   const Dir start = static_cast<Dir>(out.startDir & 3);
   nav_.begin(out.startX, out.startY, start);
-  // Pista de medida incierta: el paso de celda se afina luego en marcha.
-  nav_.setLearnCell(true);
-  // Desfase del frontal calibrado con calfront en la pista de la competencia: se descuenta al medir y se
-  // traslada a la pista nueva (si no, pararia a la distancia de la otra pista).
-  const float frontOffset =
-      out.frontStopMm >= 0 ? out.frontStopMm - (0.5f * out.cellMm - 0.5f * out.wallMm - out.frontAheadMm) : 0.0f;
-  int dist[2] = {-1, -1};
-  const Dir sides[2] = {turnLeft(start), turnRight(start)};
+  const float g90 = nav_.sonda().parallelFactor(1.5708f);
+  const float diagPerp = 0.7071f * (out.diagAheadMm + out.diagLateralMm);  // lateral hacia la pared al girar 45
+  int front[2] = {-1, -1}, diag[2] = {-1, -1};
   for (int i = 0; i < 2; ++i) {
-    nav_.face(sides[i]);
-    int l, f, r;
-    nav_.sample(2, l, f, r);  // descartar: esas medidas empezaron aun girando
-    int a, b, c;
-    nav_.sample(3, l, a, r);
-    nav_.sample(3, l, b, r);
-    nav_.sample(3, l, c, r);
-    // Mediana de tres tandas: una lectura mala suelta no cambia la medida.
-    f = a > b ? (b > c ? b : (a > c ? c : a)) : (a > c ? a : (b > c ? c : b));
-    f -= static_cast<int>(frontOffset);
-    if (a >= 0 && b >= 0 && c >= 0 && f >= 5 && f < 450) dist[i] = f;
-    // Volver de frente despues de cada lado: un cuarto de vuelta a cada mano y vuelta, asi el error de escala
-    // del giroscopio se anula (una vuelta entera en el mismo sentido deja el raton torcido varios grados).
+    nav_.face(i == 0 ? turnLeft(start) : turnRight(start));
+    front[i] = medianReading(nav_, 1);
+    nav_.aim(i == 0 ? -45.0f : 45.0f);
+    diag[i] = medianReading(nav_, i == 0 ? 0 : 2);
     nav_.face(start);
   }
-  float corridor = -1;
-  if (dist[0] >= 0 && dist[1] >= 0) corridor = dist[0] + dist[1] + 2.0f * out.frontAheadMm;
-  else if (dist[0] >= 0 || dist[1] >= 0) corridor = 2.0f * ((dist[0] >= 0 ? dist[0] : dist[1]) + out.frontAheadMm);
+  char line[96];
+  // Que lados tienen pared de verdad: con la celda conocida, la lectura tiene que ser la de la pared de la
+  // celda (+-3 cm); sin conocerla (practica) cualquier pared cerca.
+  bool wall[2];
+  const float expected = g90 * (0.5f * (out.cellMm - out.wallMm) - out.frontAheadMm);
+  for (int i = 0; i < 2; ++i)
+    wall[i] = front[i] >= 5 && (cellKnown ? fabsf(front[i] - expected) < 30.0f : front[i] < 250);
+  // Lo medido de frente es lo mas fiable del mapa: las paredes de los lados de la salida.
+  for (int i = 0; i < 2; ++i)
+    if (front[i] >= 5) maze_.observe(out.startX, out.startY, i == 0 ? turnLeft(start) : turnRight(start), wall[i], 3);
+  if (cellKnown && front[0] >= 5 && front[1] >= 5 && front[0] < 300 && front[1] < 300) {
+    // Pared cerca a los dos lados pero a otra distancia que la de la competencia: es otra pista.
+    const float measured = (front[0] + front[1]) / g90 + 2.0f * out.frontAheadMm;
+    const float nominal = out.cellMm - out.wallMm;
+    if (measured > 1.25f * nominal || measured < 0.75f * nominal) {
+      snprintf(line, sizeof(line), "PISTA_DISTINTA pasillo %d mm y cellMm %d: usa el modo 3 (practica) o set cellMm",
+               static_cast<int>(measured), static_cast<int>(out.cellMm));
+      io_.report(line, true);
+      return -2;
+    }
+  }
+  if (!wall[0] && !wall[1]) {
+    snprintf(line, sizeof(line), "CALIB_SONDA sin paredes a los lados (izq %d der %d)", front[0], front[1]);
+    io_.report(line, true);
+    return -1;
+  }
+  // Desfase del frontal: con la celda conocida y pared a los dos lados, izquierda + derecha = pasillo.
+  float eF = 0;
+  if (cellKnown && wall[0] && wall[1]) {
+    const float corridor = out.cellMm - out.wallMm;
+    eF = 0.5f * (front[0] + front[1] - g90 * (corridor - 2.0f * out.frontAheadMm));
+    if (eF > 40.0f || eF < -40.0f) eF = 0;  // no cuadra: mejor no tocar
+  }
+  float wallDist[2] = {0, 0};
+  for (int i = 0; i < 2; ++i)
+    if (wall[i]) wallDist[i] = (front[i] - eF) / g90 + out.frontAheadMm;  // eje -> cara de la pared
+  float eD[2] = {0, 0};
+  for (int i = 0; i < 2; ++i) {
+    if (!wall[i] || diag[i] < 0) continue;
+    eD[i] = diag[i] - g90 * (wallDist[i] - diagPerp);
+    if (eD[i] > 40.0f || eD[i] < -40.0f) eD[i] = 0;
+  }
+  out.frontOffsetMm -= static_cast<int>(floorf(eF + 0.5f));
+  out.leftOffsetMm -= static_cast<int>(floorf(eD[0] + 0.5f));
+  out.rightOffsetMm -= static_cast<int>(floorf(eD[1] + 0.5f));
+  const float corridor = wall[0] && wall[1] ? wallDist[0] + wallDist[1] : -1.0f;
+  snprintf(line, sizeof(line), "CALIB_SONDA desfases F%d I%d D%d (corregido %d %d %d) pasillo %d mm",
+           out.frontOffsetMm, out.leftOffsetMm, out.rightOffsetMm, static_cast<int>(-eF), static_cast<int>(-eD[0]),
+           static_cast<int>(-eD[1]), static_cast<int>(corridor));
+  io_.report(line, true);
+  return corridor;
+}
+
+float Mouse::measureCell(Params& out) {
+  // Pista de practica: los sensores se calibran con las dos paredes de la salida (el frontal ya calibrado en
+  // la competencia) y el pasillo medido da la celda = pasillo + pared.
+  // Pista de medida incierta: el paso de celda se afina luego en marcha.
+  nav_.setLearnCell(true);
+  const float corridor = calibrateSensors(out, false);
   char line[80];
   if (corridor < 100.0f || corridor > 450.0f) {
-    snprintf(line, sizeof(line), "CELDA no medida (izq %d der %d): sigo con %d mm", dist[0], dist[1],
-             static_cast<int>(out.cellMm));
+    snprintf(line, sizeof(line), "CELDA no medida: sigo con %d mm", static_cast<int>(out.cellMm));
     io_.report(line, true);
     return -1;
   }
   out.cellMm = corridor + out.wallMm;
-  if (out.frontStopMm >= 0)
-    out.frontStopMm = static_cast<int>(0.5f * out.cellMm - 0.5f * out.wallMm - out.frontAheadMm + frontOffset + 0.5f);
-  snprintf(line, sizeof(line), "CELDA medida=%d mm (pasillo %d%s) I%d D%d", static_cast<int>(out.cellMm),
-           static_cast<int>(corridor), dist[0] >= 0 && dist[1] >= 0 ? "" : ", un solo lado", dist[0], dist[1]);
+  snprintf(line, sizeof(line), "CELDA medida=%d mm (pasillo %d)", static_cast<int>(out.cellMm), static_cast<int>(corridor));
   io_.report(line, true);
   return out.cellMm;
 }

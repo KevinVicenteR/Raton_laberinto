@@ -15,6 +15,7 @@ void Explorer::setPhase(Phase phase) {
   ax_ = -1;
   routeX_ = -1;
   forgotOnce_ = false;
+  forgotAll_ = false;
   if (phase == Phase::ExploreAll) exploredAll_ = false;
   static const char* const kNames[] = {"FASE META", "FASE BUSCAR_RUTA", "FASE VOLVER", "FASE CARRERA",
                                        "FASE EXPLORAR_TODO"};
@@ -143,6 +144,15 @@ int Explorer::stepTowardTargets(int x, int y, Dir h) {
     // La meta no se alcanza (o no existe en esta pista): explorar todo lo que falta sin olvidar nada.
     io_.report("META_NO_ALCANZABLE: exploro todo", true);
     setPhase(Phase::ExploreAll);
+    return stepTowardTargets(x, y, h);
+  }
+  if (phase_ == Phase::ToStart && !escaping_ && !forgotAll_) {
+    // Sin camino a la salida ni olvidando lo dudoso: alguna pared confirmada esta mal. Se olvidan todas (las
+    // celdas visitadas se conservan) y se vuelve mirando de nuevo; mas vale volver que quedarse.
+    forgotAll_ = true;
+    ++wallResets_;
+    io_.report("MAPA_REVISADO: olvido paredes para volver", true);
+    maze_.forgetWeak(Maze::kVoteMax + 1);
     return stepTowardTargets(x, y, h);
   }
   return -1;

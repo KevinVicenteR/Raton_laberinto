@@ -63,6 +63,18 @@ class Maze {
   int goalW() const { return gw_; }
   int goalH() const { return gh_; }
 
+  // Paredes por segmento (para la sonda): horizontal = frontera inferior de la fila y en la columna x
+  // (y = 0..alto), seg = y * 64 + x; vertical = frontera izquierda de la columna x en la fila y
+  // (x = 0..ancho), seg = kVertical + y * 64 + x. Los bordes no cambian nunca.
+  static const int kVertical = 0x1000;
+  static int hSeg(int x, int y) { return y * 64 + x; }
+  static int vSeg(int x, int y) { return kVertical + y * 64 + x; }
+  bool segBorder(int seg) const;
+  int8_t segVotes(int seg) const;
+  void segObserve(int seg, bool closed, int weight = 1);
+  // Celda y lado de un segmento (la celda de abajo / izquierda si existe).
+  void segCell(int seg, int& x, int& y, Dir& d) const;
+
   // Mascara de paredes cerradas N=1 E=2 S=4 W=8 (formato de la web).
   uint8_t wallMask(int x, int y) const;
 

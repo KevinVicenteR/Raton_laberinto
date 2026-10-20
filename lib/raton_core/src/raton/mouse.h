@@ -35,6 +35,11 @@ class Mouse {
   MissionResult race(bool returnHome = true);
   // Solo ir a la meta y parar (la primera pasada de una prueba).
   MissionResult toGoal() { return explore(false, false); }
+  // Calibra los tres sensores parado en el centro de una celda con pared a la izquierda y a la derecha:
+  // el frontal mide cada pared de frente y cada lateral se pone perpendicular a su pared. Corrige
+  // out.*OffsetMm (y el frontal solo si se conoce la celda). Devuelve el ancho del pasillo, -1 si no puede,
+  // -2 si con la celda conocida las paredes estan a otra distancia (es otra pista).
+  float calibrateSensors(Params& out, bool cellKnown);
   // Mide el pasillo parado en la salida (paredes a los dos lados) y fija out.cellMm. -1 si no puede.
   float measureCell(Params& out);
   // Ajuste del paso de celda en marcha (lo activa measureCell; la competencia lo deja apagado).

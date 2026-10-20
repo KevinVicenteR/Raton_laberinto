@@ -51,12 +51,18 @@ export function shortestRoute(m: Maze, from: Cell, goal = m.goal): Cell[] {
   return route;
 }
 export function worldPose(s: RobotSample, m: Maze, offset: Cell = [0, 0]): Cell {
+  // v2: eje del raton en el laberinto, escalado al paso de esta pista.
+  if (s.pitch) {
+    const k = m.PITCH / s.pitch;
+    return [s.x * k + offset[0], s.y * k + offset[1]];
+  }
   return [
     s.x + (m.start[0] + 0.5) * m.PITCH + offset[0],
     s.y + (m.start[1] + 0.5) * m.PITCH - 33 + offset[1],
   ];
 }
-export function poseCell(p: Cell, a: number, pitch: number): Cell {
+export function poseCell(p: Cell, a: number, pitch: number, absolute = false): Cell {
+  if (absolute) return [Math.floor(p[0] / pitch), Math.floor(p[1] / pitch)];
   const r = (a * Math.PI) / 180;
   return [Math.floor((p[0] - Math.sin(r) * 33) / pitch), Math.floor((p[1] + Math.cos(r) * 33) / pitch)];
 }

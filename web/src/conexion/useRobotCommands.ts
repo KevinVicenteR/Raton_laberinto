@@ -11,9 +11,9 @@ export const modes = [
   'Borrar mapa',
 ];
 export const modeHelp = [
-  'Pista de la competencia (celda cellMm, meta guardada): meta, ruta más corta, vuelta y guarda el mapa',
+  'Pista de la competencia (celda cellMm, meta guardada): calibra los sensores en la salida, meta, ruta más corta, vuelta y guarda el mapa',
   'Pista de la competencia: ruta más rápida con el mapa guardado (curvas suaves)',
-  'Cualquier pista: mide el pasillo en la salida, explora todo sin repetir y vuelve. No toca la competencia',
+  'Cualquier pista: calibra y mide el pasillo en la salida, explora todo sin repetir y vuelve. No toca la competencia',
   'Lecturas de los láseres y el giroscopio',
   'En el suelo, pasillo recto de 2 celdas: mide kV, kS y τ',
   'Ratón LEVANTADO: cada rueda adelante y atrás',

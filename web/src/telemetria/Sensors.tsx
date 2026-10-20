@@ -12,25 +12,7 @@ export function Sensors({ last }: { last: RobotSample | null }) {
           </div>
         ))}
       </div>
-      <svg viewBox="0 0 400 170" aria-label="Distancias vistas por el ratón">
-        <rect x="175" y="100" width="50" height="60" rx="8" fill="var(--text)" />
-        {(['I', 'F', 'D'] as const).map((key, i) => {
-          const dist = last?.[key] ?? -1,
-            len = Math.min(dist < 0 ? 140 : dist / 3, 140);
-          return (
-            <line
-              key={key}
-              x1={i === 0 ? 175 : i === 1 ? 200 : 225}
-              y1={i === 1 ? 100 : 115}
-              x2={i === 0 ? 175 - len : i === 1 ? 200 : 225 + len}
-              y2={i === 1 ? 100 - len * 0.6 : 115}
-              stroke={`var(--${['left', 'front', 'right'][i]})`}
-              strokeWidth="3"
-              strokeDasharray={dist < 0 ? '5 5' : undefined}
-            />
-          );
-        })}
-      </svg>
+      <Radar last={last} />
       <p>
         Velocidad: {last?.v ?? '—'} mm/s · Rumbo: {last?.r ?? '—'}° · Pasillo: {last?.p ?? '—'} mm
       </p>
@@ -38,6 +20,67 @@ export function Sensors({ last }: { last: RobotSample | null }) {
         Confianza L/F/D: {last?.confidence?.join(' / ') ?? '—'} % · Ciclo: {last?.cycle ?? '—'} ms
       </p>
     </section>
+  );
+}
+// Lo que ve cada VL53L0X, como un radar: el frontal y los laterales montados a 45 grados iluminan un cono
+// de 25 grados; la lectura es la distancia (media) a lo que hay dentro del cono. Vista desde arriba con el
+// ratón mirando hacia arriba; las líneas discontinuas son las paredes de un pasillo centrado.
+const SCALE = 0.5; // px por mm
+const HALF_FOV = 12.5;
+const BEAMS = [
+  { key: 'I', ahead: 30, left: 30, angle: 45, color: 'left' },
+  { key: 'F', ahead: 40, left: 0, angle: 0, color: 'front' },
+  { key: 'D', ahead: 30, left: -30, angle: -45, color: 'right' },
+] as const;
+export function Radar({ last }: { last: RobotSample | null }) {
+  const cx = 200,
+    cy = 235,
+    toScreen = (ahead: number, left: number) => [cx - left * SCALE, cy - ahead * SCALE],
+    dir = (deg: number) => [-Math.sin((deg * Math.PI) / 180), -Math.cos((deg * Math.PI) / 180)];
+  const corridor = last && last.p > 50 ? last.p : 143;
+  return (
+    <svg viewBox="0 0 400 250" role="img" aria-label="Conos de los tres sensores, vista de radar">
+      {[-1, 1].map((side) => (
+        <line
+          key={side}
+          x1={cx + side * (corridor / 2) * SCALE}
+          x2={cx + side * (corridor / 2) * SCALE}
+          y1={0}
+          y2={250}
+          stroke="var(--grid)"
+          strokeDasharray="4 4"
+        />
+      ))}
+      {BEAMS.map((b) => {
+        const dist = last?.[b.key] ?? -1,
+          r = (dist < 0 ? 600 : Math.min(dist, 600)) * SCALE,
+          [ox, oy] = toScreen(b.ahead, b.left),
+          [ax, ay] = dir(b.angle + HALF_FOV),
+          [bx, by] = dir(b.angle - HALF_FOV),
+          [mx, my] = dir(b.angle);
+        return (
+          <g key={b.key}>
+            <path
+              d={`M${ox},${oy} L${ox + ax * r},${oy + ay * r} A${r},${r} 0 0 1 ${ox + bx * r},${oy + by * r} Z`}
+              fill={`var(--${b.color})`}
+              fillOpacity={dist < 0 ? 0.05 : 0.18}
+              stroke={`var(--${b.color})`}
+              strokeDasharray={dist < 0 ? '5 5' : undefined}
+            />
+            <text
+              x={ox + mx * Math.min(r, 120) + (b.angle > 0 ? -40 : b.angle < 0 ? 4 : -14)}
+              y={oy + my * Math.min(r, 120) - 4}
+              fill={`var(--${b.color})`}
+              fontSize="13"
+            >
+              {dist < 0 ? '—' : `${dist}`}
+            </text>
+          </g>
+        );
+      })}
+      <circle cx={cx} cy={cy} r={45 * SCALE} fill="var(--text)" />
+      <path d={`M${cx},${cy - 18} l-6,10 l12,0 Z`} fill="var(--bg, white)" />
+    </svg>
   );
 }
 export function Chart({ samples }: { samples: RobotSample[] }) {

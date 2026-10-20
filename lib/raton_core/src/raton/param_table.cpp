@@ -19,7 +19,7 @@ const Entry kTable[] = {
     PF(cellMm, 100, 400), PF(wallMm, 0, 40), PI(mazeW, 1, 32), PI(mazeH, 1, 32), PI(startX, 0, 31),
     PI(startY, 0, 31), PI(startDir, 0, 3), PI(goalX, -1, 31), PI(goalY, -1, 31), PI(goalW, 1, 8), PI(goalH, 1, 8),
     PF(wheelDiamMm, 10, 80), PF(countsPerRev, 10, 100000), PF(trackMm, 30, 150), PF(frontAheadMm, -20, 80),
-    PF(diagAheadMm, -20, 80), PF(diagLateralMm, 0, 60), PF(diagAngleDeg, 20, 70), PI(frontOffsetMm, -60, 60),
+    PF(diagAheadMm, -20, 80), PF(diagLateralMm, 0, 60), PF(diagMountDeg, 20, 70), PF(sensorFovDeg, 0, 40), PI(frontOffsetMm, -60, 60),
     PI(leftOffsetMm, -60, 60), PI(rightOffsetMm, -60, 60), PF(sensorLatencyS, 0, 0.1f), PI(sensorMaxMm, 100, 2000),
     PF(kS, 0, 0.5f), PF(kV, 0.0002f, 0.02f), PF(motorTauS, 0, 0.3f), PF(maxDuty, 0.2f, 1), PF(kpFwd, 0, 0.2f),
     PF(kdFwd, 0, 0.02f), PF(kiFwd, 0, 1), PF(kpRot, 0, 0.2f), PF(kdRot, 0, 0.02f), PF(kiRot, 0, 1),

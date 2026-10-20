@@ -43,6 +43,8 @@ class Explorer : public Brain {
   float maxAreaTime() const { return maxAreaTime_; }
   // La exploracion completa termino (no queda nada alcanzable por conocer).
   bool exploredAll() const { return exploredAll_; }
+  // Veces que se olvidaron todas las paredes para poder volver (el mapa ya no es de fiar).
+  int wallResets() const { return wallResets_; }
   // Con el mapa de ahora, queda alguna celda por conocer a la que se pueda llegar desde (x, y).
   bool somethingLeft(int x, int y);
 
@@ -70,6 +72,8 @@ class Explorer : public Brain {
   int escapes_ = 0;
   float maxAreaTime_ = 0;
   bool forgotOnce_ = false;
+  bool forgotAll_ = false;
+  int wallResets_ = 0;
   bool exploredAll_ = false;
 };
 

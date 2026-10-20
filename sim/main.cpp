@@ -53,6 +53,7 @@ int main(int argc, char** argv) {
   bool trace = false;
   float timeLimit = 900.0f;
   bool goalGiven = false;
+  int onlyLevel = -1, from = -1;  // bateria: solo un nivel de errores, desde el caso k (-1 = reglamento)
   for (int i = 1; i < argc; ++i) {
     const std::string a = argv[i];
     auto next = [&]() { return i + 1 < argc ? argv[++i] : ""; };
@@ -76,6 +77,10 @@ int main(int argc, char** argv) {
     else if (a == "--simseed") simSeed = atoi(next());
     else if (a == "--loops") loops = atoi(next());
     else if (a == "--trace") trace = true;
+    else if (a == "--cono") sim::gFovDeg = static_cast<float>(atof(next()));
+    else if (a == "--nivel") onlyLevel = atoi(next());
+    else if (a == "--sincal") sim::gAutoCal = false;
+    else if (a == "--desde") from = atoi(next());
     else if (a == "--time") timeLimit = static_cast<float>(atof(next()));
     else if (a == "--smooth") p.smoothTurnsSearch = true;
     else if (a == "--set") {
@@ -116,7 +121,8 @@ int main(int argc, char** argv) {
     int fails = 0, total = 0, dirty = 0;
     float sum1 = 0, sum2 = 0, sumE = 0;
     for (int level = 0; level <= 2; level += 2) {
-      for (int k = -1; k < bench; ++k) {
+      if (onlyLevel >= 0 && level != onlyLevel) continue;
+      for (int k = from; k < bench; ++k) {
         raton::Params pc = p;
         raton::Maze truth;
         std::string name;
@@ -125,6 +131,7 @@ int main(int argc, char** argv) {
           name = "reglamento";
         } else {
           sim::randomMaze(pc.mazeW, pc.mazeH, loops, 1000u + k, truth);
+          sim::makeStartCell(truth, pc.startX, pc.startY, static_cast<raton::Dir>(pc.startDir & 3), 1000u + k);
           randomGoal(truth, pc, 1000u + k, pc);
           name = "aleatorio " + std::to_string(1000 + k);
         }
@@ -150,6 +157,7 @@ int main(int argc, char** argv) {
   raton::Maze truth;
   if (randomSeed >= 0) {
     sim::randomMaze(p.mazeW, p.mazeH, loops, static_cast<uint32_t>(randomSeed), truth);
+    sim::makeStartCell(truth, p.startX, p.startY, static_cast<raton::Dir>(p.startDir & 3), static_cast<uint32_t>(randomSeed));
     if (!goalGiven) randomGoal(truth, p, static_cast<uint32_t>(randomSeed), p);
   } else {
     if (mazePath.empty()) mazePath = std::string(RATON_MAZES_DIR) + "/reglamento_2026.txt";
@@ -163,7 +171,7 @@ int main(int argc, char** argv) {
   const sim::Physical ph = sim::perturbed(p, perturb, seed);
   printf("fisica: celda=%.1f pared=%.1f ruedas=%.2f/%.2f eje=%.1f angulo=%.1f tau=%.3f vmax=%.0f asim=%.3f "
          "giro_escala=%.4f offsets F%d I%d D%d salida %.1f,%.1f %.1fgr\n",
-         ph.cellMm, ph.wallMm, ph.wheelDiamL, ph.wheelDiamR, ph.trackMm, ph.diagAngleDeg, ph.motorTau, ph.vmaxFull,
+         ph.cellMm, ph.wallMm, ph.wheelDiamL, ph.wheelDiamR, ph.trackMm, ph.fovDeg > 0 ? ph.mountDeg : ph.diagAngleDeg, ph.motorTau, ph.vmaxFull,
          ph.motorAsym, ph.gyroScale, ph.offsetF, ph.offsetL, ph.offsetR, ph.startX, ph.startY, ph.startDeg);
   const sim::CaseResult r = sim::runCase(truth, p, ph, simSeed >= 0 ? static_cast<uint32_t>(simSeed) : seed, true, true, trace, timeLimit);
   printf("%s %s\n", r.clean() ? "OK" : (r.ok() ? "ROCE" : "FALLO"), sim::describe(r).c_str());

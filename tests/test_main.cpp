@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include <string.h>
 
+#include <random>
 #include <string>
 
 #include "raton/frame.h"
@@ -13,6 +14,7 @@
 #include "raton/param_table.h"
 #include "raton/params.h"
 #include "raton/planner.h"
+#include "raton/sonda.h"
 #include "run_case.h"
 #include "sim.h"
 
@@ -190,6 +192,47 @@ void testFrames() {
   CHECK(q.pop(line, sizeof(line)) == 4 && strcmp(line, "hola") == 0);
 }
 
+// La sonda predice lo mismo que lee el VL53L0X simulado (cono, postes, huecos).
+void testSonda() {
+  Maze truth;
+  CHECK(sim::loadMazeFile(std::string(RATON_MAZES_DIR) + "/reglamento_2026.txt", truth));
+  sim::Physical ph;
+  sim::World world(truth, ph);
+  Sonda sonda;
+  sonda.setup(ph.cellMm, ph.wallMm, 25.0f, 600);
+  std::mt19937 rng(5);
+  std::uniform_real_distribution<float> u(0, 1);
+  int n = 0, bad = 0, missing = 0;
+  float sumErr = 0;
+  for (int i = 0; i < 4000; ++i) {
+    // Pose dentro de una celda, lejos de las paredes, con un rumbo cualquiera y un sensor a 0 o +-45.
+    const int cx = static_cast<int>(u(rng) * truth.width()), cy = static_cast<int>(u(rng) * truth.height());
+    const float x = (cx + 0.25f + 0.5f * u(rng)) * ph.cellMm, y = (cy + 0.25f + 0.5f * u(rng)) * ph.cellMm;
+    const float ang = u(rng) * 6.2832f;
+    const float real = world.coneReading(x, y, ang, 25.0f);
+    Sonda::Scan scan;
+    sonda.trace(truth, x, y, ang, scan);
+    const float pred = sonda.predict(truth, scan);
+    const bool realOk = real < 600.0f;
+    if (realOk != (pred >= 0)) {
+      if (fabsf((realOk ? real : pred) - 600.0f) > 30.0f) ++missing;
+      continue;
+    }
+    if (!realOk) continue;
+    ++n;
+    const float e = fabsf(pred - real);
+    sumErr += e;
+    if (e > 4.0f + 0.04f * real) ++bad;
+  }
+  printf("  sonda: %d lecturas, error medio %.1f mm, %d con error grande, %d de alcance distinto\n", n,
+         sumErr / (n ? n : 1), bad, missing);
+  CHECK(n > 2500);
+  // El simulador usa 13 rayos y la sonda 9: la diferencia es como la del modelo con el sensor real.
+  CHECK(sumErr / n < 3.5f);
+  CHECK(bad < n / 15);
+  CHECK(missing < 20);
+}
+
 // El raton completo en el simulador: laberinto del reglamento y aleatorios, con fisica ideal y con
 // errores (pista de otra medida, ruedas distintas, sensores y giroscopio descalibrados).
 void testMissions() {
@@ -207,6 +250,7 @@ void testMissions() {
   for (int k = 0; k < 4; ++k) {
     Params pc = p;
     sim::randomMaze(pc.mazeW, pc.mazeH, 12, 2000u + k, truth);
+    sim::makeStartCell(truth, pc.startX, pc.startY, static_cast<Dir>(pc.startDir & 3), 2000u + k);
     pc.goalX = 2 + k;
     pc.goalY = 5 + (k % 3);
     r = sim::runCase(truth, pc, sim::perturbed(pc, (k % 2) * 2, 300u + k), 9u + k, false);
@@ -240,6 +284,7 @@ int main() {
   testParamTable();
   testLateralFilter();
   testFrames();
+  testSonda();
   testMissions();
   testPractice();
   printf("%d comprobaciones, %d fallos\n", checks, failures);

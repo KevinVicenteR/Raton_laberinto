@@ -22,6 +22,8 @@ endif()
 file(GLOB_RECURSE RATON_CORE_SOURCES CONFIGURE_DEPENDS lib/raton_core/src/*.cpp)
 add_library(raton_core STATIC ${RATON_CORE_SOURCES})
 target_include_directories(raton_core PUBLIC lib/raton_core/src)
+# Trazas de depuracion por variables de entorno (NAVDBG, VOTEDBG, RADARDBG) solo en el PC.
+target_compile_definitions(raton_core PRIVATE RATON_DEBUG)
 
 add_library(raton_simlib STATIC sim/sim.cpp sim/run_case.cpp)
 target_include_directories(raton_simlib PUBLIC sim)

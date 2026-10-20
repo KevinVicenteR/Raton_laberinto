@@ -295,6 +295,13 @@ void App::command(char* cmd) {
     calibrateFront();
     return;
   }
+  if (!strcmp(cmd, "calsonda")) {
+    // Gira en el sitio: se hace desde el bucle principal, como un modo.
+    requestedMode_ = kCalibrate;
+    startRequested_ = true;
+    reply("CALIBRANDO sensores (raton en el centro de una celda con pared a los dos lados)");
+    return;
+  }
   if (!strncmp(cmd, "calside ", 8)) {
     calibrateSides(static_cast<float>(atof(cmd + 8)));
     return;
@@ -313,7 +320,7 @@ void App::command(char* cmd) {
   }
   snprintf(out, sizeof(out), "? orden desconocida: %s", cmd);
   reply(out);
-  reply("ordenes: s s<n> x m<n> G<x>,<y> set <p> <v> get <p> params save defaults map erase calfront calside <mm> estado R");
+  reply("ordenes: s s<n> x m<n> G<x>,<y> set <p> <v> get <p> params save defaults map erase calsonda calfront calside <mm> estado R");
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -331,7 +338,11 @@ int App::menu() {
   board_.clearStop();
   while (true) {
     const raton::Sensors& s = board_.tick();
-    if (startRequested_) return mode_;
+    if (startRequested_) {
+      const int m = requestedMode_ ? requestedMode_ : mode_;
+      requestedMode_ = 0;
+      return m;
+    }
     const int f = s.front.mm;
     const uint32_t now = millis();
     if (s.front.fresh) {
@@ -407,10 +418,29 @@ void App::runMode(int mode) {
   snprintf(line, sizeof(line), "START %d", mode);
   reply(line);
   switch (mode) {
-    case EXPLORE:
+    case EXPLORE: {
       armStart();
+      // Antes de salir: calibrar los sensores con las paredes de la salida (y comprobar que la pista es la de
+      // la geometria guardada).
+      if (mouse_.calibrateSensors(params_, true) == -2) {
+        display_.show("PISTA DISTINTA", "usa el modo 3", "o set cellMm");
+        delay(1500);
+        break;
+      }
       showResult(mouse_.explore(true, true), "EXPLORAR");
       break;
+    }
+    case kCalibrate: {
+      armStart();
+      const float corridor = mouse_.calibrateSensors(params_, true);
+      char out[64];
+      snprintf(out, sizeof(out), "CALIB desfases F%d I%d D%d pasillo %d (save para guardar)", params_.frontOffsetMm,
+               params_.leftOffsetMm, params_.rightOffsetMm, static_cast<int>(corridor));
+      reply(out);
+      display_.show("CALIBRADO", "save = guardar");
+      delay(800);
+      break;
+    }
     case RACE:
       armStart();
       showResult(mouse_.race(true), "CARRERA");
@@ -463,7 +493,12 @@ void App::practiceRun() {
   showResult(mouse_.explore(false, true), "PRACTICA");
   mouse_.setLearnCell(false);
   board_.saveEnabled = true;
+  // Los desfases son del sensor, no de la pista: se quedan los recien calibrados.
+  const int off[3] = {params_.frontOffsetMm, params_.leftOffsetMm, params_.rightOffsetMm};
   params_ = competition;
+  params_.frontOffsetMm = off[0];
+  params_.leftOffsetMm = off[1];
+  params_.rightOffsetMm = off[2];
   mouse_.maze() = competitionMap;
 }
 
@@ -491,7 +526,8 @@ void App::sensorsMode() {
 }
 
 void App::calibrateFront() {
-  // Raton CENTRADO en una celda mirando a una pared: esa lectura es la de "parar en el centro".
+  // Raton CENTRADO en una celda de la competencia mirando a una pared: la lectura tiene que ser la distancia
+  // geometrica (con el cono del sensor, x 1.006). La diferencia es el desfase del frontal.
   long sum = 0;
   int n = 0;
   for (int i = 0; i < 40 && n < 15; ++i) {
@@ -501,47 +537,29 @@ void App::calibrateFront() {
       ++n;
     }
   }
-  char out[64];
+  char out[80];
   if (n < 10) {
     reply("CALIB frontal: sin lecturas");
     return;
   }
-  params_.frontStopMm = static_cast<int>(sum / n);
-  snprintf(out, sizeof(out), "CALIB frontStopMm=%d (save para guardar)", params_.frontStopMm);
+  const float g90 = mouse_.navigator().sonda().parallelFactor(1.5708f);
+  const float expected = g90 * (0.5f * (params_.cellMm - params_.wallMm) - params_.frontAheadMm);
+  params_.frontOffsetMm += static_cast<int>(expected - static_cast<float>(sum) / n + (expected > 0 ? 0.5f : -0.5f));
+  params_.frontStopMm = -1;
+  snprintf(out, sizeof(out), "CALIB frontOffsetMm=%d (save para guardar)", params_.frontOffsetMm);
   reply(out);
 }
 
 void App::calibrateSides(float corridor) {
-  // Raton CENTRADO y recto en un pasillo de ancho conocido con pared a los dos lados.
-  long sum[2] = {0, 0};
-  int n[2] = {0, 0};
-  for (int k = 0; k < 15; ++k) {
-    for (int side = 0; side < 2; ++side) {
-      const int mm = lasers_.read(side == 0 ? Lasers::LEFT : Lasers::RIGHT);
-      if (mm > 0) {
-        sum[side] += mm + (side == 0 ? params_.leftOffsetMm : params_.rightOffsetMm);
-        ++n[side];
-      }
-    }
-  }
-  char out[96];
-  if (n[0] < 8 || n[1] < 8) {
-    reply("CALIB laterales: hace falta pared a los dos lados");
+  // Ancho del pasillo conocido: fija la celda de la competencia y calibra los sensores girando en el sitio.
+  if (corridor < 100.0f || corridor > 400.0f) {
+    reply("CALIB laterales: pasillo entre 100 y 400 mm");
     return;
   }
-  const float rl = static_cast<float>(sum[0]) / n[0], rr = static_cast<float>(sum[1]) / n[1];
-  const float gap = 0.5f * corridor - params_.diagLateralMm;
-  const float sl = gap / rl, sr = gap / rr;
-  if (sl <= 0.2f || sl >= 1.0f || sr <= 0.2f || sr >= 1.0f) {
-    reply("CALIB laterales: lecturas imposibles para ese pasillo");
-    return;
-  }
-  const float ang = 0.5f * (asinf(sl) + asinf(sr)) * 57.2958f;
-  params_.diagAngleDeg = ang;
   params_.cellMm = corridor + params_.wallMm;
-  snprintf(out, sizeof(out), "CALIB I%d D%d -> diagAngleDeg=%d cellMm=%d (save para guardar)", static_cast<int>(rl),
-           static_cast<int>(rr), static_cast<int>(ang + 0.5f), static_cast<int>(params_.cellMm));
-  reply(out);
+  requestedMode_ = kCalibrate;
+  startRequested_ = true;
+  reply("CALIBRANDO sensores con ese pasillo");
 }
 
 void App::motorCalibration() {

@@ -47,6 +47,31 @@ class LateralFilter {
     p11_ -= k1 * p01;
     return true;
   }
+  // Medida general (sonda): lectura con innovacion inn que cambia hy por mm de y y hb por rad de rumbo.
+  // Devuelve false si se descarta; dy, db = correccion aplicada.
+  bool updateLinear(float inn, float hy, float hb, float r, float& dy, float& db) {
+    dy = db = 0;
+    const float py = p00_ * hy + p01_ * hb, pb = p01_ * hy + p11_ * hb;  // P * H'
+    const float s = hy * py + hb * pb + r;
+    if (inn * inn > 9.0f * s + 100.0f) {
+      if (++rejects_ < 4 || (hy < 0.5f && hy > -0.5f)) return false;
+      // Varias seguidas que no cuadran: el filtro estaba equivocado, empezar desde la medida.
+      dy = inn / hy;
+      setY(y_ + dy, r / (hy * hy));
+      rejects_ = 0;
+      return true;
+    }
+    rejects_ = 0;
+    const float k0 = py / s, k1 = pb / s;
+    dy = k0 * inn;
+    db = k1 * inn;
+    y_ += dy;
+    b_ += db;
+    p00_ -= k0 * py;
+    p01_ -= k0 * pb;
+    p11_ -= k1 * pb;
+    return true;
+  }
   // Tras girar: el rumbo puede haber ganado error (escala del giroscopio).
   void addHeadingVariance(float v) { p11_ += v; }
   // Saca el error de rumbo estimado (para corregir la cuadricula) y lo deja a cero.

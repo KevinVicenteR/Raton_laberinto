@@ -34,11 +34,10 @@ struct Params {
   float frontAheadMm = 40.0f;   // posicion del frontal por delante del eje de ruedas
   float diagAheadMm = 30.0f;    // laterales: por delante del eje...
   float diagLateralMm = 30.0f;  // ...y separados del centro hacia cada lado
-  // Angulo EFECTIVO del rayo lateral. Montados a 45 grados, pero el VL53L0X mide con un cono de 25 grados y
-  // devuelve el punto mas cercano de la pared: mide como un rayo a ~45 - 12.5 = 32 grados (los registros
-  // de la version anterior calibraron 31). Se calibra con "calside <ancho del pasillo>".
-  float diagAngleDeg = 32.0f;
-  int frontOffsetMm = 0;        // se suma a cada lectura (calibracion)
+  float diagMountDeg = 45.0f;   // angulo de montaje de los laterales respecto al avance
+  // El VL53L0X ilumina un cono (25 grados): la sonda lo modela entero (ver sonda.h).
+  float sensorFovDeg = 25.0f;
+  int frontOffsetMm = 0;        // se suma a cada lectura (calibracion: calsonda / calfront)
   int leftOffsetMm = 0;
   int rightOffsetMm = 0;
   float sensorLatencyS = 0.012f;  // retraso medio de una medida (mitad del presupuesto de 20 ms + I2C)
@@ -68,11 +67,11 @@ struct Params {
   float steerRateGain = 0.010f;  // grados por mm/s de deriva lateral
 
   // ---------- Velocidades ----------
-  float searchSpeed = 320.0f;   // explorando (mm/s)
+  float searchSpeed = 400.0f;   // explorando (mm/s)
   float runSpeed = 650.0f;      // carrera con ruta conocida
   float turnSpeed = 280.0f;     // velocidad en curvas suaves
-  float accel = 2200.0f;        // mm/s^2
-  float decel = 2200.0f;
+  float accel = 3000.0f;        // mm/s^2 (0.3 g: las ruedas no patinan)
+  float decel = 3000.0f;
   float rotSpeed = 540.0f;      // giro en el sitio (grados/s)
   float rotAccel = 3600.0f;     // grados/s^2
   bool smoothTurnsSearch = false;  // explorando: giro en el centro (robusto) o curva

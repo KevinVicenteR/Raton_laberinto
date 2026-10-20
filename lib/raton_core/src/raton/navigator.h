@@ -1,13 +1,13 @@
 // Navegador de celdas: mueve el raton de celda en celda leyendo las paredes por delante.
 //
-// Geometria clave (sensores a 45 grados): el rayo lateral toca la pared ~70 mm por delante del eje. Por
-// eso las paredes laterales de la celda SIGUIENTE se leen cuando el eje aun esta en la actual (entre
-// 27 y 55 mm pasado su centro), y la decision de que hacer en la siguiente celda esta lista antes de
-// entrar en ella: no hay que pararse a mirar ni a pensar (flood fill < 1 ms).
-//
-// Cada lectura se convierte en un voto sobre una pared concreta del mapa (la celda donde cae el rayo),
-// descartando las que caen cerca de los postes. El frontal vota la pared que tiene delante y corrige
-// la distancia recorrida; el paso de pared a hueco (el poste) corrige el avance en pasillos largos.
+// Vista de los sensores (sonda.h): cada lectura de los tres VL53L0X se compara con lo que la sonda dice
+// que deberia leer con el cono real del sensor, el mapa y la pose. Como un radar:
+//  - mapa: cada pared que el cono alcanza se prueba cerrada y abierta; se vota la hipotesis que explica la
+//    lectura (si las dos la explican igual, no se vota nada);
+//  - pose: con paredes ya confirmadas, la diferencia entre lectura y prediccion corrige el desplazamiento
+//    lateral y el rumbo (filtro de Kalman) y el avance (postes, huecos, pared de frente).
+// Los laterales a 45 grados ven las paredes de la celda SIGUIENTE cuando el eje aun esta en la actual, asi
+// que la decision esta lista antes de llegar: no hay que pararse a mirar.
 //
 // Giros: en el sitio en el centro de la celda (robusto) o curva suave sin parar (carrera).
 // Seguridad: si las ruedas no avanzan con orden de moverse (atasco) o el frontal ve una pared que
@@ -19,6 +19,7 @@
 #include "raton/motion.h"
 #include "raton/params.h"
 #include "raton/platform.h"
+#include "raton/sonda.h"
 
 namespace raton {
 
@@ -51,6 +52,10 @@ class Navigator {
   NavResult run(Brain& brain, float vmax, bool smoothTurns);
   // Gira en el sitio hasta mirar a d.
   void face(Dir d);
+  // Gira en el sitio a deg grados de la cuadricula (+ = izquierda) sin cambiar de rumbo de celda (para
+  // calibrar: luego face() vuelve a la cuadricula).
+  void aim(float deg);
+  const Sonda& sonda() const { return sonda_; }
   float gyroScale() { return motion_.gyroScale(); }
   float cellPitch() const { return cell_; }
   // Pista de medida incierta (practica): ajustar el paso de celda en marcha con las paredes de enfrente.
@@ -80,8 +85,15 @@ class Navigator {
   float gridAngle() const { return gridAngle_; }
   float headingError() const { return motion_.angle() - gridAngle_; }
   void enterNextCell();
-  void senseSides();
-  void senseFront();
+  void sense();
+  void radar(int sensor, int mm);
+  void frontCheck(int mm);
+  // Pose del sensor (0 izq, 1 frente, 2 der) en el marco del laberinto, con la pose del raton desplazada
+  // fwd mm hacia delante, lat mm a la izquierda y dpsi rad (para los jacobianos).
+  void sensorPose(int sensor, float fwd, float lat, float dpsi, float& x, float& y, float& ang) const;
+  // Todas las paredes que el cono cruza hasta reach estan confirmadas (sirve para corregir la pose).
+  bool confident(const Sonda::Scan& scan, float reach) const;
+  void resetBeams();
   void steer();
   Act actionFor(int dir) const;
   void plan(Brain& brain);
@@ -131,22 +143,20 @@ class Navigator {
   float planVEnd_ = 0;
   int planX_ = 0, planY_ = 0;
   int actX_ = -1, actY_ = -1;
-  int frontLastMm_ = 1000;
-  int frontMisses_ = 0;
-  int frontNear_ = 0;
-  float frontLastT_ = -1;
   bool blocked_ = false;
   int blockedHits_ = 0;
 
-  // Transiciones pared/hueco por lado para corregir el avance
-  struct SideTrack {
-    bool valid = false;
-    bool wall = false;
-    float hitOdo = 0;
+  // Por sensor: lecturas seguidas muy cerca (si deja de medir, sigue habiendo pared) y perdidas seguidas.
+  struct Beam {
+    int near = 0;
     int lastValidMm = 1000;
-    int near = 0;  // lecturas validas seguidas muy cerca
     float lastValidT = -1;
-  } side_[2];
+    int misses = 0;
+  } beam_[3];
+  Sonda sonda_;
+  Sonda::Scan scan_, scanJ_;
+  Sonda::Combo combo_;
+  float longVar_ = 25.0f;  // varianza del avance (mm^2)
 
   float stallTimer_ = 0;
   float pushRefOdo_ = -1e9f;
@@ -170,9 +180,7 @@ class Navigator {
   int straightCells_ = 0;
   float straightCorr_ = 0;
   bool cellLearned_ = false;
-  float halfCorr_ = 71.5f;   // medio pasillo medido en marcha
-  float sideLat_[2] = {0, 0};
-  float sideLatOdo_[2] = {-1e9f, -1e9f};
+  float halfCorr_ = 71.5f;   // medio pasillo
   bool smooth_ = false;
   float vmax_ = 300.0f;
 };

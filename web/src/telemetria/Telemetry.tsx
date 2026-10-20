@@ -90,13 +90,13 @@ export function Telemetry() {
     }
   };
   const sample = state.last,
-    cell = sample ? poseCell(worldPose(sample, maze), sample.a, maze.PITCH) : null;
+    cell = sample ? poseCell(worldPose(sample, maze), sample.a, maze.PITCH, !!sample.pitch) : null;
   const stay = (() => {
     if (!sample || !cell) return 0;
     let from = sample.t;
     for (let i = state.trail.length - 1; i >= 0; i--) {
       const s = state.trail[i],
-        c = poseCell(worldPose(s, maze), s.a, maze.PITCH);
+        c = poseCell(worldPose(s, maze), s.a, maze.PITCH, !!s.pitch);
       if (c[0] !== cell[0] || c[1] !== cell[1]) break;
       from = s.t;
     }
