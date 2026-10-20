@@ -81,6 +81,15 @@ class Navigator {
 
   // Medida en el sitio (calibracion): espera n lecturas nuevas de cada sensor y devuelve la media.
   void sample(int n, int& left, int& front, int& right);
+  // Barrido para calibrar: gira en el sitio hasta deg grados de la cuadricula (+ = izquierda) a rate
+  // grados/s y anota cada lectura nueva con el angulo (respecto a la cuadricula) al que se tomo.
+  struct SweepLog {
+    static const int kMax = 200;
+    int n[3] = {0, 0, 0};
+    float ang[3][kMax];
+    int16_t mm[3][kMax];
+  };
+  void sweep(float deg, float rate, SweepLog& log);
   // Un ciclo de control con los motores segun Motion (para modos externos).
   void step();
 
@@ -118,6 +127,8 @@ class Navigator {
   void learnGyroScale();
   void applyCorrection(float e, float gain);
   void startStraight();
+  void addPitchPoint(float corr);
+  void learnPitch();
   bool waitStopped(float timeout, float speedTol = 15.0f);
   float arcSpeed(float radius = 0) const;  // 0 = el de la curva elegida
   float cruiseSpeed(int nx, int ny) const;
@@ -194,8 +205,11 @@ class Navigator {
   // Tramo recto actual, para el ajuste del paso: celdas avanzadas y correcciones aplicadas desde su inicio.
   int straightCells_ = 0;
   float straightCorr_ = 0;
-  bool cellLearned_ = false;  // ya se ajusto en este tramo recto
-  int cellUpdates_ = 0;
+  // Paso de celda: correccion acumulada frente a lo recorrido en la recta actual (regresion) y su duda.
+  float straightStart_ = 0;
+  int regN_ = 0;
+  float regS_ = 0, regS2_ = 0, regC_ = 0, regSC_ = 0;
+  float cellVar_ = 0;
   float offsetsCell_ = 0;
   float halfCorr_ = 71.5f;   // medio pasillo
   bool smooth_ = false;

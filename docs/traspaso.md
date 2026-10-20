@@ -61,6 +61,23 @@ Antes de los cambios de esta tanda (con el modelo 3D del sensor ya en el simulad
 Tiempos medios con láseres a 40 mm: meta explorando 69 s, exploración completa 127 s, carrera 17 s.
 Práctica (`--practica 70`): 70 de 70 pistas exploradas completas.
 
+### Tanda de fluidez y precisión (después de la de rapidez)
+
+161 casos: 161 cumplen, 155 sin roce, 2 paredes mal; meta 63,4 s, completa 117 s, carrera 16,0 s. Láseres a
+25 mm y motores al 80 %: 80/81 cada uno (una carrera fallida en cada uno: casos 1046 y 1069).
+- Rozamiento (`kS`) en rampa en vez de a saltos; retroceder y enderezarse a la vez tras un atasco.
+- Calibración por barrido continuo (sin paradas): ~2 mm de error, unos 4 s.
+- Paso de celda por regresión en cada recta + Kalman entre rectas: converge al valor real (±0,5 mm). Antes
+  quedaba 3–7 mm corto y en las rectas largas de la carrera la curva empezaba 4 cm antes.
+- Escala del giroscopio aprendida más despacio (8 % por giro, antes 30 %): antes bailaba hasta un 4 %.
+
+Descartado: curva de la carrera guiada por lo recorrido en vez de por el tiempo (arregla el caso 1069 pero en
+conjunto 160/161 y más zigzag); estimar el ángulo de montaje de los laterales y lo torcido en la salida con
+el barrido (salían peor que no estimarlos).
+
+Nota: `scripts/banco.sh` tenía una carrera al juntar resultados (a veces contaba casos de más, p. ej.
+"casos 153" con 81); ya está arreglado.
+
 ### Rapidez: probado
 
 Dónde se va el tiempo explorando hasta la meta (caso 1005, 78 s): 21 s girando en el sitio, 5 s parado, 15 s
@@ -107,8 +124,8 @@ Descartado (en 161 casos):
 1. **Rapidez** (petición del usuario): lo que queda es menos paradas al explorar. Las curvas sin parar en
    lo conocido ganan mucho tiempo pero empeoran el mapa: habría que entender por qué (pose tras la curva,
    votos con la pose dudosa) antes de activarlas. También: rutas en diagonal en la carrera.
-2. **Movimiento fluido:** compensación de zona muerta gradual en `Motion::update` (ahora es todo o nada con
-   `kS`), retroceso de los atascos más suave, barrido continuo en la calibración en vez de 6 paradas.
+2. **Movimiento fluido:** hecho lo principal (rozamiento en rampa, retroceso en un movimiento, calibración
+   por barrido). Queda: el recentrado en "S" tras un atasco son aún 4 movimientos con parada.
 3. **Autoprueba al arrancar** (motores, encoders, giroscopio, láseres) y seguir funcionando con un láser roto.
 4. **Chasis rectangular con eje adelantado** en el simulador (`Physical::rectBody` ya existe) cuando el usuario
    dé las medidas; comprobar que las curvas y los giros caben.

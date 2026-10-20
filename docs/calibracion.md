@@ -5,7 +5,7 @@
 | Qué | Cuándo |
 |---|---|
 | Giroscopio en reposo | al arrancar cualquier modo ("No tocar...") |
-| Desfase de los tres láseres y ancho real del pasillo | al arrancar el **modo 1**, girando en la salida (unos 3 s). Se guarda solo |
+| Desfase de los tres láseres y ancho real del pasillo | al arrancar el **modo 1**, con un barrido continuo en la salida (unos 4 s). Se guarda solo |
 | Láseres laterales y medida de la celda en otra pista | al arrancar el **modo 3** |
 | Modelo de los motores (y lo que cambia con la batería) | en cada recta mientras corre; se guarda solo al terminar |
 | Escala del giroscopio | con las paredes después de cada giro; se guarda sola al terminar |
@@ -45,7 +45,9 @@ Recomendación de hardware: un sensor de reflexión (TCRT5000/QRE1113) mirando a
 
 ## 3. Sensores (automático)
 
-Cada VL53L0X sale de fábrica con su propio desfase (1–2 cm). Sin corregirlo, el ratón cree estar descentrado y se pega a una pared. En el simulador, con desfases de hasta 16 mm cumple 123 de 161 casos sin calibrar y 159 calibrando (error de la calibración: ~2.5 mm).
+Cada VL53L0X sale de fábrica con su propio desfase (1–2 cm). Sin corregirlo, el ratón cree estar descentrado y se pega a una pared. En el simulador, con desfases de hasta 16 mm cumple 123 de 161 casos sin calibrar; calibrando, la calibración deja ~2 mm de error.
+
+Cómo lo hace: un barrido continuo a cada lado (hasta 110°) y vuelta. La lectura más corta de cada láser es la perpendicular a la pared.
 
 - El **modo 1 lo hace solo al arrancar** en la salida (la salida de la competencia tiene pared a los dos lados) y lo guarda. Si la salida está a otra distancia que la de `cellMm`, avisa `PISTA_DISTINTA` y no sale.
 - El **modo 3** (práctica) calibra los laterales al arrancar; el frontal lo toma de la última vez del modo 1.

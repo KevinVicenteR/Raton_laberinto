@@ -113,17 +113,73 @@ void Mouse::goHome(MissionResult& r) {
 }
 
 namespace {
-// Mediana de tres tandas de n lecturas de un sensor (una lectura mala suelta no cambia nada). -1 sin medida.
-int medianReading(Navigator& nav, int sensor) {
-  int l, f, r, v[3];
-  nav.sample(2, l, f, r);  // descartar: pudieron empezar aun girando
-  for (int k = 0; k < 3; ++k) {
-    nav.sample(3, l, f, r);
-    v[k] = sensor == 0 ? l : (sensor == 1 ? f : r);
-    if (v[k] < 0) return -1;
+// Lectura de un sensor perpendicular a una pared plana durante el barrido, cerca de center (grados respecto a
+// la cuadricula): ahi la lectura es la mas corta. Lecturas sueltas falsas fuera; luego se ajusta una parabola
+// a las de +-20 grados (el minimo de las lecturas sueltas saldria corto por el ruido). Si la parabola no sale
+// clara (cerca de la perpendicular la lectura es casi plana), la mediana de las de +-5 grados. angle = donde
+// esta el minimo, o -1e9 si no se sabe. Devuelve -1 sin medida.
+float sweepMin(const Navigator::SweepLog& log, int sensor, float center, float& angle) {
+  angle = -1e9f;
+  int16_t v[Navigator::SweepLog::kMax];
+  float u[Navigator::SweepLog::kMax];
+  int n = 0;
+  for (int i = 0; i < log.n[sensor]; ++i) {
+    const float d = log.ang[sensor][i] - center;
+    if (d < -20.0f || d > 20.0f) continue;
+    u[n] = d;
+    v[n++] = log.mm[sensor][i];
   }
-  return v[0] > v[1] ? (v[1] > v[2] ? v[1] : (v[0] > v[2] ? v[2] : v[0]))
-                     : (v[0] > v[2] ? v[0] : (v[1] > v[2] ? v[2] : v[1]));
+  if (n < 5) return -1.0f;
+  auto median = [](int16_t* a, int m) {
+    for (int x = 1; x < m; ++x)
+      for (int y = x; y > 0 && a[y] < a[y - 1]; --y) {
+        const int16_t t = a[y];
+        a[y] = a[y - 1];
+        a[y - 1] = t;
+      }
+    return static_cast<float>(a[m / 2]);
+  };
+  int16_t tmp[Navigator::SweepLog::kMax];
+  for (int i = 0; i < n; ++i) tmp[i] = v[i];
+  const float med = median(tmp, n);
+  const float tol = med * 0.3f > 10.0f ? med * 0.3f : 10.0f;
+  float s0 = 0, s1 = 0, s2 = 0, s3 = 0, s4 = 0, r0 = 0, r1 = 0, r2 = 0, lo = 1e9f, hi = -1e9f;
+  int nc = 0, k = 0;
+  for (int i = 0; i < n; ++i) {
+    if (fabsf(v[i] - med) > tol) continue;
+    const float x = u[i], r = v[i];
+    s0 += 1;
+    s1 += x;
+    s2 += x * x;
+    s3 += x * x * x;
+    s4 += x * x * x * x;
+    r0 += r;
+    r1 += r * x;
+    r2 += r * x * x;
+    if (x < lo) lo = x;
+    if (x > hi) hi = x;
+    if (fabsf(x) <= 5.0f) tmp[nc++] = v[i];
+    ++k;
+  }
+  const float near = nc >= 3 ? median(tmp, nc) : -1.0f;
+  if (k >= 8 && lo < -8.0f && hi > 8.0f) {
+    // Minimos cuadrados de r = c0 + c1 x + c2 x^2 (Cramer).
+    const float det = s0 * (s2 * s4 - s3 * s3) - s1 * (s1 * s4 - s3 * s2) + s2 * (s1 * s3 - s2 * s2);
+    if (fabsf(det) > 1e-6f) {
+      const float c0 = (r0 * (s2 * s4 - s3 * s3) - s1 * (r1 * s4 - s3 * r2) + s2 * (r1 * s3 - s2 * r2)) / det;
+      const float c1 = (s0 * (r1 * s4 - r2 * s3) - r0 * (s1 * s4 - s3 * s2) + s2 * (s1 * r2 - r1 * s2)) / det;
+      const float c2 = (s0 * (s2 * r2 - s3 * r1) - s1 * (s1 * r2 - s3 * r0) + r0 * (s1 * s3 - s2 * s2)) / det;
+      // Curvatura clara (al menos ~1 mm a 10 grados) y minimo dentro del barrido.
+      if (c2 > 0.01f) {
+        const float x = -c1 / (2.0f * c2);
+        if (x > -12.0f && x < 12.0f) {
+          angle = center + x;
+          return c0 - c1 * c1 / (4.0f * c2);
+        }
+      }
+    }
+  }
+  return near;
 }
 }  // namespace
 
@@ -137,16 +193,33 @@ float Mouse::calibrateSensors(Params& out, bool cellKnown) {
   nav_.begin(out.startX, out.startY, start);
   nav_.setOffsetsCell(nav_.cellPitch());  // lecturas sin corregir mientras se calibra
   const float g90 = nav_.sonda().parallelFactor(1.5708f);
-  const float diagPerp = 0.7071f * (out.diagAheadMm + out.diagLateralMm);  // lateral hacia la pared al girar 45
-  int front[2] = {-1, -1}, diag[2] = {-1, -1};
-  for (int i = 0; i < 2; ++i) {
-    nav_.face(i == 0 ? turnLeft(start) : turnRight(start));
-    front[i] = medianReading(nav_, 1);
-    nav_.aim(i == 0 ? -45.0f : 45.0f);
-    diag[i] = medianReading(nav_, i == 0 ? 0 : 2);
-    nav_.face(start);
-  }
-  char line[96];
+  // Un barrido continuo a cada lado (sin paradas): el frontal pasa por la perpendicular a cada pared (+-90
+  // grados) y cada lateral por la suya (+-(90 - montaje)); ahi la lectura es la mas corta. (Donde cae el
+  // minimo diria tambien lo torcido que se coloco el raton y el angulo real de montaje, pero cerca de la
+  // perpendicular la lectura es casi plana y en el simulador esas estimaciones salian peor que no hacerlas.)
+  static Navigator::SweepLog log;
+  log = Navigator::SweepLog();
+  const float rate = 120.0f;
+  nav_.sweep(110.0f, rate, log);
+  nav_.sweep(0.0f, rate, log);
+  nav_.sweep(-110.0f, rate, log);
+  nav_.sweep(0.0f, rate, log);
+#ifdef RATON_DEBUG
+  if (getenv("SWEEPDBG"))
+    for (int k = 0; k < 3; ++k)
+      for (int i = 0; i < log.n[k]; ++i) printf("BARRIDO s%d %.1f %d\n", k, log.ang[k][i], log.mm[k][i]);
+#endif
+  const float m0 = out.diagMountDeg;
+  float front[2], diag[2], ang;
+  front[0] = sweepMin(log, 1, 90.0f, ang);
+  front[1] = sweepMin(log, 1, -90.0f, ang);
+  diag[0] = sweepMin(log, 0, 90.0f - m0, ang);
+  diag[1] = sweepMin(log, 2, m0 - 90.0f, ang);
+  nav_.face(start);  // terminar alineado con la cuadricula
+  // Con el lateral perpendicular a la pared, lo que el sensor esta mas cerca de ella que el eje.
+  const float mr = m0 / 57.2957795f;
+  const float diagPerp = out.diagAheadMm * cosf(mr) + out.diagLateralMm * sinf(mr);
+  char line[128];
   // Que lados tienen pared de verdad: con la celda conocida, la lectura tiene que ser la de la pared de la
   // celda (+-3 cm); sin conocerla (practica) cualquier pared cerca.
   bool wall[2];
@@ -174,7 +247,8 @@ float Mouse::calibrateSensors(Params& out, bool cellKnown) {
     }
   }
   if (!wall[0] && !wall[1]) {
-    snprintf(line, sizeof(line), "CALIB_SONDA sin paredes a los lados (izq %d der %d)", front[0], front[1]);
+    snprintf(line, sizeof(line), "CALIB_SONDA sin paredes a los lados (izq %d der %d)", static_cast<int>(front[0]),
+             static_cast<int>(front[1]));
     io_.report(line, true);
     return -1;
   }

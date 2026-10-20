@@ -181,12 +181,9 @@ void Motion::update(const Sensors& s, float& dutyL, float& dutyR) {
   // Aceleraciones enormes de un paso (cambios de consigna) no se pasan al modelo.
   const float alc = clampf(al, -3.0f * p_.accel, 3.0f * p_.accel);
   const float arc = clampf(ar, -3.0f * p_.accel, 3.0f * p_.accel);
-  auto ff = [&](float v, float a) {
-    float d = ffScale_ * (p_.kV * v + p_.kA() * a);
-    if (v > 2.0f) d += p_.kS;
-    else if (v < -2.0f) d -= p_.kS;
-    return d;
-  };
+  // Rozamiento (kS) en rampa con la velocidad pedida, no a saltos: al pasar de avanzar a retroceder (o al
+  // arrancar) no hay tiron.
+  auto ff = [&](float v, float a) { return ffScale_ * (p_.kV * v + p_.kA() * a) + p_.kS * clampf(v / 20.0f, -1.0f, 1.0f); };
   // Integral pequeno con limite: quita el error que deja el rozamiento al final de giros y paradas.
   iF_ = clampf(iF_ + errF * dt, -0.5f, 0.5f);
   iR_ = clampf(iR_ + errR * dt, -0.5f, 0.5f);
@@ -202,12 +199,12 @@ void Motion::update(const Sensors& s, float& dutyL, float& dutyR) {
   float l = ff(vl, alc) + fbF - fbR;
   float r = ff(vr, arc) + fbF + fbR;
   // Zona muerta: con la rueda casi parada, una correccion pequena no la mueve (rozamiento estatico). Se
-  // suma kS en el sentido de la correccion para que el error final quede en ~1 mm / ~0.5 grados.
+  // suma kS en el sentido de la correccion para que el error final quede en ~1 mm / ~0.5 grados. Sin saltos:
+  // pasa poco a poco del kS que pone el modelo (segun la velocidad pedida) al de la correccion, y este
+  // crece en rampa hasta 0.02 de duty (no tiembla parado).
   auto deadband = [&](float out, float vcmd) {
-    if (fabsf(vcmd) > 2.0f) return out;
-    if (out > 0.004f) return out + p_.kS;
-    if (out < -0.004f) return out - p_.kS;
-    return 0.0f;
+    const float moving = fabsf(clampf(vcmd / 20.0f, -1.0f, 1.0f));
+    return out + p_.kS * (1.0f - moving) * clampf(out / 0.02f, -1.0f, 1.0f);
   };
   l = deadband(l, vl);
   r = deadband(r, vr);

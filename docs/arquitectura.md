@@ -62,12 +62,12 @@ Lo que vuelve del piso se modela, pero el piso real nunca es como el del modelo.
 - **Tolerancia:** ruido del sensor (~3 %), error del modelo (crece con la distancia) y lo que la duda de la pose mueve esa lectura (pendiente de la sonda × incertidumbre).
 - **Pose:** con paredes ya confirmadas (±3 votos) y cerca, la diferencia entre lectura y predicción corrige el desplazamiento lateral (filtro de Kalman) y el avance (postes, huecos, pared de frente) usando la pendiente de la sonda. Cerca de un borde la relación no es lineal: antes de corregir el avance se comprueba con la sonda que el desplazamiento propuesto de verdad explica la lectura. El rumbo no se corrige con la forma de una sola lectura (un desfase de unos mm lo torcería grados); sale de cómo cambia el desplazamiento al avanzar.
 - **Giros:** girando (más de 40°/s) no se usa ninguna lectura. Lo que se mueva el eje durante un giro en el sitio (las ruedas patinan algo) no se suma al desplazamiento lateral: antes, al acabar una media vuelta se sumaba con el rumbo nuevo y el ratón creía estar 2–3 cm descentrado, y votaba mal paredes clave.
-- **Paso de celda en marcha (también en la competencia):** en cada recta de 2 celdas o más, la diferencia entre la odometría y la pared de enfrente, repartida entre las celdas recorridas, corrige el paso de celda (±5 % del nominal; ±8 % en práctica). Corrige a la vez que la pista no mida lo nominal y que las ruedas no midan lo previsto. Sin esto, en una recta de 5 celdas el ratón empezaba las curvas de la carrera 3–4 cm antes y chocaba.
+- **Paso de celda en marcha (también en la competencia):** al acabar cada recta, la corrección de avance acumulada frente a lo recorrido. La pendiente es lo que la odometría se desvía por milímetro; lo que se arrastra del giro anterior queda en la ordenada y no molesta. Las rectas se juntan con un filtro de Kalman (las largas pesan mucho, las cortas casi nada), dentro de ±5 % del nominal (±8 % en práctica). Corrige a la vez que la pista no mida lo nominal y que las ruedas no midan lo previsto: en el simulador converge a ±0,5 mm del valor real. Sin esto, en una recta de 5 celdas el ratón empezaba las curvas de la carrera 3–4 cm antes y chocaba.
 - **Desfases y pasillo real:** los desfases de los láseres se calibran en la salida suponiendo pasillo = `cellMm − wallMm`. Si el paso aprendido es otro, las tres lecturas se corrigen la mitad de la diferencia (`Navigator::rangeBias`).
 
 Los laterales a 45° ven las paredes de la celda siguiente cuando el eje aún está en la actual: la decisión está lista antes de llegar, sin pararse a mirar.
 
-**Calibración de los sensores** (`Mouse::calibrateSensors`, orden `calsonda`, automática al arrancar el modo 1 y el 3): quieto en la salida, con pared a los dos lados, mira a la izquierda (el frontal mide esa pared de frente), gira 45° atrás (ahora el lateral izquierdo es el perpendicular a la misma pared), vuelve y repite a la derecha. Un cuarto de vuelta a cada mano: el error de escala del giroscopio se anula. Con la celda conocida, izquierda + derecha = pasillo da el desfase del frontal; con la distancia a cada pared, el desfase de cada lateral. En el simulador, con desfases de hasta 16 mm por sensor: 158/161 cumplen con calibración y 123/161 sin ella. Si con la celda de la competencia las paredes de la salida están a otra distancia, avisa `PISTA_DISTINTA` y no sale (usar el modo 3 o `set cellMm`).
+**Calibración de los sensores** (`Mouse::calibrateSensors`, orden `calsonda`, automática al arrancar el modo 1 y el 3): en la salida, con pared a los dos lados, un **barrido continuo** (sin paradas, 120°/s) hasta 110° a cada lado y vuelta. En una pared plana la lectura más corta es la perpendicular: el frontal pasa por ella a ±90° y cada lateral a ±45°. Se ajusta una parábola a las lecturas de ±20° alrededor (sin las lecturas sueltas falsas); si sale demasiado plana, se usa la mediana de ±5°. Ida y vuelta a cada mano: el error de escala del giroscopio se anula. En el simulador: error de 2,0 / 2,3 / 2,2 mm (frontal / laterales) en unos 4 s. Donde cae el mínimo también diría lo torcido que se colocó el ratón y el ángulo real de los laterales, pero cerca de la perpendicular la lectura es tan plana que esas estimaciones salían peor que no hacerlas. Con la celda conocida, izquierda + derecha = pasillo da el desfase del frontal; con la distancia a cada pared, el desfase de cada lateral. En el simulador, con desfases de hasta 16 mm por sensor: 158/161 cumplen con calibración y 123/161 sin ella. Si con la celda de la competencia las paredes de la salida están a otra distancia, avisa `PISTA_DISTINTA` y no sale (usar el modo 3 o `set cellMm`).
 
 Giros:
 - **Explorando:** en el sitio, en el centro de la celda. Tras girar, el frontal confirma que la salida está libre.
@@ -76,7 +76,7 @@ Giros:
 
 Atascos:
 - **Detección:** ruedas que no siguen a la consigna, encoders que avanzan sin que el frontal se acerque, o pared inesperada.
-- **Respuesta:** parar, retroceder 35 mm, enderezarse a la cuadrícula y recentrarse en "S" si los laterales ven que está desplazado. Luego se coloca con el frontal y replanifica.
+- **Respuesta:** parar, retroceder 35 mm enderezándose a la cuadrícula a la vez (un solo movimiento) y recentrarse en "S" si los laterales ven que está desplazado. Luego se coloca con el frontal y replanifica. El rozamiento de los motores se compensa en rampa (no a saltos), así que arrancar marcha atrás o corregir parado no da tirones.
 - **Atascos repetidos:** si se atasca varias veces en la misma celda sin pared visible, esa salida se da por cerrada.
 - **En carrera:** tras un atasco sigue en modo seguro.
 
@@ -86,7 +86,7 @@ Kalman de 2 estados: desplazamiento `y` y error de rumbo `b`.
 - Cada lectura lateral entra con su pendiente de la sonda (`updateLinear`): cuánto cambia la lectura por mm de desplazamiento.
 - El rumbo se observa porque `y` cambia con `v·sin(rumbo real)`.
 - El error estimado se pasa a la cuadrícula, para que el control vaya recto de verdad.
-- Lo que se corrige después de cada giro en el sitio sirve para aprender la **escala del giroscopio**.
+- Lo que se corrige después de cada giro en el sitio sirve para aprender la **escala del giroscopio**, poco a poco (un 8 % de lo que dice cada giro): cada giro deja 2–4° de corrección por otras causas, que se cancelan entre izquierdas y derechas.
 
 ## Explorador (`explorer.cpp`)
 

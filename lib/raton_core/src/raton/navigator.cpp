@@ -132,7 +132,8 @@ void Navigator::begin(int x, int y, Dir h) {
   // cambie el parametro.
   if (p_.cellMm != cellRef_) {
     cell_ = cellRef_ = p_.cellMm;
-    cellUpdates_ = 0;
+    const float sd = (learnCell_ ? 0.06f : 0.03f) * cell_;  // duda inicial del paso
+    cellVar_ = sd * sd;
   }
   startStraight();
   halfCorr_ = 0.5f * (cell_ - p_.wallMm);
@@ -480,36 +481,6 @@ void Navigator::radar(int sensor, int mm) {
              hx, hy, dxf, longVar_, cellPos());
 #endif
     longVar_ -= kx * hx * longVar_;
-    if (!cellLearned_ && sensor == 1 && fabsf(hx) > 0.7f) {
-      // Paso de celda: error acumulado desde el inicio del tramo recto repartido entre las celdas que lleva.
-      // Tambien en la competencia: la pista real no mide lo nominal y las ruedas tampoco (las dos cosas
-      // hacen que la odometria y las celdas no cuadren); en una recta larga serian centimetros.
-      const float facePos = cellPos() + p_.frontAheadMm + h0 + 0.5f * p_.wallMm - 0.5f * cell_;
-      const int k = static_cast<int>(floorf(facePos / cell_ + 0.5f));
-      // Tramos de 2 celdas o mas; en los cortos pesa mas el error con el que se salio del giro anterior.
-      const float n = straightCells_ + k + 0.5f;
-      if (straightCells_ + k >= 2) {
-        cellLearned_ = true;
-        const float err = (straightCorr_ - inn / hx) / n;
-        const float before = cell_;
-        const float gain = learnCell_ && cellUpdates_ == 0 ? 0.6f : 0.35f * clampf(n / 5.0f, 0.3f, 1.0f);
-        const float span = learnCell_ ? 0.08f : 0.05f;
-        ++cellUpdates_;
-        cell_ = clampf(cell_ + gain * err, (1.0f - span) * cellRef_, (1.0f + span) * cellRef_);
-#ifdef RATON_DEBUG
-        if (getenv("CELLDBG"))
-          printf("%.3f PASO err=%.2f celdas=%d+%d corr=%.1f inn=%.1f -> %.1f\n", t_, err, straightCells_, k, straightCorr_,
-                 inn / hx, cell_);
-#endif
-        halfCorr_ = 0.5f * (cell_ - p_.wallMm);
-        sonda_.setup(cell_, p_.wallMm, p_.sensorFovDeg, p_.sensorMaxMm);
-        if (fabsf(cell_ - before) >= 1.0f) {
-          char line[40];
-          snprintf(line, sizeof(line), "PASO_CELDA %d mm", static_cast<int>(cell_ + 0.5f));
-          io_.report(line, false);
-        }
-      }
-    }
     applyCorrection(-dxf, 1.0f);
   }
 }
@@ -600,12 +571,58 @@ void Navigator::applyCorrection(float e, float gain) {
   // e > 0: la celda real esta mas adelante de lo que dice la odometria.
   centerOdo_ += gain * e;
   straightCorr_ += gain * e;
+  addPitchPoint(straightCorr_);
+}
+
+void Navigator::addPitchPoint(float corr) {
+  const float s = motion_.position() - straightStart_;
+  ++regN_;
+  regS_ += s;
+  regS2_ += s * s;
+  regC_ += corr;
+  regSC_ += s * corr;
+}
+
+void Navigator::learnPitch() {
+  // Paso de celda (tambien en la competencia: la pista real no mide lo nominal y las ruedas tampoco; las dos
+  // cosas hacen que odometria y celdas no cuadren, y en una recta larga serian centimetros). Al acabar cada
+  // recta: correccion acumulada frente a lo recorrido. La pendiente es lo que la odometria se desvia por mm;
+  // lo que se arrastra del giro anterior queda en la ordenada y no molesta. Se junta con lo de las rectas
+  // anteriores pesando cada una por lo que dice (Kalman): las largas mucho, las cortas casi nada.
+  if (regN_ < 4) return;
+  const float n = static_cast<float>(regN_), ms = regS_ / n, mc = regC_ / n;
+  const float sss = regS2_ - n * ms * ms;
+  if (sss < n * 0.1f * cell_ * cell_) return;  // poco recorrido entre correcciones (desv. < 0.3 celdas)
+  const float b = (regSC_ - n * ms * mc) / sss;
+  const float z = cell_ * b, r = cell_ * cell_ * 25.0f / sss;  // ~5 mm de ruido por correccion
+  const float k = cellVar_ / (cellVar_ + r);
+  const float before = cell_;
+  const float span = learnCell_ ? 0.08f : 0.05f;
+  cell_ = clampf(cell_ + k * z, (1.0f - span) * cellRef_, (1.0f + span) * cellRef_);
+  cellVar_ = (1.0f - k) * cellVar_ + 0.05f;
+#ifdef RATON_DEBUG
+  if (getenv("CELLDBG"))
+    printf("%.3f PASO n=%d recorrido=%.0f z=%.2f r=%.2f k=%.2f -> %.1f (+-%.1f)\n", t_, regN_, sqrtf(sss / n) * 3.46f, z, r,
+           k, cell_, sqrtf(cellVar_));
+#endif
+  if (fabsf(cell_ - before) > 0.05f) {
+    halfCorr_ = 0.5f * (cell_ - p_.wallMm);
+    sonda_.setup(cell_, p_.wallMm, p_.sensorFovDeg, p_.sensorMaxMm);
+  }
+  if (fabsf(cell_ - before) >= 1.0f) {
+    char line[40];
+    snprintf(line, sizeof(line), "PASO_CELDA %d mm", static_cast<int>(cell_ + 0.5f));
+    io_.report(line, false);
+  }
 }
 
 void Navigator::startStraight() {
+  learnPitch();
   straightCells_ = 0;
   straightCorr_ = 0;
-  cellLearned_ = false;
+  regN_ = 0;
+  regS_ = regS2_ = regC_ = regSC_ = 0;
+  straightStart_ = motion_.position();
 }
 
 void Navigator::steer() {
@@ -806,8 +823,15 @@ void Navigator::learnGyroScale() {
   // Tras girar turnSince_ grados, el filtro lateral ha tenido que corregir gridCorr_ grados con las paredes:
   // si es proporcional al giro, el giroscopio mide de menos (o de mas). Se ajusta la escala poco a poco.
   if (p_.learnGyro && fabsf(turnSince_) >= 89.0f && wallUpdates_ >= 12) {
-    const float eps = clampf(gridCorr_ / turnSince_, -0.05f, 0.05f);
-    const float k = clampf(motion_.gyroScale() * (1.0f + 0.3f * eps), 0.93f, 1.07f);
+    // Cada giro deja 2-4 grados de correccion por otras cosas (lo que se pasa el giro, el filtro): poco a poco
+    // (un 8 % de lo que dice cada uno) para promediar muchos; lo que no depende del sentido se cancela.
+    const float eps = clampf(gridCorr_ / turnSince_, -0.03f, 0.03f);
+    const float k = clampf(motion_.gyroScale() * (1.0f + 0.08f * eps), 0.93f, 1.07f);
+#ifdef RATON_DEBUG
+    if (getenv("GYRODBG"))
+      printf("%.3f GIRO girado=%.0f corregido=%.2f eps=%.4f escala %.4f -> %.4f\n", t_, turnSince_, gridCorr_, eps,
+             motion_.gyroScale(), k);
+#endif
     motion_.setGyroScale(k);
   }
   if (wallUpdates_ >= 12 || fabsf(turnSince_) > 400.0f) {
@@ -888,6 +912,7 @@ void Navigator::centerOnFront(int k) {
     const float face = 0.5f * cell_ - 0.5f * p_.wallMm + k * cell_;
     const float calib = frontStopReading() - (0.5f * cell_ - 0.5f * p_.wallMm - p_.frontAheadMm);
     const float pos = face - (f - calib) - p_.frontAheadMm;  // eje respecto al centro
+    if (fabsf(pos) < 60.0f && k == 0) addPitchPoint(straightCorr_ + cellPos() - pos);  // final de la recta
     if (fabsf(pos) < 60.0f) {
       motion_.moveTo(motion_.position() - pos, 150.0f, 0);
       waitStopped(0.8f);
@@ -910,17 +935,15 @@ bool Navigator::recover(Brain& brain) {
   const int idx = maze_.index(cx_, cy_);
   recoverCount_ = idx == recoverCellIdx_ ? recoverCount_ + 1 : 1;
   recoverCellIdx_ = idx;
-  // 1) Parar y retroceder en linea recta.
+  // 1-2) Parar y retroceder enderezandose a la cuadricula a la vez (un solo movimiento, sin paradas).
   motion_.hold(s_);
   stalled_ = false;
   stallTimer_ = 0;
   pushRefOdo_ = -1e9f;
   const float back = motion_.position() - p_.backoffMm;
   motion_.moveTo(back, 150.0f, 0);
-  waitStopped(1.2f);
-  // 2) Enderezarse a la cuadricula.
   motion_.turnTo(gridAngle_, p_.rotSpeed * 0.5f, p_.rotAccel);
-  waitStopped(1.0f);
+  waitStopped(1.5f);
   stalled_ = false;
   // 3) Recentrar en el pasillo si los laterales ven que esta desplazado (si no, chocaria otra vez con el
   //    mismo poste): paso en "S" de 35 grados.
@@ -975,6 +998,25 @@ bool Navigator::recover(Brain& brain) {
   act_ = Act::None;
   blocked_ = false;
   return true;
+}
+
+void Navigator::sweep(float deg, float rate, SweepLog& log) {
+  motion_.turnTo(gridAngle_ + deg, rate, p_.rotAccel);
+  const float t0 = t_, limit = 0.5f + 2.0f * fabsf(deg - aimAngle()) / rate;
+  while (t_ - t0 < limit) {
+    step();
+    if (io_.stopRequested()) return;
+    // La lectura llega sensorLatencyS tarde: el angulo al que se tomo es el de entonces.
+    const float a = aimAngle() - motion_.measuredRate() * p_.sensorLatencyS;
+    const Range* rr[3] = {&s_.left, &s_.front, &s_.right};
+    for (int i = 0; i < 3; ++i) {
+      if (!rr[i]->fresh || rr[i]->mm < 0 || log.n[i] >= SweepLog::kMax) continue;
+      log.ang[i][log.n[i]] = a;
+      log.mm[i][log.n[i]] = static_cast<int16_t>(rr[i]->mm);
+      ++log.n[i];
+    }
+    if (!motion_.turning() && fabsf(motion_.measuredRate()) < 20.0f) break;
+  }
 }
 
 void Navigator::sample(int n, int& left, int& front, int& right) {

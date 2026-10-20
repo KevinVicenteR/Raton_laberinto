@@ -19,8 +19,8 @@ for i in 0 1 2 3; do
   "$B" --bench $b --desde $a --nivel 2 "$@" > "$D/$i.txt" 2>&1 &
 done
 wait
-cat "$D"/*.txt | grep -E "^(OK|ROCE|FALLO)" > "$D/all.txt"
-[ -n "$SIM_LISTA" ] && cat "$D/all.txt"
+cat "$D"/[0-3].txt | grep -E "^(OK|ROCE|FALLO)" > "$D/todos.log"
+[ -n "$SIM_LISTA" ] && cat "$D/todos.log"
 awk '{n++; if($1!="FALLO") ok++; if($1=="OK") cl++;
   for(i=1;i<=NF;i++){
     if($i ~ /^choques=/){split($i,a,"=");split(a[2],b,"(");c+=b[1]; cr+=b[2]+0}
@@ -36,6 +36,6 @@ awk '{n++; if($1!="FALLO") ok++; if($1=="OK") cl++;
   END {printf "casos %d cumplen %d limpios %d choques %d (carrera %d) atascos %d paredes_mal %d error_pose(avance/lateral/rumbo) %.1f/%.1f/%.2f zigzag %.2f descentrado %.1f max %d\n",
        n, ok, cl, c, cr, st, w, l0/n, l1/n, l2/n, zz/n, dr/n, dm;
        printf "tiempos medios: meta explorando %.1f s (%d), exploracion completa %.1f s, carrera %.1f s (%d)\n",
-       m1/(nm1?nm1:1), nm1, ex/(nex?nex:1), ca/(nca?nca:1), nca}' "$D/all.txt"
-grep FALLO "$D/all.txt" | cut -c1-60
+       m1/(nm1?nm1:1), nm1, ex/(nex?nex:1), ca/(nca?nca:1), nca}' "$D/todos.log"
+grep FALLO "$D/todos.log" | cut -c1-60
 rm -rf "$D"
