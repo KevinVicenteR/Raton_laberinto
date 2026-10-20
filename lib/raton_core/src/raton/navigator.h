@@ -119,7 +119,7 @@ class Navigator {
   void applyCorrection(float e, float gain);
   void startStraight();
   bool waitStopped(float timeout);
-  float arcSpeed() const;
+  float arcSpeed(float radius = 0) const;  // 0 = el de la curva elegida
   bool recover(Brain& brain);
   void checkStall();
   void computeSmoothGeometry();

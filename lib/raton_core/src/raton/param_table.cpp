@@ -30,7 +30,7 @@ const Entry kTable[] = {
     PI(areaRadius, 0, 4), PF(stallS, 0.05f, 3), PF(backoffMm, 0, 100), PI(learnGyro, 0, 1), PI(learnMotor, 0, 1), PF(gyroScale, 0.9f, 1.1f),
     PF(bodyFrontMm, 0, 100), PF(bodyRearMm, 0, 100), PF(bodyWidthMm, 30, 100), PF(sensorHeightMm, 5, 80),
     PF(sensorTiltDeg, -20, 20), PF(wallHeightMm, 20, 100), PF(floorReflect, 0, 1), PF(leftTiltDeg, -10, 10),
-    PF(frontTiltDeg, -10, 10), PF(rightTiltDeg, -10, 10), PI(learnVertical, 0, 1),
+    PF(frontTiltDeg, -10, 10), PF(rightTiltDeg, -10, 10), PI(learnVertical, 0, 1), PI(rangeBiasFromCell, 0, 1),
 };
 
 const int kCount = sizeof(kTable) / sizeof(kTable[0]);

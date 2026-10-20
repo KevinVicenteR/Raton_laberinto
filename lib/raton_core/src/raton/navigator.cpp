@@ -35,11 +35,15 @@ Navigator::Navigator(Platform& io, const Params& p, Maze& maze) : io_(io), p_(p)
 void Navigator::computeSmoothGeometry() {
   // Curva de 90 grados a velocidad constante: rampa angular corta, tramo a w = v / R y rampa de salida.
   // Escalando w con v y la aceleracion angular con v^2 la forma es siempre la misma, asi que se calcula una
-  // vez con v = 1 mm/s. Se elige el radio mas pequeno (curva mas corta) que deja el cuerpo redondo a
-  // distancia segura del poste interior y de la esquina exterior de la celda.
+  // vez con v = 1 mm/s. De los radios que dejan el cuerpo redondo a distancia segura del poste interior y
+  // de la esquina exterior, el mas rapido: con un radio mayor la rueda de fuera va menos por encima del
+  // centro y la curva se puede tomar mas deprisa con los mismos motores. Que empiece y acabe dentro de media
+  // celda, para poder enlazar dos curvas seguidas sin parar.
   const float half = 0.5f * cell_, hw = 0.5f * p_.wallMm;
   const float need = 0.5f * p_.bodyDiamMm + 8.0f;  // radio del raton + margen
   const float ramp = 12.0f;
+  float bestT = 1e9f, bestR = -1, bestX = 0, bestY = 0, bestS = 0;
+  float firstR = -1, firstX = 0, firstY = 0, firstS = 0;  // la mas cerrada que cabe (como antes)
   for (float radius = p_.smoothRadiusMm; radius < 2.0f * cell_; radius += 2.0f) {
     const float w = kDeg / radius;
     const float alpha = w * w / (2.0f * ramp);
@@ -74,13 +78,36 @@ void Navigator::computeSmoothGeometry() {
       const float dout = dxo < dyo ? dxo : dyo;  // distancia a la pared exterior mas cercana
       if (dout < minOuter) minOuter = dout;
     }
-    smoothDf_ = x;
-    smoothDl_ = y;
-    smoothArc_ = s;
-    smoothRadius_ = radius;
-    smoothOk_ = minPost >= need && minOuter >= need - 4.0f && x < cell_ - 10.0f;
-    if (smoothOk_ || minOuter < need - 4.0f) break;
+    if (minOuter < need - 4.0f) break;  // mas abierta ya no cabe
+    const bool fits = minPost >= need && x < cell_ - 10.0f;
+    if (!fits) continue;
+    if (firstR < 0) {
+      firstR = radius;
+      firstX = x;
+      firstY = y;
+      firstS = s;
+    }
+    if (x > half - 3.0f) continue;
+    const float t = (s + 2.0f * (half - x)) / arcSpeed(radius);  // de media celda antes a media despues
+    if (t < bestT) {
+      bestT = t;
+      bestR = radius;
+      bestX = x;
+      bestY = y;
+      bestS = s;
+    }
   }
+  if (bestR < 0) {
+    bestR = firstR;
+    bestX = firstX;
+    bestY = firstY;
+    bestS = firstS;
+  }
+  smoothOk_ = bestR > 0;
+  smoothRadius_ = smoothOk_ ? bestR : p_.smoothRadiusMm;
+  smoothDf_ = bestX;
+  smoothDl_ = bestY;
+  smoothArc_ = bestS;
 }
 
 void Navigator::begin(int x, int y, Dir h) {
@@ -159,7 +186,7 @@ float Navigator::rangeBias() const {
 void Navigator::tick() {
   s_ = io_.tick();
   t_ = s_.t;
-  const int bias = static_cast<int>(floorf(rangeBias() + 0.5f));
+  const int bias = p_.rangeBiasFromCell ? static_cast<int>(floorf(rangeBias() + 0.5f)) : 0;
   if (bias != 0) {
     Range* rr[3] = {&s_.left, &s_.front, &s_.right};
     for (int i = 0; i < 3; ++i)
@@ -707,10 +734,10 @@ void Navigator::plan(Brain& brain) {
   arcStarted_ = false;
 }
 
-float Navigator::arcSpeed() const {
+float Navigator::arcSpeed(float radius) const {
   // En la curva la rueda de fuera va mas rapido que el centro: que no pase de lo que dan los motores (con
   // bateria baja o motores lentos la curva se abriria y chocaria).
-  const float outer = 1.0f + 0.5f * p_.trackMm / smoothRadius_;
+  const float outer = 1.0f + 0.5f * p_.trackMm / (radius > 0 ? radius : smoothRadius_);
   const float cap = 0.85f * motion_.topSpeed() / outer;
   return p_.turnSpeed < cap ? p_.turnSpeed : cap;
 }
@@ -758,7 +785,9 @@ bool Navigator::pivot(int q) {
   } else {
     lateral_.setY(0, 100.0f);  // el avance de antes es ahora el lateral: ~centrado por el frontal
   }
-  lateral_.addHeadingVariance(1.5e-3f);  // ~2 grados por el error de escala del giroscopio
+  // Duda de rumbo por el error de escala del giroscopio (~2.5 % de lo girado): ~2 grados en un cuarto de
+  // vuelta y el doble en media vuelta.
+  lateral_.addHeadingVariance(1.5e-3f);
   lastOdo_ = motion_.position();
   latAge_ = 1e9f;
   longVar_ += lateral_.varY() + 4.0f;  // el avance nuevo es el lateral de antes

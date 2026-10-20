@@ -85,7 +85,7 @@ struct Params {
   // ---------- Velocidades ----------
   float searchSpeed = 400.0f;   // explorando (mm/s)
   float runSpeed = 650.0f;      // carrera con ruta conocida
-  float turnSpeed = 280.0f;     // velocidad en curvas suaves
+  float turnSpeed = 450.0f;     // curvas suaves: tope (manda lo que dan los motores, ver Navigator::arcSpeed)
   float accel = 3000.0f;        // mm/s^2 (0.3 g: las ruedas no patinan)
   float decel = 3000.0f;
   float rotSpeed = 540.0f;      // giro en el sitio (grados/s)
@@ -112,6 +112,7 @@ struct Params {
   int learnGyro = 1;    // escala del giroscopio con las paredes
   int learnMotor = 1;   // escala del modelo del motor en las rectas (bateria, motores sin calibrar)
   int learnVertical = 1;  // inclinacion de cada sensor y reflejo del piso
+  int rangeBiasFromCell = 0;  // experimental: corregir los laseres con el paso de celda aprendido
   float gyroScale = 1.0f;  // escala del giroscopio aprendida (se guarda sola al terminar cada mision)
 };
 
