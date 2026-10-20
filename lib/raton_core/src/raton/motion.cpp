@@ -46,6 +46,7 @@ void Motion::reset(const Sensors& s) {
   rotDone_ = true;
   lastErrR_ = 0;
   iF_ = iR_ = 0;
+  satF_ = 0;
 }
 
 void Motion::measure(const Sensors& s) {
@@ -110,7 +111,13 @@ void Motion::update(const Sensors& s, float& dutyL, float& dutyR) {
       u += 1.5f * p_.decel * dt;
       if (u > 0) u = 0;
     } else {
-      u = profileStep(u, dir_ * (end_ - ideal_), vmax_, vEnd_, p_.accel, p_.decel, dt);
+      // No pedir mas de lo que los motores dan (bateria baja, motores lentos): con duty al maximo hace un
+      // ciclo, la consigna no se adelanta a lo medido. Si no, la consigna se escapa, el error crece y parece
+      // un atasco a toda velocidad. Tope de crucero con el modelo aprendido y margen para corregir el rumbo.
+      const float vTop = topSpeed();
+      u = profileStep(u, dir_ * (end_ - ideal_), vmax_ < vTop ? vmax_ : vTop, vEnd_, p_.accel, p_.decel, dt);
+      const float uMeas = dir_ * vMeas_;
+      if (satF_ * dir_ > 0 && u > uMeas + 40.0f) u = uMeas + 40.0f > 0 ? uMeas + 40.0f : 0;
     }
     v_ = dir_ * u;
     ideal_ += v_ * dt;
@@ -188,7 +195,7 @@ void Motion::update(const Sensors& s, float& dutyL, float& dutyR) {
   // Motores aprendidos en marcha: a velocidad de crucero, lo que tiene que poner la realimentacion es lo que
   // le falta (o sobra) al modelo. Se pasa poco a poco a la escala del modelo (bateria, motores distintos de
   // los parametros), sin calibrar a mano. Constante de tiempo ~2 s de crucero.
-  if (p_.learnMotor && fabsf(v_) > 120.0f && fabsf(a_) < 200.0f && rotDone_ && fabsf(errF) < 20.0f) {
+  if (p_.learnMotor && fabsf(v_) > 120.0f && fabsf(a_) < 200.0f && rotDone_ && fabsf(errF) < 20.0f && satF_ == 0) {
     const float rel = fbF / (p_.kV * fabsf(v_)) * (v_ > 0 ? 1.0f : -1.0f);
     ffScale_ = clampf(ffScale_ + 0.5f * rel * ffScale_ * dt, 0.5f, 2.0f);
   }
@@ -210,6 +217,7 @@ void Motion::update(const Sensors& s, float& dutyL, float& dutyR) {
   float diff = 0.5f * (r - l);
   diff = clampf(diff, -p_.maxDuty, p_.maxDuty);
   const float room = p_.maxDuty - fabsf(diff);
+  satF_ = common > room ? 1.0f : (common < -room ? -1.0f : 0.0f);
   common = clampf(common, -room, room);
   dutyL = common - diff;
   dutyR = common + diff;

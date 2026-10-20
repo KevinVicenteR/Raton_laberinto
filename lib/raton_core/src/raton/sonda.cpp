@@ -44,6 +44,62 @@ void Sonda::setup(float cellMm, float wallMm, float fovDeg, int maxMm) {
     sw += rayW_[j];
   }
   wRef_ = sw / (1200.0f * 1200.0f);
+  for (int j = 0; j < kRays; ++j) rayE_[j] = halfFov_ * rayW_[j];  // media altura del cono en esa columna
+}
+
+void Sonda::setVertical(float sensorHeightMm, float tiltDeg, float wallHeightMm, float floorReflect) {
+  vertical_ = true;
+  h_ = sensorHeightMm;
+  for (int i = 0; i < 3; ++i) setTilt(i, tiltDeg);
+  wallH_ = wallHeightMm;
+  floorR_ = floorReflect;
+}
+
+void Sonda::column(int j, float tilt, float t, float cosInc, bool any, float& w, float& wt, float& wf,
+                   float& wtf) const {
+  w = wt = wf = wtf = 0;
+  const float w0 = rayW_[j];
+  if (!vertical_) {
+    if (!any) return;
+    const float d = t > 10.0f ? t : 10.0f;
+    w = w0 * cosInc / (d * d);
+    wt = w * t;
+    return;
+  }
+  // Angulos (rad) de la columna: de lo a hi, repartidos por igual. Se integra en el angulo vertical e (no
+  // basta el angulo medio: la luz del piso crece como sin^3 y la de cerca pesa mucho mas).
+  const float lo = tilt - rayE_[j], hi = tilt + rayE_[j], k = w0 / (hi - lo);
+  // Por debajo de eFloor el rayo toca el piso antes que la pared; por encima de eTop pasa por encima.
+  const float eFloor = any ? -atanf(h_ / (t > 1.0f ? t : 1.0f)) : 0.0f;
+  const float floorTop = eFloor < hi ? eFloor : hi;
+  if (floorR_ > 0 && floorTop > lo) {
+    // Piso a distancia h / sin(s) (s = -e) visto con incidencia sin(s): peso sin^3(s) / h^2.
+    const float s1 = -floorTop, s2 = -lo, c1 = cosf(s1), c2 = cosf(s2);
+    const float i3 = (c1 - c1 * c1 * c1 / 3.0f) - (c2 - c2 * c2 * c2 / 3.0f);  // integral de sin^3
+    const float i2 = 0.5f * (s2 - s1) - 0.25f * (sinf(2.0f * s2) - sinf(2.0f * s1));  // de sin^2
+    const float kf = k * floorR_;
+    wf = kf * i3 / (h_ * h_);
+    wtf = kf * i2 / h_;
+    w += wf;
+    wt += wtf;
+  }
+  if (!any) return;
+  const float eTop = atanf((wallH_ - h_) / (t > 1.0f ? t : 1.0f));
+  const float a = lo > eFloor ? lo : eFloor, b = hi < eTop ? hi : eTop;
+  if (b > a) {
+    // Pared a t / cos(e) con incidencia cosInc cos(e): peso cosInc cos^3(e) / t^2.
+    const float d = t > 10.0f ? t : 10.0f, sa = sinf(a), sb = sinf(b);
+    const float i3 = (sb - sb * sb * sb / 3.0f) - (sa - sa * sa * sa / 3.0f);  // integral de cos^3
+    const float i2 = 0.5f * (b - a) + 0.25f * (sinf(2.0f * b) - sinf(2.0f * a));  // de cos^2
+    const float kw = k * cosInc / (d * d);
+    w += kw * i3;
+    wt += kw * i2 * d;
+  }
+}
+
+float Sonda::floorStartMm(int sensor) const {
+  const float lo = tilt_[sensor] - halfFov_;
+  return vertical_ && lo < 0 ? h_ / tanf(-lo) : 0.0f;
 }
 
 void Sonda::traceRay(const Maze& m, float x0, float y0, float ux, float uy, Ray& r) const {
@@ -104,44 +160,68 @@ void Sonda::traceRay(const Maze& m, float x0, float y0, float ux, float uy, Ray&
   }
 }
 
-void Sonda::trace(const Maze& m, float x, float y, float ang, Scan& out) const {
+void Sonda::trace(const Maze& m, float x, float y, float ang, Scan& out, int sensor) const {
+  out.sensor = sensor;
   // Direcciones de los rayos girando el eje con las rotaciones precalculadas (sin trigonometria por rayo).
   const float c = cosf(ang), s = sinf(ang);
   for (int j = 0; j < kRays; ++j) {
     Ray& r = out.rays[j];
     traceRay(m, x, y, c * rayCos_[j] - s * raySin_[j], s * rayCos_[j] + c * raySin_[j], r);
-    r.w0 = rayW_[j];
+    r.j = j;
   }
 }
 
+float Sonda::floorDoubt(float d, float sw, float swf, float swfd) {
+  // Si el piso pesa una fraccion fs de la lectura, un error en su reflejo (~50 %) mueve la lectura ~fs x
+  // (d - distancia media del piso) / 2, y uno en su distancia (inclinacion, altura) ~fs x 10 %.
+  if (swf <= 0 || sw <= 0) return 0;
+  const float fs = swf / sw, df = swfd / swf;
+  return fs * (0.5f * fabsf(df - d) + 0.1f * df);
+}
+
 float Sonda::predict(const Maze& m, const Scan& s, const Override* ov) const {
-  float sw = 0, swd = 0;
+  float fd;
+  return predict(m, s, ov, fd);
+}
+
+float Sonda::predict(const Maze& m, const Scan& s, const Override* ov, float& floorSigma) const {
+  const float tilt = tilt_[s.sensor];
+  float sw = 0, swd = 0, swf = 0, swfd = 0;
+  floorSigma = 0;
   for (int j = 0; j < kRays; ++j) {
     const Ray& r = s.rays[j];
-    for (int k = 0; k < r.n; ++k) {
+    float w = 0, wt = 0, wf = 0, wtf = 0;
+    bool found = false;
+    for (int k = 0; k < r.n && !found; ++k) {
       const Hit& hit = r.hits[k];
       bool closed = hit.seg == kSolid;
       if (!closed) {
         if (!ov || !ov->find(hit.seg, closed)) closed = m.segVotes(hit.seg) > 0;
       }
       if (!closed) continue;
-      const float d = hit.t > 10.0f ? hit.t : 10.0f;
-      const float w = r.w0 * hit.cosInc / (d * d);
-      sw += w;
-      swd += w * hit.t;
-      break;
+      column(r.j, tilt, hit.t, hit.cosInc, true, w, wt, wf, wtf);
+      found = true;
     }
+    if (!found) column(r.j, tilt, 0, 0, false, w, wt, wf, wtf);
+    sw += w;
+    swd += wt;
+    swf += wf;
+    swfd += wtf;
   }
   if (sw < wRef_ || sw <= 0) return -1.0f;
   const float d = swd / sw;
-  return d > static_cast<float>(maxMm_) ? -1.0f : d;
+  if (d > static_cast<float>(maxMm_)) return -1.0f;
+  floorSigma = floorDoubt(d, sw, swf, swfd);
+  return d;
 }
 
 void Sonda::prepare(const Maze& m, const Scan& s, const int* cand, int nc, Combo& out) const {
+  const float tilt = tilt_[s.sensor];
   for (int j = 0; j < kRays; ++j) {
     const Ray& r = s.rays[j];
     Combo::R& o = out.rays[j];
     o.n = 0;
+    bool blocked = false;
     for (int k = 0; k < r.n; ++k) {
       const Hit& h = r.hits[k];
       int ci = -1;
@@ -150,30 +230,48 @@ void Sonda::prepare(const Maze& m, const Scan& s, const int* cand, int nc, Combo
           if (cand[q] == h.seg) ci = q;
         if (ci < 0 && m.segVotes(h.seg) <= 0) continue;  // abierta en el mapa: el rayo pasa
       }
-      const float d = h.t > 10.0f ? h.t : 10.0f;
-      o.w[o.n] = r.w0 * h.cosInc / (d * d);
-      o.wt[o.n] = o.w[o.n] * h.t;
+      column(r.j, tilt, h.t, h.cosInc, true, o.w[o.n], o.wt[o.n], o.wf[o.n], o.wtf[o.n]);
       o.cand[o.n] = static_cast<int8_t>(ci);
       ++o.n;
-      if (ci < 0) break;  // siempre cerrada: lo de detras no se ve
+      if (ci < 0) {
+        blocked = true;  // siempre cerrada: lo de detras no se ve
+        break;
+      }
+    }
+    o.wEnd = o.wtEnd = 0;
+    if (!blocked) {
+      float a, b;
+      column(r.j, tilt, 0, 0, false, o.wEnd, o.wtEnd, a, b);
     }
   }
 }
 
-float Sonda::predictMask(const Combo& c, int mask) const {
-  float sw = 0, swd = 0;
+float Sonda::predictMask(const Combo& c, int mask, float* floorSigma) const {
+  float sw = 0, swd = 0, swf = 0, swfd = 0;
   for (int j = 0; j < kRays; ++j) {
     const Combo::R& o = c.rays[j];
-    for (int k = 0; k < o.n; ++k) {
+    int k = 0;
+    for (; k < o.n; ++k) {
       if (o.cand[k] >= 0 && !((mask >> o.cand[k]) & 1)) continue;
       sw += o.w[k];
       swd += o.wt[k];
+      swf += o.wf[k];
+      swfd += o.wtf[k];
       break;
     }
+    if (k == o.n) {
+      sw += o.wEnd;
+      swd += o.wtEnd;
+      swf += o.wEnd;
+      swfd += o.wtEnd;
+    }
   }
+  if (floorSigma) *floorSigma = 0;
   if (sw < wRef_ || sw <= 0) return -1.0f;
   const float d = swd / sw;
-  return d > static_cast<float>(maxMm_) ? -1.0f : d;
+  if (d > static_cast<float>(maxMm_)) return -1.0f;
+  if (floorSigma) *floorSigma = floorDoubt(d, sw, swf, swfd);
+  return d;
 }
 
 float Sonda::parallelFactor(float theta) const {

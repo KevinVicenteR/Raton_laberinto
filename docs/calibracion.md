@@ -9,7 +9,10 @@
 | Láseres laterales y medida de la celda en otra pista | al arrancar el **modo 3** |
 | Modelo de los motores (y lo que cambia con la batería) | en cada recta mientras corre; se guarda solo al terminar |
 | Escala del giroscopio | con las paredes después de cada giro; se guarda sola al terminar |
-| Paso real de la celda | en marcha en el modo 3 |
+| Paso real de la celda (y error de las ruedas) | en marcha en cada recta, en todos los modos |
+| Lo que la pista mide de más o de menos en los láseres | a la vez que el paso de celda |
+| Inclinación de cada láser y reflejo del piso | en marcha con las paredes ya seguras; se guarda solo al terminar |
+| Velocidad máxima real (batería) | en marcha: la carrera y las curvas no piden más de lo que dan los motores |
 
 En la competencia basta con poner el ratón en la salida y arrancar el modo 1. Lo único que el ratón no puede saber solo es **dónde está la meta** (no tiene sensor de suelo para ver la línea blanca) y el tamaño del laberinto y la salida si no son los del reglamento: ver los puntos 1 y 2.
 
@@ -48,6 +51,20 @@ Cada VL53L0X sale de fábrica con su propio desfase (1–2 cm). Sin corregirlo, 
 - El **modo 3** (práctica) calibra los laterales al arrancar; el frontal lo toma de la última vez del modo 1.
 - A mano, solo si se quiere: `calsonda` (o el botón "Calibrar sensores"), `calfront` (solo el frontal, centrado mirando a una pared) y `calside <ancho del pasillo>` (fija `cellMm` y calibra). También se guardan solos.
 - `diagMountDeg` (45) y `sensorFovDeg` (25) describen el montaje y el cono; solo cambiarlos si el montaje es otro.
+
+**Medir una vez con una regla** (lo único que conviene dar a mano; el resto se ajusta solo):
+- `set sensorHeightMm <altura del centro de los láseres sobre el piso>` (por defecto 40);
+- `set wallHeightMm 50` (alto de las paredes de la pista);
+- `set frontAheadMm`, `set diagAheadMm`, `set diagLateralMm`: posición de los láseres respecto al eje de las ruedas;
+- `set bodyFrontMm`, `set bodyRearMm`, `set bodyWidthMm`: chasis visto desde arriba respecto al eje;
+- `set wheelDiamMm` (diámetro de las ruedas).
+
+Altura de los láseres: con el sensor **alto** (cerca del borde de la pared) la parte de arriba del cono pasa por encima de las paredes y ve lo de fuera del laberinto (personas, mochilas). Con el sensor **bajo**, la parte de abajo toca el piso a pocos cm (a 25 mm, a ~11 cm) y en un pasillo vacío parece que hay algo delante. El ratón modela las dos cosas y aprende la inclinación real, pero lo mejor es:
+- el centro del láser a unos 25–35 mm del piso, con paredes de 50 mm;
+- el láser **a ras** de la carcasa (o con el agujero ancho y limpio): si queda metido detrás de un agujero estrecho, el borde del agujero refleja luz y da lecturas falsas cortas;
+- para probar en casa, paredes al menos tan altas como las de la competencia.
+
+Nota: si el firmware nuevo añade parámetros, los guardados en flash con la versión anterior no se cargan (otro tamaño) y se usan los valores por defecto. La calibración automática los vuelve a ajustar en la primera salida del modo 1.
 
 ## 4. Motores (automático)
 

@@ -26,6 +26,15 @@ Physical perturbed(const raton::Params& p, int level, uint32_t seed) {
   ph.stictionDuty = p.kS;
   ph.motorTau = p.motorTauS;
   ph.fovDeg = gFovDeg;
+  ph.sensorHeightMm = p.sensorHeightMm;
+  ph.sensorTiltDeg = p.sensorTiltDeg;
+  ph.wallHeightMm = p.wallHeightMm;
+  ph.floorReflect = p.floorReflect;
+  ph.outsideMm = gOutsideMm;
+  ph.bodyFrontMm = p.bodyFrontMm;
+  ph.bodyRearMm = p.bodyRearMm;
+  ph.bodyWidthMm = p.bodyWidthMm;
+  ph.rectBody = !(p.bodyFrontMm == 45.0f && p.bodyRearMm == 45.0f && p.bodyWidthMm == 90.0f);
   if (level <= 0) return ph;
   std::mt19937 rng(seed * 7919u + 13u);
   std::uniform_real_distribution<float> u(-1, 1);
@@ -53,7 +62,19 @@ Physical perturbed(const raton::Params& p, int level, uint32_t seed) {
   ph.startY = 4.0f * k * u(rng);
   ph.startDeg = 1.5f * k * u(rng);
   ph.mountDeg = 45.0f + 1.5f * k * u(rng);  // montaje real de los laterales con error
+  ph.sensorHeightMm = p.sensorHeightMm + 2.0f * k * u(rng);
+  ph.sensorTiltDeg = p.sensorTiltDeg + 1.0f * k * u(rng);
+  ph.wallHeightMm = p.wallHeightMm + 2.0f * k * u(rng);
+  ph.floorReflect = p.floorReflect * (1.0f + 0.25f * k * u(rng));
   // Motores muy distintos de los parametros (sin calibrar, bateria baja): SIM_MOTOR=escala de velocidad.
+  if (getenv("SIM_NOVERT")) {  // diagnostico: sin errores en lo vertical (altura, inclinacion, piso)
+    ph.sensorHeightMm = p.sensorHeightMm;
+    ph.sensorTiltDeg = p.sensorTiltDeg;
+    ph.wallHeightMm = p.wallHeightMm;
+    ph.floorReflect = p.floorReflect;
+  }
+  if (const char* fr = getenv("SIM_FLOOR")) ph.floorReflect = static_cast<float>(atof(fr));
+  if (const char* hh = getenv("SIM_H")) ph.sensorHeightMm = static_cast<float>(atof(hh));  // altura real distinta
   if (const char* m = getenv("SIM_MOTOR")) {
     ph.vmaxFull *= static_cast<float>(atof(m));
     ph.stictionDuty *= 2.0f - static_cast<float>(atof(m));

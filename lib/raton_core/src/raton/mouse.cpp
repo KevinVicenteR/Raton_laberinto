@@ -19,6 +19,10 @@ void Mouse::resetMap() {
 
 MissionResult Mouse::finish(MissionResult r, float t0) {
   r.totalTime = nav_.now() - t0;
+  char line[80];
+  snprintf(line, sizeof(line), "SENSORES inclinacion I%+.1f F%+.1f D%+.1f grados, piso %.2f", nav_.sensorTilt(0),
+           nav_.sensorTilt(1), nav_.sensorTilt(2), nav_.floorReflect());
+  io_.report(line, true);
   r.recoveries = nav_.recoveries();
   r.escapes = explorer_.escapes();
   r.maxAreaTime = explorer_.maxAreaTime();
@@ -131,6 +135,7 @@ float Mouse::calibrateSensors(Params& out, bool cellKnown) {
   // Con el cono del VL53L0X una pared de frente lee la distancia x G(90) (~1.006).
   const Dir start = static_cast<Dir>(out.startDir & 3);
   nav_.begin(out.startX, out.startY, start);
+  nav_.setOffsetsCell(nav_.cellPitch());  // lecturas sin corregir mientras se calibra
   const float g90 = nav_.sonda().parallelFactor(1.5708f);
   const float diagPerp = 0.7071f * (out.diagAheadMm + out.diagLateralMm);  // lateral hacia la pared al girar 45
   int front[2] = {-1, -1}, diag[2] = {-1, -1};
@@ -152,10 +157,16 @@ float Mouse::calibrateSensors(Params& out, bool cellKnown) {
   for (int i = 0; i < 2; ++i)
     if (front[i] >= 5) maze_.observe(out.startX, out.startY, i == 0 ? turnLeft(start) : turnRight(start), wall[i], 3);
   if (cellKnown && front[0] >= 5 && front[1] >= 5 && front[0] < 300 && front[1] < 300) {
-    // Pared cerca a los dos lados pero a otra distancia que la de la competencia: es otra pista.
-    const float measured = (front[0] + front[1]) / g90 + 2.0f * out.frontAheadMm;
+    // Pared cerca a los dos lados pero a otra distancia que la de la competencia: es otra pista. Un VL53L0X
+    // sin calibrar puede leer 1-2 cm de mas o de menos: lo confirman los laterales (otros sensores, otro
+    // desfase) si pudieron medir.
     const float nominal = out.cellMm - out.wallMm;
-    if (measured > 1.25f * nominal || measured < 0.75f * nominal) {
+    auto off = [nominal](float measured) { return measured > 1.25f * nominal || measured < 0.75f * nominal; };
+    const bool frontOff = off((front[0] + front[1]) / g90 + 2.0f * out.frontAheadMm);
+    const bool diagOk = diag[0] >= 5 && diag[1] >= 5 && diag[0] < 300 && diag[1] < 300;
+    const bool diagOff = !diagOk || off((diag[0] + diag[1]) / g90 + 2.0f * diagPerp);
+    const float measured = (front[0] + front[1]) / g90 + 2.0f * out.frontAheadMm;
+    if (frontOff && diagOff) {
       snprintf(line, sizeof(line), "PISTA_DISTINTA pasillo %d mm y cellMm %d: usa el modo 3 (practica) o set cellMm",
                static_cast<int>(measured), static_cast<int>(out.cellMm));
       io_.report(line, true);
@@ -187,6 +198,8 @@ float Mouse::calibrateSensors(Params& out, bool cellKnown) {
   out.leftOffsetMm -= static_cast<int>(floorf(eD[0] + 0.5f));
   out.rightOffsetMm -= static_cast<int>(floorf(eD[1] + 0.5f));
   const float corridor = wall[0] && wall[1] ? wallDist[0] + wallDist[1] : -1.0f;
+  // Desfases calibrados con este pasillo: si luego en marcha el paso de celda resulta otro, se corrigen.
+  nav_.setOffsetsCell(cellKnown || corridor <= 0 ? out.cellMm : corridor + out.wallMm);
   snprintf(line, sizeof(line), "CALIB_SONDA desfases F%d I%d D%d (corregido %d %d %d) pasillo %d mm",
            out.frontOffsetMm, out.leftOffsetMm, out.rightOffsetMm, static_cast<int>(-eF), static_cast<int>(-eD[0]),
            static_cast<int>(-eD[1]), static_cast<int>(corridor));

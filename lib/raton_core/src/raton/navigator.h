@@ -59,9 +59,16 @@ class Navigator {
   float aimAngle() const { return motion_.angle() - gridAngle_; }
   const Sonda& sonda() const { return sonda_; }
   float gyroScale() { return motion_.gyroScale(); }
+  // Lo aprendido en marcha de los sensores: inclinacion de cada uno (grados) y reflejo del piso.
+  float sensorTilt(int sensor) const { return sonda_.tiltDeg(sensor); }
+  float floorReflect() const { return sonda_.floorReflect(); }
   float cellPitch() const { return cell_; }
   // Pista de medida incierta (practica): ajustar el paso de celda en marcha con las paredes de enfrente.
   void setLearnCell(bool on) { learnCell_ = on; }
+  // Paso de celda que se supuso al calibrar los desfases de los sensores (0 = el de los parametros). Si la
+  // pista mide otra cosa, las lecturas se corrigen con lo aprendido en marcha.
+  void setOffsetsCell(float c) { offsetsCell_ = c; }
+  float rangeBias() const;
 
   int x() const { return cx_; }
   int y() const { return cy_; }
@@ -90,6 +97,9 @@ class Navigator {
   void sense();
   void radar(int sensor, int mm);
   void frontCheck(int mm);
+  // La lectura del frontal la explica la pared de la frontera k mejor que lo que hay sin ella (piso, lejos).
+  bool frontSeesWall(int k, int mm);
+  void learnVertical(int sensor, int mm, float h0);
   // Pose del sensor (0 izq, 1 frente, 2 der) en el marco del laberinto, con la pose del raton desplazada
   // fwd mm hacia delante, lat mm a la izquierda y dpsi rad (para los jacobianos).
   void sensorPose(int sensor, float fwd, float lat, float dpsi, float& x, float& y, float& ang) const;
@@ -109,6 +119,7 @@ class Navigator {
   void applyCorrection(float e, float gain);
   void startStraight();
   bool waitStopped(float timeout);
+  float arcSpeed() const;
   bool recover(Brain& brain);
   void checkStall();
   void computeSmoothGeometry();
@@ -159,6 +170,7 @@ class Navigator {
   Sonda::Scan scan_, scanJ_;
   Sonda::Combo combo_;
   float longVar_ = 25.0f;  // varianza del avance (mm^2)
+  float vertKey_[7] = {};   // parametros verticales con los que se preparo la sonda (si cambian, de nuevo)
 
   float stallTimer_ = 0;
   float pushRefOdo_ = -1e9f;
@@ -181,7 +193,9 @@ class Navigator {
   // Tramo recto actual, para el ajuste del paso: celdas avanzadas y correcciones aplicadas desde su inicio.
   int straightCells_ = 0;
   float straightCorr_ = 0;
-  bool cellLearned_ = false;
+  bool cellLearned_ = false;  // ya se ajusto en este tramo recto
+  int cellUpdates_ = 0;
+  float offsetsCell_ = 0;
   float halfCorr_ = 71.5f;   // medio pasillo
   bool smooth_ = false;
   float vmax_ = 300.0f;

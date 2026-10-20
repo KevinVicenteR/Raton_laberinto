@@ -53,6 +53,8 @@ class Motion {
   float idealAngle() const { return idealAngle_; }
   // Escala del modelo del motor aprendida en marcha (1 = los parametros; > 1 = motores mas debiles).
   float motorScale() const { return ffScale_; }
+  // Velocidad de crucero que los motores dan de verdad (modelo aprendido, con margen para el rumbo).
+  float topSpeed() const { return (0.9f * p_.maxDuty - p_.kS) / (ffScale_ * p_.kV); }
   void setMotorScale(float k) { ffScale_ = k; }
   float angularRate() const { return w_; }       // consigna (grados/s)
   float measuredRate() const { return wMeas_; }
@@ -77,6 +79,7 @@ class Motion {
   float lastErrR_ = 0;
   float iF_ = 0, iR_ = 0;
   float ffScale_ = 1.0f;
+  float satF_ = 0;  // el ciclo anterior el avance iba con duty al maximo (+1 adelante, -1 atras)
 };
 
 }  // namespace raton

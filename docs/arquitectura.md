@@ -33,7 +33,8 @@ La placa (`firmware/board.cpp`) atiende Bluetooth y Serie en el tiempo sobrante 
 - **Avance:** perfil trapezoidal hacia una posición final con velocidad final (0 = parar, `turnSpeed` = entrar en curva).
 - **Rumbo:** perfil trapezoidal (giros) o rumbo de cuadrícula más corrección de centrado (rectas).
 - **Salida por rueda:** `kS·signo + kV·v + kA·a` (modelo del motor, `kA = kV·τ`) más PID sobre el error de posición y de rumbo, con compensación de zona muerta (rozamiento estático).
-- **Saturación:** se prioriza el giro.
+- **Saturación:** se prioriza el giro. Con el duty al máximo, la consigna no se adelanta a lo medido, y la velocidad de crucero no pasa de lo que los motores dan de verdad (`Motion::topSpeed`, con el modelo aprendido). Antes, con batería baja la consigna se escapaba, el error crecía y parecía un atasco a toda velocidad.
+- **Curvas de la carrera:** la velocidad de curva se limita para que la rueda de fuera no pida más de lo que da el motor (`Navigator::arcSpeed`); si no, la curva se abre y choca.
 - **Rumbo medido:** giroscopio interpolado con los encoders entre muestras.
 
 El DRV8833 se maneja en *slow decay* a 20 kHz: una entrada fija en alto y la otra con PWM invertido. Así la velocidad es casi proporcional al duty y el N20 conserva par a baja velocidad, según la hoja de datos del DRV8833.
@@ -42,14 +43,27 @@ El DRV8833 se maneja en *slow decay* a 20 kHz: una entrada fija en alto y la otr
 
 El VL53L0X no mide un rayo fino: ilumina un **cono de 25°** y devuelve una media de las distancias pesada por la luz que vuelve (más peso a lo cercano y a lo que está de frente). Con los laterales a 45° la mancha sobre la pared mide de 4 a 9 cm según el pasillo, y cerca de un hueco o de un poste la lectura mezcla las dos cosas. El simulador antiguo usaba un rayo fino; con el cono real en el simulador el código anterior pasaba de 42/42 a 34/42 en la batería de la competencia, igual que los fallos vistos en la pista de madera.
 
-**Sonda** (`sonda.h`): para una pose y un estado de paredes, traza el cono entero (9 rayos) por la rejilla de paredes con su grosor y los postes de las esquinas, y calcula la lectura esperada con el mismo modelo que el simulador. Coincide con el sensor simulado con 3 mm de error medio.
+**Sonda** (`sonda.h`): para una pose y un estado de paredes, traza el cono entero (9 rayos) por la rejilla de paredes con su grosor y los postes de las esquinas, y calcula la lectura esperada con el mismo modelo que el simulador. Coincide con el sensor simulado con 2 mm de error medio y sin sesgo, con el sensor entre 15 y 45 mm de altura.
+
+**El cono también se abre en vertical** (sensor a `sensorHeightMm`, paredes de `wallHeightMm`). Cada columna del cono se reparte, integrando en el ángulo vertical, entre:
+- **piso:** la parte de abajo lo toca a `h / tan(12,5°)` (a 40 mm, ~18 cm; a 25 mm, ~11 cm). En un pasillo vacío el frontal "ve algo delante": es el piso;
+- **pared;**
+- **por encima:** con el sensor alto, la parte de arriba pasa por encima de las paredes y mira fuera del laberinto.
+
+Lo que vuelve del piso se modela, pero el piso real nunca es como el del modelo. Por eso cada predicción lleva una **duda por el piso**: la fracción de la lectura que es piso × lo que la movería un error del 50 % en su reflejo y del 10 % en su distancia. Esa duda ensancha la tolerancia del radar y resta peso a la lectura para la pose.
+
+**Se aprende en marcha** (`learnVertical`, `Navigator::learnVertical`): la inclinación real de cada sensor (absorbe también el error de altura) y el reflejo del piso. Se ajustan con las lecturas que el mapa ya explica (paredes seguras, pose bien conocida, en recta) por gradiente normalizado: cada lectura mueve poco, así que el ruido se promedia. Al terminar la misión se guardan (`leftTiltDeg`, `frontTiltDeg`, `rightTiltDeg`, `floorReflect`).
+
+**¿Es pared o es piso?** (`frontSeesWall`): antes de parar por una pared inesperada, de darse por atascado empujando una pared o de colocarse con el frontal, se compara con la sonda si la lectura se parece más a "pared en esa frontera" o a "sin pared" (piso y lo de detrás). El detector de "empuja una pared y el frontal no se acerca" además solo actúa por debajo de donde empieza el piso: el piso avanza con el ratón y su lectura no cambia, y antes eso parecía un atasco.
 
 **Radar** (cada lectura de cada sensor, en `Navigator::radar`):
 - **Mapa por hipótesis:** se toman las paredes que el cono puede alcanzar (hasta 6) y se prueban todas sus combinaciones, cerrada o abierta. Una pared se vota solo si todas las combinaciones que explican la lectura coinciden en ella. Si unas la explican con pared y otras sin pared, esa lectura no dice nada de ella. Si ninguna la explica, la pose está mal y no se vota.
 - **Alcance:** los laterales votan paredes de esta celda y la siguiente; el frontal, hasta dos celdas. Sin medida (más de 60 cm o perdida dos veces) solo se deduce que lo cercano está libre.
 - **Tolerancia:** ruido del sensor (~3 %), error del modelo (crece con la distancia) y lo que la duda de la pose mueve esa lectura (pendiente de la sonda × incertidumbre).
 - **Pose:** con paredes ya confirmadas (±3 votos) y cerca, la diferencia entre lectura y predicción corrige el desplazamiento lateral (filtro de Kalman) y el avance (postes, huecos, pared de frente) usando la pendiente de la sonda. Cerca de un borde la relación no es lineal: antes de corregir el avance se comprueba con la sonda que el desplazamiento propuesto de verdad explica la lectura. El rumbo no se corrige con la forma de una sola lectura (un desfase de unos mm lo torcería grados); sale de cómo cambia el desplazamiento al avanzar.
-- **Giros:** girando (más de 40°/s) no se usa ninguna lectura.
+- **Giros:** girando (más de 40°/s) no se usa ninguna lectura. Lo que se mueva el eje durante un giro en el sitio (las ruedas patinan algo) no se suma al desplazamiento lateral: antes, al acabar una media vuelta se sumaba con el rumbo nuevo y el ratón creía estar 2–3 cm descentrado, y votaba mal paredes clave.
+- **Paso de celda en marcha (también en la competencia):** en cada recta de 2 celdas o más, la diferencia entre la odometría y la pared de enfrente, repartida entre las celdas recorridas, corrige el paso de celda (±5 % del nominal; ±8 % en práctica). Corrige a la vez que la pista no mida lo nominal y que las ruedas no midan lo previsto. Sin esto, en una recta de 5 celdas el ratón empezaba las curvas de la carrera 3–4 cm antes y chocaba.
+- **Desfases y pasillo real:** los desfases de los láseres se calibran en la salida suponiendo pasillo = `cellMm − wallMm`. Si el paso aprendido es otro, las tres lecturas se corrigen la mitad de la diferencia (`Navigator::rangeBias`).
 
 Los laterales a 45° ven las paredes de la celda siguiente cuando el eje aún está en la actual: la decisión está lista antes de llegar, sin pararse a mirar.
 

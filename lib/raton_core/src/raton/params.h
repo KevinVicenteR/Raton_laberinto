@@ -24,10 +24,15 @@ struct Params {
   bool knownBounds = true;  // el borde exterior es pared
 
   // ---------- Mecanica (CALIBRAR) ----------
-  float wheelDiamMm = 34.0f;
+  float wheelDiamMm = 34.0f;                  // se afina solo en marcha (paredes de frente)
   float countsPerRev = 7.0f * 4.0f * 100.0f;  // N20 1:100, 7 pulsos x 4 flancos
-  float trackMm = 75.0f;                      // distancia entre ruedas
-  float bodyDiamMm = 90.0f;                   // chasis (redondo): para comprobar choques en simulacion
+  float trackMm = 75.0f;                      // distancia entre ruedas (se afina sola en los giros)
+  float bodyDiamMm = 90.0f;                   // chasis visto como circulo (curvas suaves, simulacion)
+  // Chasis visto desde arriba respecto al eje de las ruedas: lo que sobresale por delante y por detras y el
+  // ancho. Si las ruedas estan adelante, la cola barre un circulo grande al girar en el sitio.
+  float bodyFrontMm = 45.0f;
+  float bodyRearMm = 45.0f;
+  float bodyWidthMm = 90.0f;
 
   // ---------- Sensores VL53L0X ----------
   // Frontal en el centro y dos laterales a 45 grados (no hay sensores a 90 grados).
@@ -35,8 +40,19 @@ struct Params {
   float diagAheadMm = 30.0f;    // laterales: por delante del eje...
   float diagLateralMm = 30.0f;  // ...y separados del centro hacia cada lado
   float diagMountDeg = 45.0f;   // angulo de montaje de los laterales respecto al avance
-  // El VL53L0X ilumina un cono (25 grados): la sonda lo modela entero (ver sonda.h).
+  // El VL53L0X ilumina un cono (25 grados): la sonda lo modela entero (ver sonda.h), tambien en vertical:
+  // la parte de arriba del cono pasa por encima de las paredes si el sensor esta alto, y la de abajo toca el
+  // piso a h / tan(12.5) (con el sensor a 40 mm, a ~18 cm: "ve algo delante" en un pasillo vacio).
   float sensorFovDeg = 25.0f;
+  float sensorHeightMm = 40.0f;  // centro de los sensores sobre el piso (MEDIR: set sensorHeightMm)
+  float sensorTiltDeg = 0.0f;    // inclinacion de los sensores (+ = hacia arriba)
+  float wallHeightMm = 50.0f;    // paredes del laberinto (reglamento: 5 cm)
+  float floorReflect = 0.3f;     // cuanto refleja el piso frente a una pared (suelo negro ~0.1, madera ~0.4)
+  // Lo que cada sensor mira de mas hacia arriba (izquierdo, frontal, derecho) y el reflejo del piso se
+  // aprenden solos en marcha con las paredes ya seguras y se guardan al terminar (learnVertical).
+  float leftTiltDeg = 0.0f;
+  float frontTiltDeg = 0.0f;
+  float rightTiltDeg = 0.0f;
   int frontOffsetMm = 0;        // se suma a cada lectura (calibracion: calsonda / calfront)
   int leftOffsetMm = 0;
   int rightOffsetMm = 0;
@@ -95,6 +111,7 @@ struct Params {
   // ---------- Autocalibracion en marcha ----------
   int learnGyro = 1;    // escala del giroscopio con las paredes
   int learnMotor = 1;   // escala del modelo del motor en las rectas (bateria, motores sin calibrar)
+  int learnVertical = 1;  // inclinacion de cada sensor y reflejo del piso
   float gyroScale = 1.0f;  // escala del giroscopio aprendida (se guarda sola al terminar cada mision)
 };
 

@@ -80,6 +80,7 @@ int main(int argc, char** argv) {
     else if (a == "--cono") sim::gFovDeg = static_cast<float>(atof(next()));
     else if (a == "--nivel") onlyLevel = atoi(next());
     else if (a == "--sincal") sim::gAutoCal = false;
+    else if (a == "--fuera") sim::gOutsideMm = static_cast<float>(atof(next()));
     else if (a == "--desde") from = atoi(next());
     else if (a == "--time") timeLimit = static_cast<float>(atof(next()));
     else if (a == "--smooth") p.smoothTurnsSearch = true;
@@ -173,6 +174,8 @@ int main(int argc, char** argv) {
          "giro_escala=%.4f offsets F%d I%d D%d salida %.1f,%.1f %.1fgr\n",
          ph.cellMm, ph.wallMm, ph.wheelDiamL, ph.wheelDiamR, ph.trackMm, ph.fovDeg > 0 ? ph.mountDeg : ph.diagAngleDeg, ph.motorTau, ph.vmaxFull,
          ph.motorAsym, ph.gyroScale, ph.offsetF, ph.offsetL, ph.offsetR, ph.startX, ph.startY, ph.startDeg);
+  printf("fisica: sensores a %.1f mm inclinados %+.1f grados, paredes de %.1f mm, piso %.2f\n", ph.sensorHeightMm,
+         ph.sensorTiltDeg, ph.wallHeightMm, ph.floorReflect);
   const sim::CaseResult r = sim::runCase(truth, p, ph, simSeed >= 0 ? static_cast<uint32_t>(simSeed) : seed, true, true, trace, timeLimit);
   printf("%s %s\n", r.clean() ? "OK" : (r.ok() ? "ROCE" : "FALLO"), sim::describe(r).c_str());
   return r.ok() ? 0 : 1;

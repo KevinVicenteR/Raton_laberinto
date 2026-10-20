@@ -101,11 +101,27 @@ void Navigator::begin(int x, int y, Dir h) {
   blocked_ = false;
   stalled_ = false;
   stallTimer_ = 0;
-  cell_ = p_.cellMm;
-  cellRef_ = cell_;
+  // El paso de celda aprendido se conserva de una mision a otra (explorar y luego la carrera) salvo que
+  // cambie el parametro.
+  if (p_.cellMm != cellRef_) {
+    cell_ = cellRef_ = p_.cellMm;
+    cellUpdates_ = 0;
+  }
   startStraight();
   halfCorr_ = 0.5f * (cell_ - p_.wallMm);
   sonda_.setup(cell_, p_.wallMm, p_.sensorFovDeg, p_.sensorMaxMm);
+  // Lo vertical se aprende en marcha: se conserva de una mision a otra salvo que cambien los parametros.
+  const float key[7] = {p_.sensorHeightMm, p_.sensorTiltDeg, p_.wallHeightMm, p_.floorReflect,
+                        p_.leftTiltDeg,    p_.frontTiltDeg,  p_.rightTiltDeg};
+  bool same = true;
+  for (int i = 0; i < 7; ++i) same = same && key[i] == vertKey_[i];
+  if (!same) {
+    sonda_.setVertical(p_.sensorHeightMm, p_.sensorTiltDeg, p_.wallHeightMm, p_.floorReflect);
+    sonda_.setTilt(0, p_.sensorTiltDeg + p_.leftTiltDeg);
+    sonda_.setTilt(1, p_.sensorTiltDeg + p_.frontTiltDeg);
+    sonda_.setTilt(2, p_.sensorTiltDeg + p_.rightTiltDeg);
+    for (int i = 0; i < 7; ++i) vertKey_[i] = key[i];
+  }
   longVar_ = 25.0f;
   computeSmoothGeometry();
   char line[64];
@@ -133,9 +149,22 @@ void Navigator::step() {
   setMotorsFromMotion();
 }
 
+float Navigator::rangeBias() const {
+  // Los desfases se calibraron suponiendo pasillo = celda - pared: si el paso real (aprendido con la odometria
+  // en las rectas) es otro, las tres lecturas quedan cortas o largas la mitad de la diferencia.
+  const float ref = offsetsCell_ > 0 ? offsetsCell_ : cellRef_;
+  return clampf(0.5f * (cell_ - ref), -10.0f, 10.0f);
+}
+
 void Navigator::tick() {
   s_ = io_.tick();
   t_ = s_.t;
+  const int bias = static_cast<int>(floorf(rangeBias() + 0.5f));
+  if (bias != 0) {
+    Range* rr[3] = {&s_.left, &s_.front, &s_.right};
+    for (int i = 0; i < 3; ++i)
+      if (rr[i]->mm >= 0) rr[i]->mm += bias;
+  }
   setMotorsFromMotion();
   const bool straight = !motion_.turning();
   if (straight) {
@@ -144,6 +173,9 @@ void Navigator::tick() {
     steer();
     checkStall();
   } else {
+    // Girando: lo que se mueva el eje no es avance en el rumbo de la celda (en un giro en el sitio las ruedas
+    // patinan algo). Sin esto, al acabar el giro se sumaria al desplazamiento lateral con el rumbo nuevo.
+    lastOdo_ = motion_.position();
     checkStall();
   }
 #ifdef RATON_DEBUG
@@ -208,7 +240,9 @@ void Navigator::sense() {
   // que el control vaya realmente recto.
   const float odo = motion_.position();
   const float ds = odo - lastOdo_;
-  lateral_.predict(ds, headingError() / kDeg);
+  // Con el rumbo lejos de la cuadricula (acabando un giro, antes de cambiar de celda) el modelo lineal del
+  // desplazamiento no vale.
+  if (fabsf(headingError()) < 20.0f) lateral_.predict(ds, headingError() / kDeg);
   longVar_ += (learnCell_ ? 0.3f : 0.2f) * fabsf(ds);
   lastOdo_ = odo;
   const float bias = clampf(lateral_.takeBias() * kDeg, -0.5f, 0.5f);
@@ -267,20 +301,21 @@ bool Navigator::confident(const Sonda::Scan& scan, float reach) const {
 void Navigator::radar(int sensor, int mm) {
   float x, y, ang;
   sensorPose(sensor, 0, 0, 0, x, y, ang);
-  sonda_.trace(maze_, x, y, ang, scan_);
+  sonda_.trace(maze_, x, y, ang, scan_, sensor);
   const float far = static_cast<float>(sonda_.maxMm()) + 100.0f;
   auto val = [far](float r) { return r < 0 ? far : r; };
   const float m = val(static_cast<float>(mm));
 
   // Sensibilidad de la lectura a la pose (con el mapa de ahora): cuanto cambia al mover el raton 2 mm
   // adelante o a la izquierda. Sirve para la tolerancia del mapa y para corregir la pose.
-  const float h0 = sonda_.predict(maze_, scan_);
+  float floor0 = 0;  // duda por el piso de la prediccion con el mapa de ahora
+  const float h0 = sonda_.predict(maze_, scan_, nullptr, floor0);
   float hx = 0, hy = 0;
   bool slopes = h0 >= 0;
   if (slopes) {
     for (int q = 0; q < 2; ++q) {
       sensorPose(sensor, q == 0 ? 2.0f : 0, q == 1 ? 2.0f : 0, 0, x, y, ang);
-      sonda_.trace(maze_, x, y, ang, scanJ_);
+      sonda_.trace(maze_, x, y, ang, scanJ_, sensor);
       const float hq = sonda_.predict(maze_, scanJ_);
       if (hq < 0) {
         slopes = false;
@@ -344,10 +379,13 @@ void Navigator::radar(int sensor, int mm) {
   int good = 0;
   const float goodTol = 1.5f * tol;
   for (int mask = 0; mask < (1 << nc); ++mask) {
-    const float pr = sonda_.predictMask(combo_, mask);
+    float fsig;
+    const float pr = sonda_.predictMask(combo_, mask, &fsig);
     // Sin medida = la media del cono pasa del alcance: cualquier prediccion lejana (> 60 % del alcance) lo
     // explica, el modelo de lejos no es fino. Solo descarta paredes que darian un eco claro y cercano.
-    const bool ok = mm >= 0 ? (pr >= 0 && fabsf(pr - m) < goodTol)
+    // Si buena parte de lo que vuelve es piso, la prediccion es dudosa: mas margen (con el sensor bajo, el
+    // piso a una celda se parece a una pared).
+    const bool ok = mm >= 0 ? (pr >= 0 && fabsf(pr - m) < sqrtf(goodTol * goodTol + 4.0f * fsig * fsig))
                             : (pr < 0 || pr > 0.6f * static_cast<float>(sonda_.maxMm()));
     if (!ok) continue;
     ++good;
@@ -369,6 +407,8 @@ void Navigator::radar(int sensor, int mm) {
     }
   }
 
+  learnVertical(sensor, mm, h0);
+
   // ---- Pose: solo con lo que ya esta confirmado y cerca (de lejos el cono roza paredes en angulo y un
   //      pequeno error del modelo moveria mucho la pose) ----
   const float nearMax = sensor == 1 ? 1.5f * cell_ : 0.9f * cell_ + 40.0f;
@@ -377,7 +417,7 @@ void Navigator::radar(int sensor, int mm) {
   if (fabsf(hx) > 4.0f || fabsf(hy) > 4.0f) return;
   float inn = static_cast<float>(mm) - h0;
   if (fabsf(inn) > 3.0f * tol + 10.0f) return;
-  const float r = noise * noise + model2;
+  const float r = noise * noise + model2 + floor0 * floor0;
   if (fabsf(hy) > 0.15f) {
     // El rumbo NO se corrige con la forma de una sola lectura: un desfase de unos mm de un sensor (o su
     // angulo de montaje) lo torceria grados. El rumbo sale de como cambia el desplazamiento al avanzar.
@@ -401,7 +441,7 @@ void Navigator::radar(int sensor, int mm) {
     const float full = clampf(inn / hx, -40.0f, 40.0f);
     if (fabsf(inn) > 2.0f * sqrtf(r)) {
       sensorPose(sensor, full, 0, 0, x, y, ang);
-      sonda_.trace(maze_, x, y, ang, scanJ_);
+      sonda_.trace(maze_, x, y, ang, scanJ_, sensor);
       const float hv = sonda_.predict(maze_, scanJ_);
       if (hv < 0 || fabsf(static_cast<float>(mm) - hv) > 0.5f * fabsf(inn)) return;
     }
@@ -413,15 +453,27 @@ void Navigator::radar(int sensor, int mm) {
              hx, hy, dxf, longVar_, cellPos());
 #endif
     longVar_ -= kx * hx * longVar_;
-    if (learnCell_ && !cellLearned_ && sensor == 1 && fabsf(hx) > 0.7f) {
+    if (!cellLearned_ && sensor == 1 && fabsf(hx) > 0.7f) {
       // Paso de celda: error acumulado desde el inicio del tramo recto repartido entre las celdas que lleva.
+      // Tambien en la competencia: la pista real no mide lo nominal y las ruedas tampoco (las dos cosas
+      // hacen que la odometria y las celdas no cuadren); en una recta larga serian centimetros.
       const float facePos = cellPos() + p_.frontAheadMm + h0 + 0.5f * p_.wallMm - 0.5f * cell_;
       const int k = static_cast<int>(floorf(facePos / cell_ + 0.5f));
+      // Tramos de 2 celdas o mas; en los cortos pesa mas el error con el que se salio del giro anterior.
+      const float n = straightCells_ + k + 0.5f;
       if (straightCells_ + k >= 2) {
         cellLearned_ = true;
-        const float err = (straightCorr_ - inn / hx) / (straightCells_ + k + 0.5f);
+        const float err = (straightCorr_ - inn / hx) / n;
         const float before = cell_;
-        cell_ = clampf(cell_ + 0.6f * err, 0.92f * cellRef_, 1.08f * cellRef_);
+        const float gain = learnCell_ && cellUpdates_ == 0 ? 0.6f : 0.35f * clampf(n / 5.0f, 0.3f, 1.0f);
+        const float span = learnCell_ ? 0.08f : 0.05f;
+        ++cellUpdates_;
+        cell_ = clampf(cell_ + gain * err, (1.0f - span) * cellRef_, (1.0f + span) * cellRef_);
+#ifdef RATON_DEBUG
+        if (getenv("CELLDBG"))
+          printf("%.3f PASO err=%.2f celdas=%d+%d corr=%.1f inn=%.1f -> %.1f\n", t_, err, straightCells_, k, straightCorr_,
+                 inn / hx, cell_);
+#endif
         halfCorr_ = 0.5f * (cell_ - p_.wallMm);
         sonda_.setup(cell_, p_.wallMm, p_.sensorFovDeg, p_.sensorMaxMm);
         if (fabsf(cell_ - before) >= 1.0f) {
@@ -433,6 +485,63 @@ void Navigator::radar(int sensor, int mm) {
     }
     applyCorrection(-dxf, 1.0f);
   }
+}
+
+void Navigator::learnVertical(int sensor, int mm, float h0) {
+  // Inclinacion real de cada sensor (y su altura) y reflejo del piso: deciden que parte del cono toca el piso
+  // o pasa por encima de las paredes, y a mano no se miden bien. Se ajustan solos con las lecturas que el
+  // mapa ya explica (paredes seguras, pose bien conocida, en recto), poco a poco: media de muchas lecturas.
+  if (!p_.learnVertical || mm < 0 || h0 < 0 || motion_.turning() || fabsf(headingError()) > 3.0f) return;
+  if (longVar_ > 30.0f || lateral_.varY() > 25.0f) return;
+  if (!confident(scan_, static_cast<float>(sonda_.maxMm()))) return;
+  const float t0 = sonda_.tiltDeg(sensor), f0 = sonda_.floorReflect();
+  sonda_.setTilt(sensor, t0 + 0.5f);
+  const float pt = sonda_.predict(maze_, scan_);
+  sonda_.setTilt(sensor, t0);
+  sonda_.setFloorReflect(f0 * 1.2f);
+  const float pf = sonda_.predict(maze_, scan_);
+  sonda_.setFloorReflect(f0);
+  if (pt < 0 || pf < 0) return;
+  const float gt = (pt - h0) * 2.0f;    // mm por grado
+  const float gf = (pf - h0) * 5.485f;  // mm por unidad de ln(reflejo) (1 / ln 1.2)
+  const float g2 = gt * gt + gf * gf;
+  if (g2 < 9.0f) return;  // esta lectura casi no depende de ellos (pared cerca de frente)
+  // Gradiente normalizado: cada lectura mueve poco; el ruido y los errores de pose se promedian.
+  const float e = clampf(static_cast<float>(mm) - h0, -25.0f, 25.0f);
+  const float k = 0.02f * e / (g2 + 25.0f);
+  sonda_.setTilt(sensor, clampf(t0 + k * gt, p_.sensorTiltDeg - 8.0f, p_.sensorTiltDeg + 8.0f));
+  sonda_.setFloorReflect(clampf(f0 * expf(k * gf), 0.03f, 1.0f));
+}
+
+bool Navigator::frontSeesWall(int k, int mm) {
+  // Con el sensor a cierta altura, el frontal ve el piso a unos centimetros (y por encima de las paredes lo
+  // de fuera): una lectura corta no siempre es una pared. Se compara con la sonda: que leeria con la pared
+  // de la frontera k (0 = salida de esta celda) y sin ella (piso, paredes lejanas segun el mapa).
+  if (mm < 0) return false;
+  const int x = cx_ + k * dx(h_), y = cy_ + k * dy(h_);
+  if (!maze_.inside(x, y)) return true;
+  int seg;
+  switch (h_) {
+    case NORTH: seg = Maze::hSeg(x, y + 1); break;
+    case SOUTH: seg = Maze::hSeg(x, y); break;
+    case EAST: seg = Maze::vSeg(x + 1, y); break;
+    default: seg = Maze::vSeg(x, y); break;
+  }
+  if (maze_.segBorder(seg)) return true;
+  float sx, sy, ang;
+  sensorPose(1, 0, 0, 0, sx, sy, ang);
+  sonda_.trace(maze_, sx, sy, ang, scanJ_);
+  Sonda::Override ov;
+  ov.set(seg, true);
+  const float pc = sonda_.predict(maze_, scanJ_, &ov);
+  ov.set(seg, false);
+  float po = sonda_.predict(maze_, scanJ_, &ov);
+  if (pc < 0) return false;
+  if (po < 0) po = static_cast<float>(sonda_.maxMm()) + 100.0f;
+  // Sin distancia fija alrededor de pc: justo cuando se usa esto (pared que no se esperaba, atasco) el avance
+  // puede estar mal. Basta con que la lectura este mas cerca de "pared" que de "sin pared".
+  if (po - pc < 15.0f) return true;  // la sonda no distingue (rumbo raro): como antes
+  return static_cast<float>(mm) < 0.5f * (pc + po);
 }
 
 void Navigator::frontCheck(int mm) {
@@ -449,7 +558,8 @@ void Navigator::frontCheck(int mm) {
   const bool passing = !decided_ || act_ == Act::Forward || !(cx_ == actX_ && cy_ == actY_);
   const float vv = motion_.speed();
   const float stopDist = vv * vv / (2.0f * p_.decel);
-  if (fabsf(residual) < 0.3f * cell_ && passing && dist < frontStopReading() + stopDist + 30.0f) {
+  if (fabsf(residual) < 0.3f * cell_ && passing && dist < frontStopReading() + stopDist + 30.0f &&
+      frontSeesWall(0, mm)) {
     if (++blockedHits_ >= 2) {
       blocked_ = true;
       maze_.observe(cx_, cy_, h_, true, 2);
@@ -494,12 +604,20 @@ void Navigator::checkStall() {
   } else {
     stallTimer_ = 0;
   }
-  // 2) Empujando una pared con las ruedas patinando: los encoders avanzan pero el frontal no se acerca.
-  if (motion_.turning() || motion_.speed() < 40.0f || s_.front.mm < 0 || s_.front.mm > 250) {
+  // 2) Empujando una pared con las ruedas patinando: los encoders avanzan pero el frontal no se acerca. Solo
+  //    si lo que ve el frontal es una pared (el piso o lo lejano no se acercan aunque el raton avance): mas
+  //    cerca de lo que empieza el piso y explicado por una pared en el mapa.
+  const float floorStart = sonda_.floorStartMm(1);
+  const float pushMax = floorStart > 0 && 0.8f * floorStart < 250.0f ? 0.8f * floorStart : 250.0f;
+  if (motion_.turning() || motion_.speed() < 40.0f || s_.front.mm < 0 || s_.front.mm > pushMax) {
     pushRefOdo_ = -1e9f;
     return;
   }
   if (!s_.front.fresh) return;
+  if (!frontSeesWall(0, s_.front.mm) && !frontSeesWall(1, s_.front.mm)) {
+    pushRefOdo_ = -1e9f;
+    return;
+  }
   if (pushRefOdo_ < -1e8f) {
     pushRefOdo_ = motion_.position();
     pushRefFront_ = s_.front.mm;
@@ -572,7 +690,7 @@ void Navigator::plan(Brain& brain) {
       planX_ = nx + (k + 1) * dx(h_);
       planY_ = ny + (k + 1) * dy(h_);
       planArc_ = smooth_ && smoothOk_;
-      planVEnd_ = planArc_ ? p_.turnSpeed : 0.0f;
+      planVEnd_ = planArc_ ? arcSpeed() : 0.0f;
     } else {
       planActive_ = false;
       motion_.cruise(vmax_);
@@ -580,13 +698,21 @@ void Navigator::plan(Brain& brain) {
   } else if ((act_ == Act::Left || act_ == Act::Right) && smooth_ && smoothOk_ &&
              motion_.position() < cCenter - smoothDf_ - 5.0f) {
     planArc_ = true;
-    planVEnd_ = p_.turnSpeed;
+    planVEnd_ = arcSpeed();
     arcPlanned_ = true;
   } else {
     planVEnd_ = 0;
   }
   if (planActive_) motion_.moveTo(planTarget(), vmax_, planVEnd_);
   arcStarted_ = false;
+}
+
+float Navigator::arcSpeed() const {
+  // En la curva la rueda de fuera va mas rapido que el centro: que no pase de lo que dan los motores (con
+  // bateria baja o motores lentos la curva se abriria y chocaria).
+  const float outer = 1.0f + 0.5f * p_.trackMm / smoothRadius_;
+  const float cap = 0.85f * motion_.topSpeed() / outer;
+  return p_.turnSpeed < cap ? p_.turnSpeed : cap;
 }
 
 bool Navigator::waitStopped(float timeout) {
@@ -618,6 +744,11 @@ bool Navigator::pivot(int q) {
     if (!motion_.turning() && fabsf(motion_.angle() - target) < 3.0f && fabsf(motion_.measuredRate()) < 40.0f)
       break;
   }
+#ifdef RATON_DEBUG
+  if (getenv("PIVDBG"))
+    printf("%.3f PIVOTE q=%d y=%.1f varY=%.1f pos=%.1f ang=%.1f target=%.1f\n", t_, q, lateral_.y(), lateral_.varY(),
+           cellPos(), motion_.angle(), target);
+#endif
   gridAngle_ = target;
   h_ = static_cast<Dir>((h_ + 4 - q) & 3);  // q > 0 = izquierda (antihorario)
   centerOdo_ = motion_.position();
@@ -679,7 +810,7 @@ bool Navigator::checkFrontAfterPivot() {
     }
   }
   if (fresh < 2) return maze_.passable(cx_, cy_, h_, true);
-  const bool wall = mm >= 0 && mm < frontStopReading() + 0.45f * cell_;
+  const bool wall = mm >= 0 && mm < frontStopReading() + 0.45f * cell_ && frontSeesWall(0, mm);
   maze_.observe(cx_, cy_, h_, wall, 2);
   return !wall;
 }
@@ -716,6 +847,7 @@ void Navigator::centerOnFront(int k) {
   motion_.hold(s_);
   int l, f, r;
   sample(2, l, f, r);
+  if (!frontSeesWall(k, f)) f = -1;  // lo que ve no es la pared (piso, lejos): no moverse por ello
   if (f >= 0) {
     const float face = 0.5f * cell_ - 0.5f * p_.wallMm + k * cell_;
     const float calib = frontStopReading() - (0.5f * cell_ - 0.5f * p_.wallMm - p_.frontAheadMm);
@@ -788,7 +920,7 @@ bool Navigator::recover(Brain& brain) {
     }
   }
   // 4) Si el frontal ve una pared cerca, es la de esta celda: ubicar el avance con ella.
-  if (f >= 0 && f < 0.5f * cell_ + 40.0f) {
+  if (f >= 0 && f < 0.5f * cell_ + 40.0f && frontSeesWall(0, f)) {
     const float face = 0.5f * cell_ - 0.5f * p_.wallMm;
     const float calib = frontStopReading() - (face - p_.frontAheadMm);
     const float pos = face - (f - calib) - p_.frontAheadMm;

@@ -46,6 +46,7 @@ World::World(const Maze& truth, const Physical& ph) : truth_(truth), ph_(ph) {
 
 float gFovDeg = 25.0f;
 bool gAutoCal = true;
+float gOutsideMm = 0.0f;
 
 float World::raycast(float x, float y, float ang, float maxd, int* axis) const {
   const float ddx = cosf(ang), ddy = sinf(ang);
@@ -84,25 +85,102 @@ float World::raycast(float x, float y, float ang, float maxd, int* axis) const {
 }
 
 float World::coneReading(float x, float y, float ang, float fovDeg) const {
-  // Cono: rayos repartidos en el angulo, cada uno con el peso de la luz que devuelve (seccion del cono,
-  // coseno de incidencia / distancia^2). La lectura es la media pesada; con poca senal, 2000 (nada).
-  const int kRays = 13;
+  // Cono en 3D: columnas repartidas en el angulo horizontal y, en cada una, rayos repartidos en vertical
+  // (seccion circular del cono). Cada rayo toca la primera cara que encuentra a su altura (las paredes
+  // miden wallHeightMm), el piso, o pasa por encima de todo y llega a lo de fuera. Peso = luz que vuelve
+  // (coseno de incidencia / distancia^2, x reflejo). La lectura es la media pesada; con poca senal, 2000.
+  const int kCols = 13, kRows = 7;
+  const float half = 0.5f * fovDeg / kDeg;
+  const float h = ph_.sensorHeightMm, H = ph_.wallHeightMm, tilt = ph_.sensorTiltDeg / kDeg;
   float sw = 0, swd = 0;
-  for (int j = 0; j < kRays; ++j) {
-    const float f = -1.0f + (2.0f * j + 1.0f) / kRays;  // -1..1 dentro del cono
-    const float a = ang + f * 0.5f * fovDeg / kDeg;
-    int axis = 0;
-    const float dj = raycast(x, y, a, 2000.0f, &axis);
-    if (dj >= 2000.0f) continue;
-    const float inc = axis == 0 ? fabsf(cosf(a)) : fabsf(sinf(a));
-    const float dd = std::max(dj, 10.0f);
-    const float w = sqrtf(1.0f - f * f) * inc / (dd * dd);
-    sw += w;
-    swd += w * dj;
+  struct Face {
+    float t;
+    int axis;
+  };
+  Face faces[24];
+  for (int j = 0; j < kCols; ++j) {
+    const float f = -1.0f + (2.0f * j + 1.0f) / kCols;  // -1..1 dentro del cono
+    const float a = ang + f * half;
+    const float ddx = cosf(a), ddy = sinf(a);
+    // Todas las caras que cruza en horizontal, de la mas cercana a la mas lejana.
+    int n = 0;
+    for (const Rect& r : rects_) {
+      float t0 = 0, t1 = 2000.0f;
+      int ax = 0;
+      if (fabsf(ddx) < 1e-9f) {
+        if (x < r.x0 || x > r.x1) continue;
+      } else {
+        float p = (r.x0 - x) / ddx, q = (r.x1 - x) / ddx;
+        if (p > q) std::swap(p, q);
+        t0 = std::max(t0, p);
+        t1 = std::min(t1, q);
+        if (t0 > t1) continue;
+      }
+      if (fabsf(ddy) < 1e-9f) {
+        if (y < r.y0 || y > r.y1) continue;
+      } else {
+        float p = (r.y0 - y) / ddy, q = (r.y1 - y) / ddy;
+        if (p > q) std::swap(p, q);
+        if (p > t0) ax = 1;
+        t0 = std::max(t0, p);
+        t1 = std::min(t1, q);
+        if (t0 > t1) continue;
+      }
+      if (n < 24) faces[n++] = {t0, ax};
+    }
+    std::sort(faces, faces + n, [](const Face& p, const Face& q) { return p.t < q.t; });
+    const float chord = sqrtf(1.0f - f * f);
+    for (int k = 0; k < kRows; ++k) {
+      const float g = -1.0f + (2.0f * k + 1.0f) / kRows;
+      const float e = tilt + g * half * chord;
+      const float ce = cosf(e), te = tanf(e);
+      const float sFloor = e < 0 ? h / -te : 1e9f;
+      float range = -1, inc = 0, refl = 1;
+      for (int q = 0; q < n && range < 0; ++q) {
+        if (faces[q].t >= sFloor) break;
+        if (h + faces[q].t * te <= H) {
+          range = faces[q].t / ce;
+          inc = (faces[q].axis == 0 ? fabsf(ddx) : fabsf(ddy)) * ce;
+        }
+      }
+      if (range < 0 && sFloor < 2000.0f) {
+        range = sFloor / ce;
+        inc = fabsf(sinf(e));
+        refl = ph_.floorReflect;
+      }
+      if (range < 0 && ph_.outsideMm > 0) {
+        range = ph_.outsideMm;
+        inc = 1.0f;
+      }
+      if (range < 0) continue;
+      const float dd = std::max(range, 10.0f);
+      const float w = chord / kRows * inc * refl / (dd * dd);
+      sw += w;
+      swd += w * range;
+    }
   }
   // Umbral: una pared de frente que llena el cono a 1200 mm (media de sqrt(1 - f^2) = pi / 4).
   const float ref = 0.785f / (1200.0f * 1200.0f);
-  return sw / kRays >= ref ? swd / sw : 2000.0f;
+  return sw / kCols >= ref ? swd / sw : 2000.0f;
+}
+
+bool World::collidesBody(float x, float y, float th, float front, float rear, float w) const {
+  // Separacion de ejes entre el rectangulo girado del chasis y cada caja (paredes y postes).
+  const float c = cosf(th), s = sinf(th);
+  const float cx = x + 0.5f * (front - rear) * c, cy = y + 0.5f * (front - rear) * s;
+  const float hl = 0.5f * (front + rear), hw = 0.5f * w;
+  const float ex = fabsf(hl * c) + fabsf(hw * s), ey = fabsf(hl * s) + fabsf(hw * c);  // caja que lo contiene
+  for (const Rect& r : rects_) {
+    if (cx + ex < r.x0 || cx - ex > r.x1 || cy + ey < r.y0 || cy - ey > r.y1) continue;
+    // Ejes del chasis: proyectar la caja.
+    const float rx = 0.5f * (r.x0 + r.x1) - cx, ry = 0.5f * (r.y0 + r.y1) - cy;
+    const float bx = 0.5f * (r.x1 - r.x0), by = 0.5f * (r.y1 - r.y0);
+    const float along = rx * c + ry * s, across = -rx * s + ry * c;
+    if (fabsf(along) > hl + bx * fabsf(c) + by * fabsf(s)) continue;
+    if (fabsf(across) > hw + bx * fabsf(s) + by * fabsf(c)) continue;
+    return true;
+  }
+  return false;
 }
 
 bool World::collides(float x, float y, float rad) const {
@@ -172,7 +250,11 @@ void SimPlatform::physics(float dt) {
   const float nx = x_ + v * cosf(th_ + 0.5f * w * dt) * dt;
   const float ny = y_ + v * sinf(th_ + 0.5f * w * dt) * dt;
   const float rad = 0.5f * ph_.bodyDiamMm;
-  if (world_.collides(nx, ny, rad)) {
+  auto hits = [&](float px, float py, float pth) {
+    return ph_.rectBody ? world_.collidesBody(px, py, pth, ph_.bodyFrontMm, ph_.bodyRearMm, ph_.bodyWidthMm)
+                        : world_.collides(px, py, rad);
+  };
+  if (hits(nx, ny, nth)) {
     // Contra la pared: puede girar en el sitio si no choca, pero no avanzar.
     if (!touching_) {
       ++contacts_;
@@ -182,7 +264,7 @@ void SimPlatform::physics(float dt) {
     }
     touching_ = true;
     contactTime_ += dt;
-    if (!world_.collides(x_, y_, rad)) th_ = nth;
+    if (!hits(x_, y_, nth)) th_ = nth;
     bl_ = br_ = 0;
     wl_ *= 0.2f;  // la rueda se frena contra la pared (el encoder casi no cuenta)
     wr_ *= 0.2f;

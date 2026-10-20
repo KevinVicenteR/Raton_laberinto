@@ -197,9 +197,11 @@ void testSonda() {
   Maze truth;
   CHECK(sim::loadMazeFile(std::string(RATON_MAZES_DIR) + "/reglamento_2026.txt", truth));
   sim::Physical ph;
+  ph.sensorHeightMm = 40.0f;  // sensor alto: parte del cono pasa por encima de las paredes y toca el piso
   sim::World world(truth, ph);
   Sonda sonda;
   sonda.setup(ph.cellMm, ph.wallMm, 25.0f, 600);
+  sonda.setVertical(ph.sensorHeightMm, ph.sensorTiltDeg, ph.wallHeightMm, ph.floorReflect);
   std::mt19937 rng(5);
   std::uniform_real_distribution<float> u(0, 1);
   int n = 0, bad = 0, missing = 0;

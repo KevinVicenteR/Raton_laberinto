@@ -517,10 +517,21 @@ void App::saveLearned() {
   mo.setMotorScale(1.0f);
   const float g = mo.gyroScale();
   if (g > 0.93f && g < 1.07f) params_.gyroScale = g;
+  // Inclinacion de cada sensor y reflejo del piso, aprendidos con las paredes ya seguras.
+  raton::Navigator& nav = mouse_.navigator();
+  float* tilts[3] = {&params_.leftTiltDeg, &params_.frontTiltDeg, &params_.rightTiltDeg};
+  for (int i = 0; i < 3; ++i) {
+    const float t = nav.sensorTilt(i) - params_.sensorTiltDeg;
+    if (t > -10.0f && t < 10.0f) *tilts[i] = t;
+  }
+  const float fl = nav.floorReflect();
+  if (fl > 0.0f && fl <= 1.0f) params_.floorReflect = fl;
   const bool ok = storage::saveParams(params_);
-  char out[80];
-  snprintf(out, sizeof(out), "APRENDIDO motor x%d/1000 giro x%d/1000 %s", static_cast<int>(k * 1000),
-           static_cast<int>(g * 1000), ok ? "(guardado)" : "(ERROR_FLASH)");
+  char out[120];
+  snprintf(out, sizeof(out), "APRENDIDO motor x%d/1000 giro x%d/1000 inclinacion %d/%d/%d decimas piso %d%% %s",
+           static_cast<int>(k * 1000), static_cast<int>(g * 1000), static_cast<int>(params_.leftTiltDeg * 10),
+           static_cast<int>(params_.frontTiltDeg * 10), static_cast<int>(params_.rightTiltDeg * 10),
+           static_cast<int>(params_.floorReflect * 100), ok ? "(guardado)" : "(ERROR_FLASH)");
   reply(out);
 }
 

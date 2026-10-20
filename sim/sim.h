@@ -35,6 +35,16 @@ struct Physical {
   // vuelve (mas fuerte de cerca y de frente). Los laterales montados a mountDeg.
   float fovDeg = 0.0f;
   float mountDeg = 45.0f;
+  // En vertical: altura e inclinacion de los sensores, altura de las paredes, reflejo del piso y lo que hay
+  // fuera del laberinto (gente, mesas) a outsideMm, que se ve por encima de las paredes (0 = nada).
+  float sensorHeightMm = 25.0f;
+  float sensorTiltDeg = 0.0f;
+  float wallHeightMm = 50.0f;
+  float floorReflect = 0.3f;
+  float outsideMm = 0.0f;
+  // Chasis (rectangulo respecto al eje de las ruedas) para los choques.
+  bool rectBody = false;
+  float bodyFrontMm = 45.0f, bodyRearMm = 45.0f, bodyWidthMm = 90.0f;
   float motorTau = 0.04f;     // s
   float vmaxFull = 750.0f;    // mm/s con duty 1
   float stictionDuty = 0.05f;
@@ -64,6 +74,8 @@ class World {
   // Lectura sin ruido de un VL53L0X con cono de fovDeg (2000 = sin senal).
   float coneReading(float x, float y, float ang, float fovDeg) const;
   bool collides(float x, float y, float r) const;
+  // Chasis rectangular (front/rear respecto al eje, ancho w) con rumbo th: toca alguna pared o poste.
+  bool collidesBody(float x, float y, float th, float front, float rear, float w) const;
   const raton::Maze& truth() const { return truth_; }
 
  private:
@@ -164,6 +176,8 @@ class SimPlatform : public raton::Platform {
 extern float gFovDeg;
 // Calibrar los sensores al arrancar (como el modo 1). --sincal lo quita.
 extern bool gAutoCal;
+// Objetos fuera del laberinto a esta distancia (se ven por encima de las paredes). --fuera.
+extern float gOutsideMm;
 
 // Laberintos de prueba
 bool loadMazeFile(const std::string& path, raton::Maze& out, std::vector<std::string>* rows = nullptr);
