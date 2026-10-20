@@ -1,7 +1,19 @@
-# Calibración en la pista (hacer antes de competir)
+# Calibración
 
-Todas las órdenes se envían por Bluetooth (web o app UART, nombre `Raton`) o por el Monitor Serie a
-115200. Tras ajustar, `save` guarda los parámetros en flash.
+## Lo que hace solo (no hay que tocar nada)
+
+| Qué | Cuándo |
+|---|---|
+| Giroscopio en reposo | al arrancar cualquier modo ("No tocar...") |
+| Desfase de los tres láseres y ancho real del pasillo | al arrancar el **modo 1**, girando en la salida (unos 3 s). Se guarda solo |
+| Láseres laterales y medida de la celda en otra pista | al arrancar el **modo 3** |
+| Modelo de los motores (y lo que cambia con la batería) | en cada recta mientras corre; se guarda solo al terminar |
+| Escala del giroscopio | con las paredes después de cada giro; se guarda sola al terminar |
+| Paso real de la celda | en marcha en el modo 3 |
+
+En la competencia basta con poner el ratón en la salida y arrancar el modo 1. Lo único que el ratón no puede saber solo es **dónde está la meta** (no tiene sensor de suelo para ver la línea blanca) y el tamaño del laberinto y la salida si no son los del reglamento: ver los puntos 1 y 2.
+
+Todas las órdenes se envían por Bluetooth (web o app UART, nombre `Raton`) o por el Monitor Serie a 115200. `save` guarda los parámetros en flash (las calibraciones automáticas ya se guardan solas).
 
 ## 0. Cableado (una vez)
 
@@ -28,20 +40,18 @@ El ratón no tiene sensor de suelo y no ve la línea blanca. Se le dice la celda
 
 Recomendación de hardware: un sensor de reflexión (TCRT5000/QRE1113) mirando al suelo permitiría detectar la línea blanca de la meta sin configurarla.
 
-## 3. Sensores
+## 3. Sensores (automático)
 
-Cada VL53L0X sale de fábrica con su propio desfase (1–2 cm). Sin calibrar, el ratón cree estar descentrado y se pega a una pared. En el simulador es lo que más cuenta: con desfases de hasta 16 mm cumple 123 de 161 casos sin calibrar y 158 calibrando.
+Cada VL53L0X sale de fábrica con su propio desfase (1–2 cm). Sin corregirlo, el ratón cree estar descentrado y se pega a una pared. En el simulador, con desfases de hasta 16 mm cumple 123 de 161 casos sin calibrar y 159 calibrando (error de la calibración: ~2.5 mm).
 
-- **`calsonda`** (o el botón "Calibrar sensores" de la web): ratón en el suelo, en el **centro** de una celda de la competencia con pared a los dos lados. Gira en el sitio: mira cada pared de frente con el frontal y pone cada lateral perpendicular a su pared. Corrige `frontOffsetMm`, `leftOffsetMm` y `rightOffsetMm`. Después `save`.
-- El **modo 1 lo hace solo al arrancar** en la salida (la salida de la competencia tiene pared a los dos lados). Si la salida está a otra distancia que la de `cellMm`, avisa `PISTA_DISTINTA` y no sale.
-- El **modo 3** (práctica) también calibra los laterales al arrancar, pero el frontal tiene que venir calibrado de antes (`calsonda` en la pista de la competencia + `save`).
-- `calfront`: solo el frontal (centrado en una celda, mirando a una pared).
-- `calside <ancho del pasillo>`: fija `cellMm` = pasillo + pared y hace `calsonda`.
+- El **modo 1 lo hace solo al arrancar** en la salida (la salida de la competencia tiene pared a los dos lados) y lo guarda. Si la salida está a otra distancia que la de `cellMm`, avisa `PISTA_DISTINTA` y no sale.
+- El **modo 3** (práctica) calibra los laterales al arrancar; el frontal lo toma de la última vez del modo 1.
+- A mano, solo si se quiere: `calsonda` (o el botón "Calibrar sensores"), `calfront` (solo el frontal, centrado mirando a una pared) y `calside <ancho del pasillo>` (fija `cellMm` y calibra). También se guardan solos.
 - `diagMountDeg` (45) y `sensorFovDeg` (25) describen el montaje y el cono; solo cambiarlos si el montaje es otro.
 
-## 4. Motores
+## 4. Motores (automático)
 
-Modo 5, con el ratón en el suelo al principio de un pasillo recto de al menos 2 celdas. Mide `kV`, `kS` y `motorTauS` y los aplica. Repite 2–3 veces, mira que salgan parecidos y haz `save`.
+El ratón aprende en cada recta cuánto le falta o le sobra al modelo del motor (`learnMotor 1`): con motores un 40 % más débiles de lo previsto pasa de 56 a 76 de 81 casos en el simulador. Lo aprendido se guarda solo al terminar cada misión. El modo 5 sigue disponible para medir `kV`, `kS` y `motorTauS` desde cero (ratón en el suelo, pasillo recto de 2 celdas), pero ya no hace falta.
 
 ## 5. Velocidad
 
@@ -55,4 +65,4 @@ Sube en pasos de 10 % solo si el ratón va limpio. Si en la carrera roza en las 
 
 - `estado`: tiempo máximo de cálculo de un ciclo (debe quedar muy por debajo de 2000 µs), ciclos tarde y escala del giroscopio aprendida.
 - La web muestra la línea `NAV` (sensores, velocidad, posición), el **radar** (los tres conos con su lectura y las paredes de un pasillo centrado como referencia) y las celdas del mapa en directo.
-- Tras actualizar el firmware los parámetros guardados vuelven a los de fábrica (cambió la estructura): repite modo 5 y `calsonda`, y `save`.
+- Tras actualizar el firmware los parámetros guardados vuelven a los de fábrica (cambió la estructura). No hace falta hacer nada: la primera vez que corra el modo 1 se calibra y aprende solo.

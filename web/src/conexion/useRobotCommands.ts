@@ -15,7 +15,7 @@ export const modeHelp = [
   'Pista de la competencia: ruta más rápida con el mapa guardado (curvas suaves)',
   'Cualquier pista: calibra y mide el pasillo en la salida, explora todo sin repetir y vuelve. No toca la competencia',
   'Lecturas de los láseres y el giroscopio',
-  'En el suelo, pasillo recto de 2 celdas: mide kV, kS y τ',
+  'Opcional (el ratón ya aprende sus motores solo): en el suelo, pasillo recto de 2 celdas, mide kV, kS y τ',
   'Ratón LEVANTADO: cada rueda adelante y atrás',
   'Olvida el mapa guardado en flash',
 ];

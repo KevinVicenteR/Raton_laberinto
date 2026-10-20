@@ -53,6 +53,11 @@ Physical perturbed(const raton::Params& p, int level, uint32_t seed) {
   ph.startY = 4.0f * k * u(rng);
   ph.startDeg = 1.5f * k * u(rng);
   ph.mountDeg = 45.0f + 1.5f * k * u(rng);  // montaje real de los laterales con error
+  // Motores muy distintos de los parametros (sin calibrar, bateria baja): SIM_MOTOR=escala de velocidad.
+  if (const char* m = getenv("SIM_MOTOR")) {
+    ph.vmaxFull *= static_cast<float>(atof(m));
+    ph.stictionDuty *= 2.0f - static_cast<float>(atof(m));
+  }
   // Diagnostico: SIM_SOLO=grupo deja solo ese grupo de errores (los demas como el nominal).
   if (const char* only = getenv("SIM_SOLO")) {
     const Physical nom = perturbed(p, 0, seed);

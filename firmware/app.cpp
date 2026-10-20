@@ -107,6 +107,7 @@ void App::setup() {
     if (!ok) delay(100);
   }
   if (!ok) fail("IMU (giroscopio)");
+  mouse_.navigator().motion().setGyroScale(params_.gyroScale);
   mouse_.resetMap();
   if (storage::loadMap(mouse_.maze()) && mouse_.maze().width() == params_.mazeW &&
       mouse_.maze().height() == params_.mazeH) {
@@ -421,32 +422,38 @@ void App::runMode(int mode) {
     case EXPLORE: {
       armStart();
       // Antes de salir: calibrar los sensores con las paredes de la salida (y comprobar que la pista es la de
-      // la geometria guardada).
-      if (mouse_.calibrateSensors(params_, true) == -2) {
+      // la geometria guardada). Se guarda sola: la carrera y la practica la usan despues.
+      const float corridor = mouse_.calibrateSensors(params_, true);
+      if (corridor == -2) {
         display_.show("PISTA DISTINTA", "usa el modo 3", "o set cellMm");
         delay(1500);
         break;
       }
+      if (corridor > 0) storage::saveParams(params_);
       showResult(mouse_.explore(true, true), "EXPLORAR");
+      saveLearned();
       break;
     }
     case kCalibrate: {
       armStart();
       const float corridor = mouse_.calibrateSensors(params_, true);
-      char out[64];
-      snprintf(out, sizeof(out), "CALIB desfases F%d I%d D%d pasillo %d (save para guardar)", params_.frontOffsetMm,
-               params_.leftOffsetMm, params_.rightOffsetMm, static_cast<int>(corridor));
+      const bool saved = corridor > 0 && storage::saveParams(params_);
+      char out[80];
+      snprintf(out, sizeof(out), "CALIB desfases F%d I%d D%d pasillo %d %s", params_.frontOffsetMm,
+               params_.leftOffsetMm, params_.rightOffsetMm, static_cast<int>(corridor), saved ? "(guardado)" : "");
       reply(out);
-      display_.show("CALIBRADO", "save = guardar");
+      display_.show(saved ? "CALIBRADO" : "SIN CALIBRAR", saved ? "guardado" : "falta pared");
       delay(800);
       break;
     }
     case RACE:
       armStart();
       showResult(mouse_.race(true), "CARRERA");
+      saveLearned();
       break;
     case PRACTICE:
       practiceRun();
+      saveLearned();
       break;
     case SENSORS:
       sensorsMode();
@@ -493,13 +500,28 @@ void App::practiceRun() {
   showResult(mouse_.explore(false, true), "PRACTICA");
   mouse_.setLearnCell(false);
   board_.saveEnabled = true;
-  // Los desfases son del sensor, no de la pista: se quedan los recien calibrados.
-  const int off[3] = {params_.frontOffsetMm, params_.leftOffsetMm, params_.rightOffsetMm};
+  // Los desfases son de los sensores, no de la pista: se quedan los recien calibrados.
+  const int off[2] = {params_.leftOffsetMm, params_.rightOffsetMm};
   params_ = competition;
-  params_.frontOffsetMm = off[0];
-  params_.leftOffsetMm = off[1];
-  params_.rightOffsetMm = off[2];
+  params_.leftOffsetMm = off[0];
+  params_.rightOffsetMm = off[1];
   mouse_.maze() = competitionMap;
+}
+
+void App::saveLearned() {
+  // Lo aprendido en la mision (modelo del motor con la bateria de ahora, escala del giroscopio) pasa a los
+  // parametros y se guarda solo: la siguiente vez arranca ya ajustado, sin calibrar a mano.
+  raton::Motion& mo = mouse_.navigator().motion();
+  const float k = mo.motorScale();
+  if (k > 0.6f && k < 1.6f) params_.kV *= k;
+  mo.setMotorScale(1.0f);
+  const float g = mo.gyroScale();
+  if (g > 0.93f && g < 1.07f) params_.gyroScale = g;
+  const bool ok = storage::saveParams(params_);
+  char out[80];
+  snprintf(out, sizeof(out), "APRENDIDO motor x%d/1000 giro x%d/1000 %s", static_cast<int>(k * 1000),
+           static_cast<int>(g * 1000), ok ? "(guardado)" : "(ERROR_FLASH)");
+  reply(out);
 }
 
 void App::sensorsMode() {
@@ -546,7 +568,8 @@ void App::calibrateFront() {
   const float expected = g90 * (0.5f * (params_.cellMm - params_.wallMm) - params_.frontAheadMm);
   params_.frontOffsetMm += static_cast<int>(expected - static_cast<float>(sum) / n + (expected > 0 ? 0.5f : -0.5f));
   params_.frontStopMm = -1;
-  snprintf(out, sizeof(out), "CALIB frontOffsetMm=%d (save para guardar)", params_.frontOffsetMm);
+  storage::saveParams(params_);
+  snprintf(out, sizeof(out), "CALIB frontOffsetMm=%d (guardado)", params_.frontOffsetMm);
   reply(out);
 }
 

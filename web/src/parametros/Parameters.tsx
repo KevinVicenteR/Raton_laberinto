@@ -83,9 +83,9 @@ export function Parameters({
         </div>
         <hr />
         <p className="status">
-          Calibración en la pista de la competencia: ratón en el centro de una celda con pared a los dos
-          lados. Gira en el sitio y mide los desfases de los tres sensores (el modo 1 lo hace solo al
-          arrancar). Después, «Guardar en la placa».
+          No hace falta: el modo 1 calibra los sensores solo en la salida y el ratón aprende motores y
+          giroscopio en marcha (se guarda solo). A mano, si quieres: ratón en el centro de una celda con pared
+          a los dos lados.
         </p>
         <button
           onClick={() => {

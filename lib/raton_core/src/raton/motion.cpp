@@ -175,7 +175,7 @@ void Motion::update(const Sensors& s, float& dutyL, float& dutyR) {
   const float alc = clampf(al, -3.0f * p_.accel, 3.0f * p_.accel);
   const float arc = clampf(ar, -3.0f * p_.accel, 3.0f * p_.accel);
   auto ff = [&](float v, float a) {
-    float d = p_.kV * v + p_.kA() * a;
+    float d = ffScale_ * (p_.kV * v + p_.kA() * a);
     if (v > 2.0f) d += p_.kS;
     else if (v < -2.0f) d -= p_.kS;
     return d;
@@ -185,6 +185,13 @@ void Motion::update(const Sensors& s, float& dutyL, float& dutyR) {
   iR_ = clampf(iR_ + errR * dt, -0.5f, 0.5f);
   const float fbF = p_.kpFwd * errF + p_.kdFwd * dF + p_.kiFwd * iF_;
   const float fbR = p_.kpRot * errR + p_.kdRot * dR + p_.kiRot * iR_;
+  // Motores aprendidos en marcha: a velocidad de crucero, lo que tiene que poner la realimentacion es lo que
+  // le falta (o sobra) al modelo. Se pasa poco a poco a la escala del modelo (bateria, motores distintos de
+  // los parametros), sin calibrar a mano. Constante de tiempo ~2 s de crucero.
+  if (p_.learnMotor && fabsf(v_) > 120.0f && fabsf(a_) < 200.0f && rotDone_ && fabsf(errF) < 20.0f) {
+    const float rel = fbF / (p_.kV * fabsf(v_)) * (v_ > 0 ? 1.0f : -1.0f);
+    ffScale_ = clampf(ffScale_ + 0.5f * rel * ffScale_ * dt, 0.5f, 2.0f);
+  }
   float l = ff(vl, alc) + fbF - fbR;
   float r = ff(vr, arc) + fbF + fbR;
   // Zona muerta: con la rueda casi parada, una correccion pequena no la mueve (rozamiento estatico). Se

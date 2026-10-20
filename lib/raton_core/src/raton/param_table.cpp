@@ -27,7 +27,7 @@ const Entry kTable[] = {
     PF(runSpeed, 50, 2500), PF(turnSpeed, 50, 1500), PF(accel, 200, 20000), PF(decel, 200, 20000),
     PF(rotSpeed, 60, 2000), PF(rotAccel, 200, 30000), PF(smoothRadiusMm, 20, 120), PF(sideWallRatio, 1, 3),
     PF(frontWallRatio, 0.1f, 0.9f), PI(frontStopMm, -1, 300), PF(exploreBudgetS, 0, 600), PF(areaLimitS, 2, 29),
-    PI(areaRadius, 0, 4), PF(stallS, 0.05f, 3), PF(backoffMm, 0, 100), PI(learnGyro, 0, 1),
+    PI(areaRadius, 0, 4), PF(stallS, 0.05f, 3), PF(backoffMm, 0, 100), PI(learnGyro, 0, 1), PI(learnMotor, 0, 1), PF(gyroScale, 0.9f, 1.1f),
 };
 
 const int kCount = sizeof(kTable) / sizeof(kTable[0]);

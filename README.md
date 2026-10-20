@@ -25,6 +25,7 @@ En los videos el ratón se pegaba a las paredes, se atoraba en sitios sencillos,
 |---|---|
 | Ve mal, mapea mal, vuelve a sitios ya vistos | **Sonda/radar:** cada lectura se compara con lo que el sensor debería leer con su cono real, el mapa y la posición. Se prueban todas las combinaciones de paredes que el cono alcanza y solo se vota lo que todas las explicaciones aceptan. |
 | Se pega a las paredes | **Calibración automática** de los desfases de los tres sensores al arrancar (gira en el sitio en la salida) y posición lateral corregida con la sonda. |
+| Hay que calibrar a mano | Todo es automático: sensores en la salida, motores y giroscopio aprendidos en marcha y guardados solos (ver [docs/calibracion.md](docs/calibracion.md)). Solo hay que decirle dónde está la meta. |
 | Pierde la cuenta de celdas | El avance se corrige con postes, huecos y paredes de frente usando la sonda, comprobando cada corrección antes de aplicarla. |
 | Zigzag, torcido tras girar | Filtro de Kalman lateral; cada giro en el sitio termina alineado con la cuadrícula. |
 | Empuja la pared sin avanzar | Tres detectores de atasco y recuperación determinista: retroceder, enderezarse, recentrarse en "S" y replanificar. |
@@ -72,7 +73,7 @@ scripts/run.sh subir                # compila y sube el firmware (PlatformIO)
 
 | Modo | Qué hace |
 |---|---|
-| 1 Explorar (competencia) | Geometría de la competencia (`cellMm`, tamaño, salida y meta guardados). Calibra los sensores en la salida, va a la meta, busca la ruta más corta, vuelve a la salida y guarda el mapa en flash |
+| 1 Explorar (competencia) | Geometría de la competencia (`cellMm`, tamaño, salida y meta guardados). Calibra solo los sensores en la salida, va a la meta, busca la ruta más corta, vuelve a la salida y guarda el mapa y lo aprendido en flash |
 | 2 Carrera (competencia) | Ruta más rápida con el mapa guardado (curvas suaves, rectas a 650 mm/s) |
 | 3 Práctica (cualquier medida) | Cualquier pista: calibra los laterales y mide el pasillo en la salida (gira a cada lado), afina el paso de celda en marcha, explora todo recordando por dónde pasó y vuelve a la salida. No toca la geometría ni el mapa de la competencia |
 | 4 Sensores | Lecturas en pantalla y Bluetooth |

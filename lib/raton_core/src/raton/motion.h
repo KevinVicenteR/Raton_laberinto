@@ -51,6 +51,9 @@ class Motion {
   void setGyroScale(float k) { gyroScale_ = k; }
   float gyroScale() const { return gyroScale_; }
   float idealAngle() const { return idealAngle_; }
+  // Escala del modelo del motor aprendida en marcha (1 = los parametros; > 1 = motores mas debiles).
+  float motorScale() const { return ffScale_; }
+  void setMotorScale(float k) { ffScale_ = k; }
   float angularRate() const { return w_; }       // consigna (grados/s)
   float measuredRate() const { return wMeas_; }
 
@@ -73,6 +76,7 @@ class Motion {
   bool rotDone_ = true;
   float lastErrR_ = 0;
   float iF_ = 0, iR_ = 0;
+  float ffScale_ = 1.0f;
 };
 
 }  // namespace raton

@@ -94,6 +94,8 @@ struct Params {
 
   // ---------- Autocalibracion en marcha ----------
   int learnGyro = 1;    // escala del giroscopio con las paredes
+  int learnMotor = 1;   // escala del modelo del motor en las rectas (bateria, motores sin calibrar)
+  float gyroScale = 1.0f;  // escala del giroscopio aprendida (se guarda sola al terminar cada mision)
 };
 
 }  // namespace raton

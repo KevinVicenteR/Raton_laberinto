@@ -30,6 +30,7 @@ class App {
   void reply(const char* line);
   void sensorsMode();
   void practiceRun();
+  void saveLearned();
   void motorCalibration();
   void wheelTest();
   void calibrateFront();

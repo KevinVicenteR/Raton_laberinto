@@ -55,6 +55,8 @@ class Navigator {
   // Gira en el sitio a deg grados de la cuadricula (+ = izquierda) sin cambiar de rumbo de celda (para
   // calibrar: luego face() vuelve a la cuadricula).
   void aim(float deg);
+  // Angulo real respecto a la cuadricula (grados, + = izquierda), por ejemplo tras aim().
+  float aimAngle() const { return motion_.angle() - gridAngle_; }
   const Sonda& sonda() const { return sonda_; }
   float gyroScale() { return motion_.gyroScale(); }
   float cellPitch() const { return cell_; }
