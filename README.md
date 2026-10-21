@@ -73,6 +73,36 @@ scripts/run.sh bateria 20           # bateria completa
 scripts/run.sh subir                # compila y sube el firmware (PlatformIO)
 ```
 
+### Levantar la web con Bash
+
+Desde Git Bash, WSL, Linux o macOS, en la raíz del repositorio:
+
+```bash
+bash ./web.sh
+```
+
+Requiere Node.js y npm. Instala las dependencias si no existe `web/node_modules`, inicia Vite y abre el
+navegador. La terminal indica la dirección disponible (normalmente `http://localhost:5173`); `Ctrl+C` detiene
+el servidor. Puedes pasar opciones: `bash ./web.sh --port 5174`.
+
+### Subir desde VS Code en Windows
+
+Instala/habilita **PlatformIO IDE** (extensión `platformio.platformio-ide`) y deja que termine de preparar el Core.
+Después de actualizar el repositorio, ejecuta **Terminal → Ejecutar tarea → PlatformIO: Subir firmware**
+(o `Ctrl+Shift+B`). La tarea utiliza `scripts/platformio.ps1`, que busca el Core del usuario o una instalación
+en PATH. No debe existir un `platformio.exe` dentro del proyecto.
+
+Desde PowerShell, en la raíz del repositorio:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\platformio.ps1 -Action upload
+```
+
+Para elegir puerto añade `-Port COM5` (sustituye COM5 por el de la placa). También acepta `-Action build` y
+`-Action monitor`. Si no encuentra Core, informa cómo instalarlo. Esta tarea no cambia el shell predeterminado
+de VS Code; si habías configurado manualmente `terminal.integrated.*` apuntando al `platformio.exe` del
+repositorio, elimina esa ruta de tus ajustes locales y selecciona PowerShell como terminal predeterminada.
+
 ### En la placa
 
 1. **Elegir modo:** al encender aparece el menú. Pasa la mano delante del sensor frontal (acercar y retirar) para cambiar de modo.

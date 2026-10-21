@@ -2,14 +2,91 @@
   "version": "2.0.0",
   "tasks": [
     {
+      "label": "PlatformIO: Compilar firmware",
+      "type": "process",
+      "command": "python3",
+      "args": [
+        "-m",
+        "platformio",
+        "run",
+        "--environment",
+        "raton"
+      ],
+      "windows": {
+        "command": "powershell.exe",
+        "args": [
+          "-NoProfile",
+          "-ExecutionPolicy",
+          "Bypass",
+          "-File",
+          "${workspaceFolder}/scripts/platformio.ps1",
+          "-Action",
+          "build"
+        ]
+      },
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": []
+    },
+    {
       "label": "PlatformIO: Subir firmware",
       "type": "process",
-      "command": "${env:USERPROFILE}\\.platformio\\penv\\Scripts\\platformio.exe",
+      "command": "python3",
       "args": [
+        "-m",
+        "platformio",
         "run",
+        "--environment",
+        "raton",
         "--target",
         "upload"
       ],
+      "windows": {
+        "command": "powershell.exe",
+        "args": [
+          "-NoProfile",
+          "-ExecutionPolicy",
+          "Bypass",
+          "-File",
+          "${workspaceFolder}/scripts/platformio.ps1",
+          "-Action",
+          "upload"
+        ]
+      },
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": [],
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      }
+    },
+    {
+      "label": "PlatformIO: Monitor serie",
+      "type": "process",
+      "command": "python3",
+      "args": [
+        "-m",
+        "platformio",
+        "device",
+        "monitor",
+        "--baud",
+        "115200"
+      ],
+      "windows": {
+        "command": "powershell.exe",
+        "args": [
+          "-NoProfile",
+          "-ExecutionPolicy",
+          "Bypass",
+          "-File",
+          "${workspaceFolder}/scripts/platformio.ps1",
+          "-Action",
+          "monitor"
+        ]
+      },
       "options": {
         "cwd": "${workspaceFolder}"
       },
