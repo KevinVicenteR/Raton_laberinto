@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react';
+import { AdaptiveSolver } from '../mapa/AdaptiveSolver';
 import { Simulation } from '../simulacion/Simulation';
 import { Telemetry } from '../telemetria/Telemetry';
 
 export function App() {
   const [page, setPage] = useState(
-      new URLSearchParams(location.search).get('page') === 'simulation' ? 'simulation' : 'telemetry',
+      ['simulation', 'solver'].includes(new URLSearchParams(location.search).get('page') ?? '') ? new URLSearchParams(location.search).get('page')! : 'telemetry',
     ),
     [theme, setTheme] = useState(localStorage.getItem('raton-theme') ?? 'auto');
   useEffect(() => {
@@ -15,11 +16,12 @@ export function App() {
   return (
     <main>
       <header>
-        <h1>Ratón · {page === 'telemetry' ? 'Telemetría' : 'Simulación'}</h1>
+        <h1>Ratón · {page === 'telemetry' ? 'Telemetría' : page === 'solver' ? 'Resolver mapa' : 'Simulación'}</h1>
         <nav aria-label="Páginas">
           {[
             ['telemetry', 'Telemetría'],
             ['simulation', 'Simulación'],
+            ['solver', 'Resolver mapa'],
           ].map(([id, label]) => (
             <button
               key={id}
@@ -43,6 +45,7 @@ export function App() {
         <Telemetry />
       </div>
       {page === 'simulation' && <Simulation />}
+      {page === 'solver' && <AdaptiveSolver />}
     </main>
   );
 }

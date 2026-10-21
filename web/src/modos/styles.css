@@ -496,3 +496,7 @@ svg {
     font-size: 12px;
   }
 }
+
+.solver-controls { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+.solver-map { width: 100%; margin-top: 12px; }
+.solver-map [role="button"]:focus { outline: none; stroke: var(--left); stroke-width: 0.12; }
