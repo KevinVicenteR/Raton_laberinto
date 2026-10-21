@@ -212,3 +212,42 @@ Pruebas nuevas: ciclos de 2/6/30 ms; rescate tras bloqueo temporal en pasillo es
 La compilación real con PlatformIO para Nano 33 BLE pasa. Los límites del perfil son parte del comportamiento que se prueba: los tiempos de carrera de la sección previa corresponden a la versión rápida anterior. Las simulaciones calibran los offsets con paredes de referencia; en la placa, `calsonda` es opcional y debe ejecutarse centrado entre paredes laterales si los offsets no se han medido. Conservar las dimensiones reales del cuerpo/ruedas/sensores. Falta el registro de telemetría y comprobación física de esta corrección.
 
 Resultado final de esta corrección: **378/378 comprobaciones**, firmware Nano 33 BLE compilado (179600 bytes RAM, 467092 bytes flash). Banco nominal **161/161**, 157 sin contacto, 16 paredes mal acumuladas; meta media 88,4 s, exploración 166,0 s, carrera 42,3 s; 6 contactos en carrera. Motores al 80 %: **81/81**, 76 sin contacto. Sensores a 25 mm: **80/81**, fallo de carrera en aleatorio 1046 (sí alcanza meta explorando); pendiente. No presentar ese escenario como resuelto ni trasladar los resultados del simulador a una garantía de precisión física. El perfil rápido (`precisionMode=0`) no es la configuración verificada para esta entrega.
+
+
+## Web de cinco sensores y protección de calibración — 21 de octubre de 2026
+
+Se muestran los cinco canales en tarjetas, radar y gráfico: DI/F/DD y LI/LD a 90°. Se interpretan NAV,
+SENS, LATERALES y PRUEBA_MM sin añadir poses ficticias. Los datos inválidos y los antiguos se distinguen.
+NAV publica LATERALES también con sideEnabled=0, indicando por separado si participan en el control.
+No se activa automáticamente la fusión de los laterales con geometría todavía sin medir. Cableado:
+XSHUT original A0/A1/A2; lateral izquierdo A6, derecho A3; bus SDA A4/SCL A5.
+
+La web ya no manda todos sus valores de referencia al editar un campo: únicamente los ajustes editados.
+Puede leer la configuración real de la placa. El mapa de competencia usa la misma transcripción que el
+simulador; las paredes 3D comparten marco con NAV v2 y se escalan con el paso aprendido. Se elimina el
+desfase de salida que afectaba al mapa 3D en vivo y el grosor fijo de 15 mm (nominal actual: 12 mm).
+Esto no verifica la transcripción pared por pared contra la pista física del evento.
+
+Calibración: calside no modifica la celda antes de validar el arranque; un barrido fallido o un error al
+guardar conserva parámetros y mapa anteriores. Un barrido exitoso tampoco borra el mapa en RAM.
+calfront rechaza muestras inestables, geometría incoherente y offsets fuera de límites; anuncia guardado
+solo si la escritura fue exitosa. La persistencia de aprendizaje restaura los parámetros anteriores si falla
+flash. No se cambia el formato de Params ni Maze. Se descartó también cambiar el conteo de muestras
+frontales al terminar un pivote: alteraba la temporización y hacía fallar el caso 1046 con tres sensores.
+
+Se compararon estrategias de replanificación al confirmar aperturas y un suavizado adicional del mando
+de centrado. Se descartaron: no mejoraron el conjunto y aumentaron los contactos. La búsqueda y el
+control conservan la versión probada; no presentar esta entrega como eliminación del zigzag físico.
+Base comprobada en 161 casos: tres sensores 161/161, 157 sin contacto, 491 contactos acumulados
+(6 en carrera); cinco sensores activos 161/161, 160 sin contacto, 8 contactos acumulados (8 en carrera).
+Los contactos acumulados son pasos de simulación en contacto, no impactos físicos independientes.
+Tiempos medios base con cinco sensores: meta 88,1 s, exploración 165,8 s, carrera 42,4 s.
+La variante de replanificación daba 156 sin contacto y 306 contactos con cinco sensores: no se publica.
+
+Validación de esta entrega: 408 comprobaciones del núcleo, compilación de firmware con stubs de PC,
+43 pruebas web, TypeScript/build de producción y ESLint. Se corrigió la estructura del renderizador de
+paredes del solucionador adaptable para que ESLint compruebe los hooks sin el bucle de dibujo.
+La compilación Nano con PlatformIO vuelve a quedar bloqueada descargando framework-arduino-mbed;
+no atribuir a esta entrega una compilación real completada. No hay puerto serie conectado: faltan carga,
+prueba física de cinco canales y medición de montaje. Sigue pendiente el caso extremo con sensores
+bajos 1046 registrado antes.

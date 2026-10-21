@@ -1,9 +1,14 @@
 import { parse, type Diagnostic } from '../conexion/protocol';
 import { parseRobot, isRemovedMessage } from '../telemetria/robot';
 import { emptyOccupancy, updateOccupancy, type Occupancy } from '../mapa/occupancy';
-import type { Cell, RobotSample } from './types';
+import type { Cell, RobotSample, SensorReadings, SensorFrame } from './types';
+import { parseSensorLine } from './sensorData';
 export interface TelemetryState {
   last: RobotSample | null;
+  sensorReadings: SensorReadings;
+  sensorHistory: SensorFrame[];
+  sideControl?: boolean;
+  boardParams: Record<string, number>;
   samples: RobotSample[];
   trail: RobotSample[];
   cells: Record<string, number>;
@@ -19,6 +24,9 @@ export interface TelemetryState {
 }
 export const initialState = (): TelemetryState => ({
   last: null,
+  sensorReadings: {},
+  sensorHistory: [],
+  boardParams: {},
   samples: [],
   trail: [],
   cells: {},
@@ -50,7 +58,7 @@ export function telemetryReducer(state: TelemetryState, action: Action): Telemet
   if (action.type === 'clearMap') return { ...state, occupancy: emptyOccupancy(), trail: [] };
   const { line, t } = action;
   if (isRemovedMessage(line)) return state;
-  let next = { ...state, record: [...state.record, `${(t / 1000).toFixed(3)}\t${line}`] };
+  let next: TelemetryState = { ...state, record: [...state.record, `${(t / 1000).toFixed(3)}\t${line}`] };
   const diagnostic = parse(line);
   if (diagnostic) return { ...next, diagnostics: { ...state.diagnostics, [diagnostic.kind]: diagnostic } };
   const cell = /^CELL x=(\d+) y=(\d+) w=(\d+)(?: d=(\d))?/.exec(line);
@@ -68,18 +76,48 @@ export function telemetryReducer(state: TelemetryState, action: Action): Telemet
       occupancy: emptyOccupancy(),
       trail: [],
       boardMode: 'Reiniciando',
+      sensorReadings: {},
+      sensorHistory: [],
+      sideControl: undefined,
+      boardParams: {},
     };
   if (line === 'MAPA_BORRADO') next = { ...next, cells: {}, learnRobot: [20, 20] };
   if (line === 'MAPA_NUEVO') next = { ...next, cells: {}, learnRobot: [20, 20] };
   if (line === 'RUTA_INICIO') next.learnRobot = [20, 20];
   if (/^(MODE|START) [1-7]$/.test(line)) next.boardMode = line;
+  if (line.startsWith('PRUEBA_INICIO')) next.boardMode = 'PRUEBA SENSORES';
+  if (line.startsWith('PRUEBA_FIN')) next.boardMode = 'Esperando';
   if (line.startsWith('DIAGNOSTICO_SENSORES')) next.boardMode = 'DIAGNOSTICO SENSORES';
   if (line === 'FIN_DIAGNOSTICO_SENSORES') next.boardMode = 'Esperando';
   if (line.startsWith('DECIDE: ')) next.decision = line.slice(8);
   if (line === 'INICIO_MAPA')
-    next = { ...next, occupancy: emptyOccupancy(), trail: [], samples: [], raceStart: t, raceEnd: null };
+    next = {
+      ...next,
+      occupancy: emptyOccupancy(),
+      trail: [],
+      samples: [],
+      sensorReadings: {},
+      sensorHistory: [],
+      raceStart: t,
+      raceEnd: null,
+    };
   if (line === 'META') next.raceEnd = t;
+  const parameter = /^(?:OK )?([A-Za-z][A-Za-z0-9]*)=(-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)$/.exec(line);
+  if (parameter && Number.isFinite(+parameter[2])) {
+    next.boardParams = { ...state.boardParams, [parameter[1]]: +parameter[2] };
+    if (parameter[1] === 'sideEnabled') next.sideControl = +parameter[2] !== 0;
+  }
   const sample = parseRobot(line, t);
+  const sensors = parseSensorLine(line, t, sample);
+  if (sensors) {
+    next.sensorReadings = { ...next.sensorReadings, ...sensors.readings };
+    next.sensorHistory = [...next.sensorHistory, { t, readings: next.sensorReadings }].filter(
+      (f) => t - f.t <= 20000,
+    );
+    if (sensors.control !== undefined) next.sideControl = sensors.control;
+  }
+  const control = /^LATERALES izq=.+ der=.+ control=([01])$/.exec(line);
+  if (control) next.sideControl = control[1] === '1';
   if (sample)
     return {
       ...next,

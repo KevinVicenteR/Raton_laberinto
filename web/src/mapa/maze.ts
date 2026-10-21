@@ -72,6 +72,7 @@ export function mazeFromReplay(
     start?: Cell;
     goal?: Cell;
     pitch?: number;
+    corridor_mm?: number;
   },
   fallback: Maze,
 ): Maze {
@@ -83,6 +84,12 @@ export function mazeFromReplay(
         start: data.start!,
         goal: data.goal!,
         PITCH: data.pitch ?? 155,
+        WALL:
+          typeof data.corridor_mm === 'number' &&
+          data.corridor_mm >= 0 &&
+          data.corridor_mm < (data.pitch ?? 155)
+            ? (data.pitch ?? 155) - data.corridor_mm
+            : (fallback.WALL ?? 12),
       }
     : fallback;
 }
@@ -97,4 +104,15 @@ export function routeDescription(route: Cell[]): string {
     else legs.push({ direction, count: 1 });
   }
   return legs.map((leg) => `${leg.count} al ${names[leg.direction]}`).join(' → ') || 'En la meta / sin ruta';
+}
+
+// NAV v2 da coordenadas absolutas en unidades de su paso aprendido; los registros
+// antiguos daban coordenadas relativas a la salida. El mapa 3D debe usar el mismo marco.
+export function trackFrame3D(maze: Maze, pitch?: number) {
+  return pitch && pitch > 0
+    ? { scale: pitch / maze.PITCH, origin: [0, 0] as Cell }
+    : {
+        scale: 1,
+        origin: [(maze.start[0] + 0.5) * maze.PITCH, (maze.start[1] + 0.5) * maze.PITCH - 33] as Cell,
+      };
 }

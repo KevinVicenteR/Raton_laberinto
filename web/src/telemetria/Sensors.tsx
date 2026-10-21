@@ -1,61 +1,99 @@
-import type { RobotSample } from './types';
-export function Sensors({ last }: { last: RobotSample | null }) {
+import type { RobotSample, SensorReadings, SensorFrame } from './types';
+import { currentReading, SENSOR_DEFS, sensorPath } from './sensorData';
+
+export function Sensors({
+  last,
+  readings,
+  now,
+  sideControl,
+}: {
+  last: RobotSample | null;
+  readings: SensorReadings;
+  now: number;
+  sideControl?: boolean;
+}) {
   return (
     <section className="panel">
       <h2>Sensores y movimiento</h2>
-      <div className="state">{last?.state ?? 'Sin datos'}</div>
-      <div className="tiles">
-        {(['I', 'F', 'D'] as const).map((key, i) => (
-          <div className="tile" key={key} style={{ color: `var(--${['left', 'front', 'right'][i]})` }}>
-            <div>{['Izquierdo (L)', 'Frontal (F)', 'Derecho (D)'][i]}</div>
-            <strong>{last ? (last[key] < 0 ? 'Sin lectura' : `${last[key]} mm`) : '—'}</strong>
-          </div>
-        ))}
+      <div className="state">
+        {last?.state ?? (Object.keys(readings).length ? 'Lecturas de sensores' : 'Sin datos')}
       </div>
-      <Radar last={last} />
+      <div className="tiles sensor-tiles">
+        {SENSOR_DEFS.map((sensor) => {
+          const reading = currentReading(readings, sensor.key, now);
+          const label = !reading
+            ? readings[sensor.key]
+              ? 'Sin datos recientes'
+              : 'Sin datos'
+            : reading.mm < 0
+              ? 'Sin lectura'
+              : `${reading.mm} mm`;
+          return (
+            <div className="tile" key={sensor.key} style={{ color: `var(--${sensor.color})` }}>
+              <div className="sensor-label">{sensor.label}</div>
+              <strong>{label}</strong>
+            </div>
+          );
+        })}
+      </div>
+      <p className="status">
+        Centrado con laterales:{' '}
+        {sideControl === undefined ? 'sin confirmar' : sideControl ? 'activado' : 'desactivado'}. Las lecturas
+        se muestran aunque el centrado esté desactivado.
+      </p>
+      <Radar last={last} readings={readings} now={now} />
+      <p className="status">Vista esquemática: frontal, dos diagonales a 45° y dos laterales a 90°.</p>
       <p>
         Velocidad: {last?.v ?? '—'} mm/s · Rumbo: {last?.r ?? '—'}° · Pasillo: {last?.p ?? '—'} mm
       </p>
       <p>
-        Confianza L/F/D: {last?.confidence?.join(' / ') ?? '—'} % · Ciclo: {last?.cycle ?? '—'} ms
+        Confianza DI/F/DD: {last?.confidence?.join(' / ') ?? '—'} % · Ciclo: {last?.cycle ?? '—'} ms
       </p>
     </section>
   );
 }
-// Lo que ve cada VL53L0X, como un radar: el frontal y los laterales montados a 45 grados iluminan un cono
-// de 25 grados; la lectura es la distancia (media) a lo que hay dentro del cono. Vista desde arriba con el
-// ratón mirando hacia arriba; las líneas discontinuas son las paredes de un pasillo centrado.
-const SCALE = 0.5; // px por mm
+
+const SCALE = 0.5;
 const HALF_FOV = 12.5;
-const BEAMS = [
-  { key: 'I', ahead: 30, left: 30, angle: 45, color: 'left' },
-  { key: 'F', ahead: 40, left: 0, angle: 0, color: 'front' },
-  { key: 'D', ahead: 30, left: -30, angle: -45, color: 'right' },
-] as const;
-export function Radar({ last }: { last: RobotSample | null }) {
+export function Radar({
+  last,
+  readings,
+  now,
+}: {
+  last: RobotSample | null;
+  readings: SensorReadings;
+  now: number;
+}) {
   const cx = 200,
-    cy = 235,
-    toScreen = (ahead: number, left: number) => [cx - left * SCALE, cy - ahead * SCALE],
-    dir = (deg: number) => [-Math.sin((deg * Math.PI) / 180), -Math.cos((deg * Math.PI) / 180)];
+    cy = 210;
+  const toScreen = (ahead: number, left: number) => [cx - left * SCALE, cy - ahead * SCALE];
+  const dir = (deg: number) => [-Math.sin((deg * Math.PI) / 180), -Math.cos((deg * Math.PI) / 180)];
   const corridor = last && last.p > 50 ? last.p : 143;
   return (
-    <svg viewBox="0 0 400 250" role="img" aria-label="Conos de los tres sensores, vista de radar">
+    <svg
+      className="sensor-radar"
+      viewBox="0 0 400 300"
+      role="img"
+      aria-label="Radar de cinco sensores: frontal, diagonales y laterales"
+    >
+      <title>Vista superior del robot con cinco sensores</title>
       {[-1, 1].map((side) => (
         <line
           key={side}
-          x1={cx + side * (corridor / 2) * SCALE}
-          x2={cx + side * (corridor / 2) * SCALE}
+          x1={cx + ((side * corridor) / 2) * SCALE}
+          x2={cx + ((side * corridor) / 2) * SCALE}
           y1={0}
-          y2={250}
+          y2={300}
           stroke="var(--grid)"
           strokeDasharray="4 4"
         />
       ))}
-      {BEAMS.map((b) => {
-        const dist = last?.[b.key] ?? -1,
-          r = (dist < 0 ? 600 : Math.min(dist, 600)) * SCALE,
-          [ox, oy] = toScreen(b.ahead, b.left),
-          [ax, ay] = dir(b.angle + HALF_FOV),
+      {SENSOR_DEFS.map((b) => {
+        const reading = currentReading(readings, b.key, now);
+        const dist = reading?.mm ?? -1;
+        const r = (dist < 0 ? 180 : Math.max(1, Math.min(dist, 360))) * SCALE;
+        const [ox, oy] = toScreen(b.ahead, b.left);
+        const [ax, ay] = dir(b.angle + HALF_FOV),
           [bx, by] = dir(b.angle - HALF_FOV),
           [mx, my] = dir(b.angle);
         return (
@@ -63,17 +101,18 @@ export function Radar({ last }: { last: RobotSample | null }) {
             <path
               d={`M${ox},${oy} L${ox + ax * r},${oy + ay * r} A${r},${r} 0 0 1 ${ox + bx * r},${oy + by * r} Z`}
               fill={`var(--${b.color})`}
-              fillOpacity={dist < 0 ? 0.05 : 0.18}
+              fillOpacity={dist < 0 ? 0.04 : 0.18}
               stroke={`var(--${b.color})`}
               strokeDasharray={dist < 0 ? '5 5' : undefined}
             />
             <text
-              x={ox + mx * Math.min(r, 120) + (b.angle > 0 ? -40 : b.angle < 0 ? 4 : -14)}
-              y={oy + my * Math.min(r, 120) - 4}
+              x={ox + mx * Math.max(Math.abs(b.angle) === 90 ? 65 : 30, Math.min(r, 110))}
+              y={oy + my * Math.min(r, 110) - 8}
+              textAnchor="middle"
               fill={`var(--${b.color})`}
-              fontSize="13"
+              fontSize="11"
             >
-              {dist < 0 ? '—' : `${dist}`}
+              {b.short} {dist < 0 ? '—' : `${dist} mm`}
             </text>
           </g>
         );
@@ -83,12 +122,21 @@ export function Radar({ last }: { last: RobotSample | null }) {
     </svg>
   );
 }
-export function Chart({ samples }: { samples: RobotSample[] }) {
-  const end = samples.at(-1)?.t ?? 0;
+
+export function Chart({ frames, now }: { frames: SensorFrame[]; now: number }) {
+  const end = Math.max(now, frames.at(-1)?.t ?? 0);
   return (
     <section className="panel">
-      <h2>Láseres · últimos 20 s (mm)</h2>
-      <svg viewBox="0 0 600 260" role="img" aria-label="Gráfica temporal de sensores">
+      <h2>Cinco sensores · últimos 20 s (mm)</h2>
+      <div className="legend sensor-legend">
+        {SENSOR_DEFS.map((sensor) => (
+          <span key={sensor.key}>
+            <i style={{ background: `var(--${sensor.color})` }} />
+            {sensor.short}
+          </span>
+        ))}
+      </div>
+      <svg viewBox="0 0 600 260" role="img" aria-label="Gráfica temporal de los cinco sensores">
         {[0, 100, 200, 300, 400].map((v) => (
           <g key={v}>
             <line x1="35" x2="590" y1={230 - v * 0.5} y2={230 - v * 0.5} stroke="var(--grid)" />
@@ -97,27 +145,16 @@ export function Chart({ samples }: { samples: RobotSample[] }) {
             </text>
           </g>
         ))}
-        {(['I', 'F', 'D'] as const).map((k, i) => {
-          let d = '',
-            pen = false;
-          for (const s of samples) {
-            if (s[k] < 0) {
-              pen = false;
-              continue;
-            }
-            d += `${pen ? 'L' : 'M'}${35 + 555 * (1 - (end - s.t) / 20000)},${230 - Math.min(400, s[k]) * 0.5} `;
-            pen = true;
-          }
-          return (
-            <path
-              key={k}
-              d={d}
-              fill="none"
-              stroke={`var(--${['left', 'front', 'right'][i]})`}
-              strokeWidth="2"
-            />
-          );
-        })}
+        {SENSOR_DEFS.map((sensor) => (
+          <path
+            key={sensor.key}
+            d={sensorPath(frames, sensor.key, end)}
+            fill="none"
+            stroke={`var(--${sensor.color})`}
+            strokeWidth="2"
+            strokeDasharray={sensor.key.length > 1 ? '6 3' : undefined}
+          />
+        ))}
         <text x="35" y="255" fill="var(--muted)" fontSize="12">
           −20 s
         </text>

@@ -140,7 +140,10 @@ export function Telemetry() {
             ARRANCAR
           </button>
           <button disabled={!canSend || busy} onClick={() => void run(() => live.send('sensores'))}>
-            Probar sensores (sin mover)
+            Ver sensores (sin mover)
+          </button>
+          <button disabled={!canSend || busy} onClick={() => void run(() => live.send('pruebasensores'))}>
+            Prueba de 5 sensores · 8 s
           </button>
           <button className="stop" disabled={!canSend} onClick={() => void commands.stop()}>
             PARAR
@@ -262,9 +265,9 @@ export function Telemetry() {
                 Borrar mapa guardado
               </button>
               <p className="status">
-                El modo 2 guarda el mapa al completar la exploración y volver a la salida (MAPA_GUARDADO). Toca una
-                celda del mapa y pulsa Resolver para ir a ella. Coloca el ratón en la salida mirando al norte
-                antes de arrancar.
+                El modo 2 guarda el mapa al completar la exploración y volver a la salida (MAPA_GUARDADO).
+                Toca una celda del mapa y pulsa Resolver para ir a ella. Coloca el ratón en la salida mirando
+                al norte antes de arrancar.
               </p>
               <LearnedMap
                 cells={state.cells}
@@ -276,8 +279,13 @@ export function Telemetry() {
             </>
           )}
         </section>
-        <Sensors last={sample} />
-        <Chart samples={state.samples} />
+        <Sensors
+          last={sample}
+          readings={state.sensorReadings}
+          now={active ? replayTime * 1000 : now - live.startedAt.current}
+          sideControl={state.sideControl}
+        />
+        <Chart frames={state.sensorHistory} now={active ? replayTime * 1000 : now - live.startedAt.current} />
         <Diagnostics state={state} elapsed={elapsed} stay={stay} />
         <Track
           maze={maze}
@@ -304,6 +312,7 @@ export function Telemetry() {
         <Parameters
           disabled={!canSend || busy}
           sequence={commands.sequence}
+          boardParams={state.boardParams}
           send={live.send}
           onApplied={(speed, range) => {
             live.settings.current = { ...live.settings.current, speed, range };

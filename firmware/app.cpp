@@ -329,6 +329,7 @@ void App::command(char* cmd) {
     return;
   }
   if (!strcmp(cmd, "calsonda")) {
+    pendingCorridor_ = 0;
     // Gira en el sitio: se hace desde el bucle principal, como un modo.
     requestedMode_ = kCalibrate;
     startRequested_ = true;
@@ -500,14 +501,27 @@ void App::runMode(int mode) {
       sensorTest();
       break;
     case kCalibrate: {
-      if (!armStart()) break;
+      const raton::Params before = params_;
+      if (!armStart()) { pendingCorridor_ = 0; break; }
+      static raton::Maze beforeMap;
+      beforeMap = mouse_.maze();
+      if (pendingCorridor_ > 0) params_.cellMm = pendingCorridor_ + params_.wallMm;
+      pendingCorridor_ = 0;
       const float corridor = mouse_.calibrateSensors(params_, true);
       const bool saved = corridor > 0 && storage::saveParams(params_);
+      // Una calibracion interrumpida, sin paredes o sin flash no sustituye ajustes probados.
+      mouse_.maze() = beforeMap;
+      if (!saved) {
+        params_ = before;
+        mouse_.navigator().motion().loadLearned();
+        mouse_.navigator().setOffsetsCell(params_.cellMm);
+        reply("CALIB_NO_APLICADA: se conservan parametros y mapa anteriores");
+      }
       char out[80];
       snprintf(out, sizeof(out), "CALIB desfases F%d I%d D%d pasillo %d %s", params_.frontOffsetMm,
                params_.leftOffsetMm, params_.rightOffsetMm, static_cast<int>(corridor), saved ? "(guardado)" : "");
       reply(out);
-      display_.show(saved ? "CALIBRADO" : "SIN CALIBRAR", saved ? "guardado" : "falta pared");
+      display_.show(saved ? "CALIBRADO" : "SIN CALIBRAR", saved ? "guardado" : "ajustes conservados");
       delay(800);
       break;
     }
@@ -566,6 +580,7 @@ void App::practiceRun() {
 void App::saveLearned() {
   // Lo aprendido en la mision (modelo del motor con la bateria de ahora, escala del giroscopio) pasa a los
   // parametros y se guarda solo: la siguiente vez arranca ya ajustado, sin calibrar a mano.
+  const raton::Params before = params_;
   raton::Motion& mo = mouse_.navigator().motion();
   const float k = mo.motorScale();
   if (k > 0.6f && k < 1.6f) params_.kV *= k;
@@ -593,6 +608,7 @@ void App::saveLearned() {
     params_.learnedCountsPerRev = params_.countsPerRev;
   }
   const bool ok = storage::saveParams(params_);
+  if (!ok) { params_ = before; reply("AUTOCAL_NO_GUARDADA: ajustes anteriores conservados"); }
   mo.loadLearned();
   char out[120];
   snprintf(out, sizeof(out), "APRENDIDO motor x%d/1000 giro x%d/1000 inclinacion %d/%d/%d decimas piso %d%% %s",
@@ -693,11 +709,14 @@ void App::calibrateFront() {
   // Raton CENTRADO en una celda de la competencia mirando a una pared: la lectura tiene que ser la distancia
   // geometrica (con el cono del sensor, x 1.006). La diferencia es el desfase del frontal.
   long sum = 0;
+  double sum2 = 0;
   int n = 0;
   for (int i = 0; i < 40 && n < 15; ++i) {
     const int mm = lasers_.read(Lasers::FRONT);
     if (mm >= 0) {
-      sum += mm + params_.frontOffsetMm;
+      const int reading = mm + params_.frontOffsetMm;
+      sum += reading;
+      sum2 += static_cast<double>(reading) * reading;
       ++n;
     }
   }
@@ -708,9 +727,19 @@ void App::calibrateFront() {
   }
   const float g90 = mouse_.navigator().sonda().parallelFactor(1.5708f);
   const float expected = g90 * (0.5f * (params_.cellMm - params_.wallMm) - params_.frontAheadMm);
-  params_.frontOffsetMm += static_cast<int>(expected - static_cast<float>(sum) / n + (expected > 0 ? 0.5f : -0.5f));
-  params_.frontStopMm = -1;
-  storage::saveParams(params_);
+  const float mean = static_cast<float>(sum) / n;
+  if (sum2 / n - mean * mean > 25.0 || expected <= 0 || fabsf(expected - mean) > 40) {
+    reply("CALIB frontal: lecturas inestables o pared no coherente; ajustes conservados");
+    return;
+  }
+  raton::Params candidate = params_;
+  candidate.frontOffsetMm += static_cast<int>(floorf(expected - mean + 0.5f));
+  candidate.frontStopMm = -1;
+  if (candidate.frontOffsetMm < -60 || candidate.frontOffsetMm > 60 || !storage::saveParams(candidate)) {
+    reply("CALIB frontal: no guardada; ajustes conservados");
+    return;
+  }
+  params_ = candidate;
   snprintf(out, sizeof(out), "CALIB frontOffsetMm=%d (guardado)", params_.frontOffsetMm);
   reply(out);
 }
@@ -721,7 +750,7 @@ void App::calibrateSides(float corridor) {
     reply("CALIB laterales: pasillo entre 100 y 400 mm");
     return;
   }
-  params_.cellMm = corridor + params_.wallMm;
+  pendingCorridor_ = corridor;
   requestedMode_ = kCalibrate;
   startRequested_ = true;
   reply("CALIBRANDO sensores con ese pasillo");

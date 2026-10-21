@@ -32,6 +32,7 @@ class App {
   void sensorTest();
   bool startupFailed_ = false;
   bool sensorTestRunning_ = false;
+  float pendingCorridor_ = 0;
   void practiceRun();
   void saveLearned();
   void motorCalibration();

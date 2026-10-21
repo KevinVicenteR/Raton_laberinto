@@ -823,8 +823,9 @@ void Navigator::report() {
            static_cast<int>(wrap180(head - 90.0f)), static_cast<int>(cell_ * 10.0f),
            static_cast<int>(wrap180(head) * 10.0f), motion_.turning() ? 0 : 1);
   io_.report(line, false);
-  if (p_.sideEnabled) {
-    snprintf(line, sizeof(line), "LATERALES I%d D%d", s_.sideLeft.mm, s_.sideRight.mm);
+  {
+    // Mostrar lecturas incluso cuando el centrado adicional esta deshabilitado.
+    snprintf(line, sizeof(line), "LATERALES I%d D%d control=%d", s_.sideLeft.mm, s_.sideRight.mm, p_.sideEnabled);
     io_.report(line, false);
   }
 }

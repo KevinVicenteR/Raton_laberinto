@@ -1,4 +1,11 @@
 export type Cell = [number, number];
+export type SensorKey = 'I' | 'F' | 'D' | 'LI' | 'LD';
+export type SensorReadings = Partial<Record<SensorKey, { mm: number; t: number }>>;
+export interface SensorFrame {
+  t: number;
+  readings: SensorReadings;
+}
+
 export type Sensors = {
   L: number;
   F: number;
@@ -24,6 +31,7 @@ interface Motion {
   actual_mm?: number;
 }
 export interface ReplayData {
+  corridor_mm?: number;
   trace: ReplaySample[];
   maze?: string[];
   start?: Cell;
@@ -60,6 +68,7 @@ export interface RobotSample {
   pitch?: number;
 }
 export interface Maze {
+  WALL?: number;
   W: number;
   H: number;
   map: string[];

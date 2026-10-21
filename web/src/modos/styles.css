@@ -6,6 +6,8 @@
   --border: #e3e6eb;
   --left: #2f6fdf;
   --front: #d9480f;
+  --side-left: #8152c5;
+  --side-right: #087f8c;
   --right: #2b9a66;
   --accent: #1d2330;
   --danger: #c92a2a;
@@ -20,6 +22,8 @@
     --border: #2b3240;
     --left: #6d9cf0;
     --front: #f08c4b;
+    --side-left: #b899ef;
+    --side-right: #67cdd8;
     --right: #5cc391;
     --accent: #e7eaf0;
     --danger: #ff6b6b;
@@ -34,6 +38,8 @@
   --border: #2b3240;
   --left: #6d9cf0;
   --front: #f08c4b;
+  --side-left: #b899ef;
+  --side-right: #67cdd8;
   --right: #5cc391;
   --accent: #e7eaf0;
   --danger: #ff6b6b;
@@ -497,6 +503,41 @@ svg {
   }
 }
 
-.solver-controls { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
-.solver-map { width: 100%; margin-top: 12px; }
-.solver-map [role="button"]:focus { outline: none; stroke: var(--left); stroke-width: 0.12; }
+.solver-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+}
+.solver-map {
+  width: 100%;
+  margin-top: 12px;
+}
+.solver-map [role='button']:focus {
+  outline: none;
+  stroke: var(--left);
+  stroke-width: 0.12;
+}
+
+.sensor-tiles {
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+  margin-top: 12px;
+}
+.sensor-label {
+  font-size: 13px;
+  font-weight: 600;
+  margin-bottom: 6px;
+}
+.sensor-tiles .tile strong {
+  font-size: clamp(18px, 2vw, 24px);
+  overflow-wrap: anywhere;
+}
+.sensor-radar {
+  display: block;
+  width: 100%;
+  max-height: 330px;
+}
+.sensor-legend {
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}

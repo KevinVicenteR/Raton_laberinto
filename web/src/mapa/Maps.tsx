@@ -79,8 +79,8 @@ export function Track({
                   else if (pose && last) {
                     const a = (last.a * Math.PI) / 180;
                     setOffset([
-                      offset[0] + (x + 0.5) * maze.PITCH + Math.sin(a) * 33 - pose[0],
-                      offset[1] + (y + 0.5) * maze.PITCH - Math.cos(a) * 33 - pose[1],
+                      offset[0] + (x + 0.5) * maze.PITCH + (last.pitch ? 0 : Math.sin(a) * 33) - pose[0],
+                      offset[1] + (y + 0.5) * maze.PITCH - (last.pitch ? 0 : Math.cos(a) * 33) - pose[1],
                     ]);
                   }
                 }}
@@ -90,6 +90,7 @@ export function Track({
                   <line
                     key={d}
                     className="wall"
+                    style={{ strokeWidth: ((maze.WALL ?? 12) / maze.PITCH) * 20 }}
                     x1={x * 20 + (d === 1 ? 20 : 0)}
                     y1={top + (d === 2 ? 20 : 0)}
                     x2={x * 20 + (d === 3 ? 0 : 20)}

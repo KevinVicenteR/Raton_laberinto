@@ -1,71 +1,69 @@
 import { useState } from 'react';
-// Parametros del firmware v2 (mismo nombre que en lib/raton_core/src/raton/params.h). Se envian con
-// "set nombre valor"; "save" los guarda en la flash de la placa.
-const definitions = [
-  ['searchSpeed', 'Velocidad explorando (mm/s)', 400, 50, 1500, 10],
-  ['runSpeed', 'Velocidad en carrera (mm/s)', 650, 50, 2500, 10],
-  ['turnSpeed', 'Velocidad en curvas (mm/s)', 280, 50, 1500, 10],
-  ['cellMm', 'Celda: pasillo + pared (mm)', 155, 100, 400, 1],
-  ['wallMm', 'Grosor de pared (mm)', 12, 0, 40, 1],
-  ['kpRot', 'Rumbo Kp', 0.02, 0, 0.2, 0.001],
-  ['kSteer', 'Centrado (grados por mm)', 0.25, 0, 2, 0.01],
-  ['sensorMaxMm', 'Alcance láseres (mm)', 600, 100, 2000, 10],
-] as const;
+import { definitions, editedParameterCommands } from './parameterCommands';
 export function Parameters({
   disabled,
   sequence,
   send,
   onApplied,
+  boardParams,
 }: {
   disabled: boolean;
+  boardParams: Record<string, number>;
   sequence: (commands: string[]) => Promise<boolean>;
   send: (cmd: string) => Promise<boolean>;
   onApplied: (speed: number, range: number) => void;
 }) {
-  const [values, setValues] = useState<Record<string, string>>(
-      Object.fromEntries(definitions.map(([key, , value]) => [key, String(value)])),
-    ),
+  const [values, setValues] = useState<Record<string, string>>({}),
     [goal, setGoal] = useState(''),
     [corridor, setCorridor] = useState(''),
     [free, setFree] = useState(''),
     [error, setError] = useState('');
+  const effective = (key: string, fallback: number) => values[key] ?? String(boardParams[key] ?? fallback);
   const apply = async () => {
-    if (
-      definitions.some(
-        ([key, , , min, max]) =>
-          values[key].trim() === '' ||
-          !Number.isFinite(+values[key]) ||
-          +values[key] < min ||
-          +values[key] > max,
-      )
-    ) {
-      setError('Revisa los límites de los parámetros numéricos.');
-      return;
+    try {
+      const commands = editedParameterCommands(values, goal);
+      if (!commands.length) {
+        setError('Modifica un ajuste antes de enviarlo.');
+        return;
+      }
+      setError('');
+      if (await sequence(commands)) {
+        onApplied(+effective('searchSpeed', 400), +effective('sensorMaxMm', 600));
+        setValues({});
+        setGoal('');
+      }
+    } catch (error) {
+      setError(String(error instanceof Error ? error.message : error));
     }
-    if (goal && !/^\d+,\d+$/.test(goal)) {
-      setError('Meta: x,y (por ejemplo 4,2).');
-      return;
-    }
-    setError('');
-    const commands = definitions.map(([key]) => `set ${key} ${values[key]}`);
-    if (goal) commands.push(`G${goal}`);
-    if (await sequence(commands)) onApplied(+values.searchSpeed, +values.sensorMaxMm);
   };
   return (
     <section className="panel">
       <h2>Parámetros</h2>
       <fieldset disabled={disabled}>
-        {definitions.map(([key, label, , min, max, step]) => (
+        <p className="status">
+          Solo se envían los campos que edites. Lee los valores de la placa para ver su configuración actual.
+        </p>
+        {definitions.map(([key, label, fallback, min, max, step]) => (
           <label className="field" key={key}>
-            {label}
-            <input
-              type="number"
-              min={min}
-              max={max}
-              step={step}
-              value={values[key]}
-              onChange={(e) => setValues({ ...values, [key]: e.target.value })}
-            />
+            {label} <small>{key in boardParams ? '· placa' : '· referencia'}</small>
+            {key === 'sideEnabled' ? (
+              <select
+                value={effective(key, fallback)}
+                onChange={(e) => setValues({ ...values, [key]: e.target.value })}
+              >
+                <option value="0">Desactivado</option>
+                <option value="1">Activado</option>
+              </select>
+            ) : (
+              <input
+                type="number"
+                min={min}
+                max={max}
+                step={step}
+                value={effective(key, fallback)}
+                onChange={(e) => setValues({ ...values, [key]: e.target.value })}
+              />
+            )}
           </label>
         ))}
         <label className="field">
@@ -78,9 +76,15 @@ export function Parameters({
         </label>
         <div className="row">
           <button onClick={() => void apply()}>Enviar ajustes</button>
-          <button onClick={() => void send('save')}>Guardar en la placa</button>
-          <button onClick={() => void send('params')}>Ver valores</button>
+          <button disabled={Object.keys(values).length > 0 || !!goal} onClick={() => void send('save')}>
+            Guardar en la placa
+          </button>
+          <button onClick={() => void send('params')}>Leer valores de la placa</button>
         </div>
+        <p className="status">
+          Laterales nuevos: XSHUT izquierdo A6 y derecho A3. Mide su posición y comprueba lecturas antes de
+          activar el centrado.
+        </p>
         <hr />
         <p className="status">
           La calibración de paredes es opcional y no bloquea el arranque. El ratón aprende motores y

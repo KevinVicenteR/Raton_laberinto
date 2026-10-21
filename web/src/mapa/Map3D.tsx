@@ -1,6 +1,6 @@
 // Mapa 3D de ocupacion con three.js. Se carga aparte (React.lazy) para no pesar en el arranque.
 import { useEffect, useRef, useState } from 'react';
-import { wall } from './maze';
+import { wall, trackFrame3D } from './maze';
 import type { Maze, RobotSample } from '../telemetria/types';
 import type { Occupancy } from './occupancy';
 import * as THREE from 'three';
@@ -54,11 +54,13 @@ export default function Map3D({
       new THREE.MeshLambertMaterial({ color: 0xd9480f }),
     );
     scene.add(robot);
+    const group = new THREE.Group();
+    scene.add(group);
     if (showTrack) {
-      const group = new THREE.Group(),
-        material = new THREE.MeshLambertMaterial({ color: 0x9aa3b2, transparent: true, opacity: 0.3 });
-      const ox = (maze.start[0] + 0.5) * maze.PITCH,
-        oy = (maze.start[1] + 0.5) * maze.PITCH - 33;
+      const material = new THREE.MeshLambertMaterial({ color: 0x9aa3b2, transparent: true, opacity: 0.3 });
+      const ox = 0,
+        oy = 0,
+        thickness = maze.WALL ?? 12;
       for (let x = 0; x < maze.W; x++)
         for (let y = 0; y < maze.H; y++)
           for (const d of [0, 3, ...(y === 0 ? [2] : []), ...(x === maze.W - 1 ? [1] : [])])
@@ -66,7 +68,11 @@ export default function Map3D({
               const horizontal = d === 0 || d === 2,
                 p = maze.PITCH;
               const m = new THREE.Mesh(
-                new THREE.BoxGeometry((horizontal ? p : 15) * 0.1, 5, (horizontal ? 15 : p) * 0.1),
+                new THREE.BoxGeometry(
+                  (horizontal ? p : thickness) * 0.1,
+                  5,
+                  (horizontal ? thickness : p) * 0.1,
+                ),
                 material,
               );
               m.position.set(
@@ -76,7 +82,6 @@ export default function Map3D({
               );
               group.add(m);
             }
-      scene.add(group);
     }
     const resize = () => {
       renderer.setSize(el.clientWidth, el.clientHeight);
@@ -92,6 +97,9 @@ export default function Map3D({
       previousTrail: RobotSample[] | undefined;
     const animate = () => {
       const data = latest.current;
+      const frame = trackFrame3D(maze, data.last?.pitch);
+      group.scale.set(frame.scale, 1, frame.scale);
+      group.position.set(-frame.origin[0] * 0.1, 0, frame.origin[1] * 0.1);
       if (previous !== data.occupancy) {
         let n = 0;
         const matrix = new THREE.Matrix4();
