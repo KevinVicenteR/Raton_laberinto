@@ -14,6 +14,11 @@ const uint8_t ADDR_LEFT = 0x30;
 const uint8_t ADDR_FRONT = 0x31;
 const uint8_t ADDR_RIGHT = 0x32;
 const uint8_t ADDR_OLED = 0x3C;
+// Sin asignar: no se accede a ningun pin nuevo hasta conocer el cableado.
+const int XSHUT_SIDE_LEFT = -1;
+const int XSHUT_SIDE_RIGHT = -1;
+const uint8_t ADDR_SIDE_LEFT = 0x33;
+const uint8_t ADDR_SIDE_RIGHT = 0x34;
 
 // DRV8833: A = motor izquierdo, B = motor derecho.
 const uint8_t AIN1 = 5;

@@ -35,7 +35,7 @@ struct Params {
   float bodyWidthMm = 90.0f;
 
   // ---------- Sensores VL53L0X ----------
-  // Frontal en el centro y dos laterales a 45 grados (no hay sensores a 90 grados).
+  // Frontal en el centro y dos laterales a 45 grados (los opcionales a 90 grados se configuran al final).
   float frontAheadMm = 40.0f;   // posicion del frontal por delante del eje de ruedas
   float diagAheadMm = 30.0f;    // laterales: por delante del eje...
   float diagLateralMm = 30.0f;  // ...y separados del centro hacia cada lado
@@ -125,6 +125,13 @@ struct Params {
   float learnedWheelDiamMm = 0.0f;
   float learnedCountsPerRev = 0.0f;
   int precisionMode = 1;  // perfil fisico prudente; 0 habilita las velocidades configuradas
+
+  // Laterales opcionales a 90 grados. Activar SOLO despues de medir el montaje.
+  int sideEnabled = 0;
+  float sideAheadMm = 0.0f;    // respecto al eje de ruedas (+ delante)
+  float sideLateralMm = 30.0f; // distancia del centro a cada lente (montaje simetrico)
+  int sideLeftOffsetMm = 0, sideRightOffsetMm = 0;
+
 
 };
 

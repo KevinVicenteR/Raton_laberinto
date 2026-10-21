@@ -15,6 +15,7 @@
 #pragma once
 
 #include "raton/lateral.h"
+#include "raton/side_sensors.h"
 #include "raton/maze.h"
 #include "raton/motion.h"
 #include "raton/params.h"
@@ -110,6 +111,9 @@ class Navigator {
   float headingError() const { return motion_.angle() - gridAngle_; }
   void enterNextCell();
   void sense();
+  void senseSides();
+  SideEvidence sideEvidence_[2];
+  float sideSeen_[2] = {-1, -1};
   void radar(int sensor, int mm);
   void frontCheck(int mm);
   // La lectura del frontal la explica la pared de la frontera k mejor que lo que hay sin ella (piso, lejos).

@@ -91,6 +91,10 @@ void App::setup() {
   snprintf(line, sizeof(line), "SENSORES izq=%s frente=%s der=%s", lasers_.ok(0) ? "ok" : "FALLA",
            lasers_.ok(1) ? "ok" : "FALLA", lasers_.ok(2) ? "ok" : "FALLA");
   reply(line);
+  snprintf(line, sizeof(line), "LATERALES izq=%s der=%s control=%d",
+           lasers_.ok(Lasers::SIDE_LEFT) ? "ok" : "no disponible",
+           lasers_.ok(Lasers::SIDE_RIGHT) ? "ok" : "no disponible", params_.sideEnabled);
+  reply(line);
   if (!lasers_.ok(1)) fail("Laser frontal");
   if (!lasers_.ok(0) && !lasers_.ok(2)) fail("Ambos laterales");
   ok = false;
@@ -605,6 +609,9 @@ void App::sensorsMode() {
       snprintf(line, sizeof(line), "SENS I%d F%d D%d fresh=%d,%d,%d giro=%d encI=%d encD=%d", s.left.mm, s.front.mm,
                s.right.mm, s.left.fresh, s.front.fresh, s.right.fresh, static_cast<int>(s.gyroDeg),
                static_cast<int>(s.encLeftMm), static_cast<int>(s.encRightMm));
+      telemetry::println(line, false);
+      snprintf(line, sizeof(line), "LATERALES I%d D%d fresh=%d,%d control=%d",
+               s.sideLeft.mm, s.sideRight.mm, s.sideLeft.fresh, s.sideRight.fresh, params_.sideEnabled);
       telemetry::println(line, false);
     }
   }

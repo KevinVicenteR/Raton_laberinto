@@ -58,3 +58,54 @@ También existen `calfront` (robot centrado mirando una pared) y `calside <ancho
 Todas las órdenes se envían por Bluetooth o Serie a 115200. `params` lista valores; `get <nombre>` consulta; `set <nombre> <valor>` cambia; `save` guarda cambios manuales. `learnMotor 1`, `learnGyro 1` y `learnVertical 1` están activados por defecto (usa `set` antes del nombre). `defaults` restablece todos los parámetros, incluida la geometría: configura otra vez la pista antes de correr.
 
 Esta actualización conserva la configuración flash del formato anterior y añade los ajustes nuevos con valores neutros. `erase` borra el mapa, no es necesario para calibrar. Los tres modos del robot permanecen iguales.
+
+## Dos laterales opcionales a 90 grados
+
+Se conservan el frontal y los dos diagonales con su montaje y pines actuales. Los nuevos VL53L0X se leen
+como `sideLeft`/`sideRight` y no sustituyen los diagonales. `XSHUT_SIDE_LEFT` y `XSHUT_SIDE_RIGHT` en
+`firmware/config.h` quedan en `-1` hasta conocer el cableado; no se toca ningun pin adicional.
+**No conectar los nuevos al bus sin tener controlados sus XSHUT**: todos arrancan en 0x29 y pueden
+interferir con los sensores originales. Una vez asignados los pines, se inicializan individualmente con
+las direcciones 0x33 y 0x34. Revisar que los pines elegidos no tengan otra funcion.
+
+El control nuevo esta desactivado por defecto (`sideEnabled=0`). Con los nuevos instalados, primero usar
+`sensores` para comprobar `LATERALES I... D...`, sin movimiento. Medir y configurar `sideAheadMm`
+(distancia longitudinal de las lentes al eje de las ruedas, positiva delante) y `sideLateralMm` (del
+centro a la lente, a cada lado). El modelo exige montaje simetrico y horizontal, apuntando a +-90 grados.
+Los valores iniciales de geometria son provisionales, no mediciones del robot. Corregir las distancias
+con `sideLeftOffsetMm` y `sideRightOffsetMm` midiendo separaciones conocidas. La orden `calsonda` sigue
+calibrando solo los tres sensores originales; no calibra estos nuevos offsets.
+
+Despues de comprobar medidas y montaje: `set sideEnabled 1`, seguido de `save`. Se conserva la lectura
+y el diagnostico de los nuevos aunque el control este desactivado. Si no estan disponibles, el robot
+sigue usando los originales; no se exige su presencia para iniciar una mision.
+
+En rectas, dos muestras nuevas consistentes pueden aportar votos de pared/hueco a las aristas aun desconocidas de la celda actual.
+Se exige pose precisa, cono alejado de esquinas/postes y lecturas validas: una lectura perdida **no** es
+un hueco. Para recentrar con los nuevos, se exigen ambas paredes confirmadas, lecturas recientes a los dos lados y un ancho de pasillo coherente. Se usa la diferencia derecha-izquierda para evitar que un error del ancho aprendido genere dos correcciones opuestas. Con una sola pared o lecturas incompletas, siguen trabajando los diagonales y el giroscopio.
+El filtro combina el desplazamiento con encoders y giroscopio; un solo lateral no mide directamente el
+angulo. En giros o recuperaciones se suspende esta correccion. Si un nuevo sensor deja de responder,
+su dato caduca a los 150 ms y se vuelve al control de los originales; el dato viejo no sigue votando.
+Los sensores nuevos no sobrescriben directamente un paso ya confirmado: el observador original y la comprobacion frontal siguen gestionando contradicciones. Los modos 1, 2 y 3 y el control PWM de motores se mantienen.
+
+Pruebas reproducibles (montaje simulado, no validacion fisica del robot):
+
+```bash
+cmake -S . -B build
+cmake --build build -j
+ctest --test-dir build --output-on-failure
+scripts/banco.sh 80 --set sideEnabled=1
+SIM_SIDES=0 scripts/banco.sh 20 --set sideEnabled=1
+SIM_FAIL_SIDE_LEFT=3 SIM_FAIL_SIDE_RIGHT=3 scripts/banco.sh 20 --set sideEnabled=1
+```
+
+`--set sideEnabled=1` activa los cinco en el simulador; `SIM_SIDES=0` simula ausencia de los nuevos.
+La simulacion usa la geometria configurada tambien como geometria fisica de los nuevos; no comprueba
+un montaje real mal medido. Evaluar en el robot rectas, aperturas laterales, giros y desconexion de un
+sensor, empezando con el perfil prudente. No se garantiza una mejora de rapidez en todos los mapas.
+
+Validacion del soporte inicial: 408 comprobaciones sin fallos; banco de 81 pistas con errores, cinco
+sensores: 81 completadas, 80 sin contacto, 8 contactos y 4 aristas mal clasificadas en total. Referencia
+con tres sensores: 81 completadas, 79 sin contacto, 6 contactos y 6 aristas mal clasificadas. La mejora
+no es uniforme: algunos indicadores mejoran y otros no; falta medir el montaje real. Las misiones de
+prueba con ausencia de los dos nuevos y con perdida de sus lecturas completan exploracion y carrera.

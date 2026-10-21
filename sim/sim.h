@@ -60,7 +60,8 @@ struct Physical {
   float outlier = 0.004f;
   int offsetF = 0, offsetL = 0, offsetR = 0;  // error de cada sensor (mm)
   // Inyeccion reproducible: -1 desactiva, segundos desde el arranque.
-  float laserFailAt[3] = {-1, -1, -1};  // izq, frente, der: no llegan muestras
+  bool sideSensors = false;  // dos sensores opcionales a 90 grados
+  float laserFailAt[5] = {-1, -1, -1, -1, -1};  // izq, frente, der: no llegan muestras
   float gyroFailAt = -1;
   bool gyroFrozen = false;  // true: publica el mismo angulo; false: no publica
   float startX = 0, startY = 0, startDeg = 0;  // error de colocacion en la salida
@@ -157,9 +158,9 @@ class SimPlatform : public raton::Platform {
   float lastGyroRead_ = 0;
   float yawTrue_ = 0;
   // Laseres: siguiente medida lista y valor
-  float laserReady_[3] = {0, 0, 0};
-  int laserValue_[3] = {-1, -1, -1};
-  bool laserPending_[3] = {false, false, false};
+  float laserReady_[5] = {};
+  int laserValue_[5] = {-1, -1, -1, -1, -1};
+  bool laserPending_[5] = {};
   int tickCount_ = 0;
   int contacts_ = 0;
   bool touching_ = false;

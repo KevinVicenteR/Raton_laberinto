@@ -200,7 +200,7 @@ SimPlatform::SimPlatform(const World& world, const raton::Params& p, const Physi
     : world_(world), p_(p), ph_(ph), rng_(seed) {
   std::normal_distribution<float> n(0, 1);
   bias_ = ph_.gyroBiasDps * (n(rng_) > 0 ? 1.0f : -1.0f);
-  for (int i = 0; i < 3; ++i) laserReady_[i] = 0.005f * i;
+  for (int i = 0; i < 5; ++i) laserReady_[i] = 0.005f * i;
 }
 
 void SimPlatform::place(int cx, int cy, int dir) {
@@ -285,6 +285,11 @@ int SimPlatform::readLaser(int i) {
     fx = p_.frontAheadMm;
     fy = 0;
     ang = 0;
+  } else if (i >= 3) {
+    const float sign = i == 3 ? 1.0f : -1.0f;
+    fx = p_.sideAheadMm;
+    fy = sign * p_.sideLateralMm;
+    ang = sign * 90.0f / kDeg;
   } else {
     const float sign = i == 0 ? 1.0f : -1.0f;
     fx = p_.diagAheadMm;
@@ -298,7 +303,7 @@ int SimPlatform::readLaser(int i) {
   if (d > 1200.0f) return -1;
   if (u(rng_) < ph_.dropout) return -1;
   if (u(rng_) < ph_.outlier) return static_cast<int>(20 + u(rng_) * 700);
-  const int off = i == 0 ? ph_.offsetL : (i == 1 ? ph_.offsetF : ph_.offsetR);
+  const int off = i >= 3 ? 0 : (i == 0 ? ph_.offsetL : (i == 1 ? ph_.offsetF : ph_.offsetR));
   float v = d + off + n(rng_) * (ph_.rangeNoiseMm + ph_.rangeNoise * d);
   if (v < 0) v = 0;
   return static_cast<int>(v + 0.5f);
@@ -307,7 +312,7 @@ int SimPlatform::readLaser(int i) {
 void SimPlatform::updateLasers() {
   // Cada sensor mide en continuo (~21 ms). El valor es el de la mitad de la medida, que esta lista
   // ~10 ms despues; la placa lee un sensor por ciclo (por turnos).
-  for (int i = 0; i < 3; ++i) {
+  for (int i = 0; i < (ph_.sideSensors ? 5 : 3); ++i) {
     if (!laserPending_[i] && t_ >= laserReady_[i] - 0.0105f) {
       laserValue_[i] = readLaser(i);
       laserPending_[i] = true;
@@ -345,10 +350,11 @@ const raton::Sensors& SimPlatform::tick() {
     s_.gyroFresh = !failed || ph_.gyroFrozen;
   }
   // Laseres por turnos.
-  raton::Range* rr[3] = {&s_.left, &s_.front, &s_.right};
-  const int offs[3] = {p_.leftOffsetMm, p_.frontOffsetMm, p_.rightOffsetMm};
-  for (int i = 0; i < 3; ++i) rr[i]->fresh = false;
-  const int i = tickCount_ % 3;
+  raton::Range* rr[5] = {&s_.left, &s_.front, &s_.right, &s_.sideLeft, &s_.sideRight};
+  const int offs[5] = {p_.leftOffsetMm, p_.frontOffsetMm, p_.rightOffsetMm,
+                       p_.sideLeftOffsetMm, p_.sideRightOffsetMm};
+  for (int i = 0; i < 5; ++i) rr[i]->fresh = false;
+  const int i = tickCount_ % (ph_.sideSensors ? 5 : 3);
   if (laserPending_[i] && t_ >= laserReady_[i]) {
     std::uniform_real_distribution<float> u(0, 1);
     laserPending_[i] = false;

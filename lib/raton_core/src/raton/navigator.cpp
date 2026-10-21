@@ -127,6 +127,7 @@ void Navigator::begin(int x, int y, Dir h) {
   gridAngle_ = 0;
   lateral_.reset(0, 100.0f, 4e-4f);
   latAge_ = 1e9f;
+  for (int i = 0; i < 2; ++i) { sideEvidence_[i] = SideEvidence(); sideSeen_[i] = t_; }
   lastOdo_ = 0;
   decided_ = false;
   act_ = Act::None;
@@ -191,6 +192,14 @@ float Navigator::frontStopReading() const {
 }
 
 void Navigator::filterSensors() {
+  Range* sides[2] = {&s_.sideLeft, &s_.sideRight};
+  for (int i = 0; i < 2; ++i) {
+    if (sides[i]->fresh) sideSeen_[i] = t_;
+    if (t_ - sideSeen_[i] > 0.15f) {
+      sides[i]->mm = -1;
+      sideEvidence_[i] = SideEvidence();
+    }
+  }
   Range* rr[3] = {&s_.left, &s_.front, &s_.right};
   for (int i = 0; i < 3; ++i) {
     if (rr[i]->fresh) {
@@ -385,6 +394,39 @@ void Navigator::sense() {
 #else
     radar(i, mm);
 #endif
+  }
+  senseSides();
+}
+
+void Navigator::senseSides() {
+  if (!p_.sideEnabled || fabsf(motion_.measuredRate()) > 40.0f) {
+    for (auto& evidence : sideEvidence_) evidence = SideEvidence();
+    return;
+  }
+  const Range* ranges[2] = {&s_.sideLeft, &s_.sideRight};
+  for (int i = 0; i < 2; ++i) {
+    const Range& r = *ranges[i];
+    if (!r.fresh) continue;
+    const int sign = i == 0 ? 1 : -1;
+    const Dir d = i == 0 ? turnLeft(h_) : turnRight(h_);
+    const auto o = sideObservation(p_, r, sign, halfCorr_, cellPos(), lateral_.y(),
+                                   headingError(), motion_.measuredSpeed(), sqrtf(longVar_));
+    if (!sideEvidence_[i].accept(o, r.mm, t_, maze_.index(cx_, cy_) * 4 + static_cast<int>(h_))) continue;
+    // Con las dos paredes, la diferencia de distancias cancela el error del ancho
+    // de pasillo aprendido con encoders. No enfrentar dos correcciones absolutas.
+    const bool corridor = maze_.wall(cx_, cy_, turnLeft(h_)) == Wall::Closed &&
+                          maze_.wall(cx_, cy_, turnRight(h_)) == Wall::Closed;
+    const float psi = headingError() / kDeg;
+    const float width = (s_.sideLeft.mm + s_.sideRight.mm + 2 * p_.sideLateralMm) * cosf(psi);
+    if (o.wall > 0 && corridor && s_.sideLeft.mm >= 10 && s_.sideRight.mm >= 10 &&
+        t_ - sideSeen_[0] < 0.06f && t_ - sideSeen_[1] < 0.06f && fabsf(width - 2 * halfCorr_) < 16) {
+      const float y = 0.5f * (s_.sideRight.mm - s_.sideLeft.mm) * cosf(psi) - p_.sideAheadMm * sinf(psi);
+      if (fabsf(y - lateral_.y()) < 15 && lateral_.update(y, 36.0f)) latAge_ = 0;
+    }
+    // Mapear solo con pose precisa; el observador de diagonales sigue anticipando la celda siguiente.
+    if (maze_.wall(cx_, cy_, d) == Wall::Unknown &&
+        fabsf(lateral_.y()) < 8 && fabsf(headingError()) < 3 && longVar_ < 36)
+      maze_.observe(cx_, cy_, d, o.wall > 0, 1);
   }
 }
 
@@ -781,6 +823,10 @@ void Navigator::report() {
            static_cast<int>(wrap180(head - 90.0f)), static_cast<int>(cell_ * 10.0f),
            static_cast<int>(wrap180(head) * 10.0f), motion_.turning() ? 0 : 1);
   io_.report(line, false);
+  if (p_.sideEnabled) {
+    snprintf(line, sizeof(line), "LATERALES I%d D%d", s_.sideLeft.mm, s_.sideRight.mm);
+    io_.report(line, false);
+  }
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -913,6 +959,7 @@ bool Navigator::pivot(int q) {
   lateral_.addHeadingVariance(1.5e-3f);  // ~2 grados por el error de escala del giroscopio
   lastOdo_ = motion_.position();
   latAge_ = 1e9f;
+  for (int i = 0; i < 2; ++i) { sideEvidence_[i] = SideEvidence(); sideSeen_[i] = t_; }
   longVar_ += lateral_.varY() + 4.0f;  // el avance nuevo es el lateral de antes
   resetBeams();
   return true;
@@ -1260,6 +1307,7 @@ NavResult Navigator::run(Brain& brain, float vmax, bool smoothTurns) {
       lateral_.addHeadingVariance(7e-4f);
       lastOdo_ = motion_.position();
       latAge_ = 1e9f;
+      for (int i = 0; i < 2; ++i) { sideEvidence_[i] = SideEvidence(); sideSeen_[i] = t_; }
       longVar_ += 100.0f;
       resetBeams();
       arcStarted_ = false;

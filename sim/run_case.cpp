@@ -35,8 +35,11 @@ Physical perturbed(const raton::Params& p, int level, uint32_t seed) {
   ph.bodyRearMm = p.bodyRearMm;
   ph.bodyWidthMm = p.bodyWidthMm;
   ph.rectBody = !(p.bodyFrontMm == 45.0f && p.bodyRearMm == 45.0f && p.bodyWidthMm == 90.0f);
-  const char* faults[3] = {"SIM_FAIL_LEFT", "SIM_FAIL_FRONT", "SIM_FAIL_RIGHT"};
-  for (int i = 0; i < 3; ++i)
+  ph.sideSensors = p.sideEnabled != 0;
+  if (const char* v = getenv("SIM_SIDES")) ph.sideSensors = atoi(v) != 0;
+  const char* faults[5] = {"SIM_FAIL_LEFT", "SIM_FAIL_FRONT", "SIM_FAIL_RIGHT",
+                           "SIM_FAIL_SIDE_LEFT", "SIM_FAIL_SIDE_RIGHT"};
+  for (int i = 0; i < 5; ++i)
     if (const char* v = getenv(faults[i])) ph.laserFailAt[i] = static_cast<float>(atof(v));
   if (const char* v = getenv("SIM_FAIL_GYRO")) ph.gyroFailAt = static_cast<float>(atof(v));
   ph.gyroFrozen = getenv("SIM_FREEZE_GYRO") != nullptr;

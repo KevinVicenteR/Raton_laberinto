@@ -126,3 +126,18 @@ Se guardan en flash con CRC.
 - Resultados actuales: competencia con errores (161 casos) 158–159 cumplen, ~146 sin roce, ~30 paredes mal en total; sin errores 81/81 sin roce. Práctica 67/70.
 - CMake también compila todo `firmware/` contra cabeceras mínimas (`tests/stubs`) para detectar errores sin la placa.
 - La integración continua compila el firmware real con PlatformIO y corre la batería de laberintos.
+
+### Laterales opcionales a 90 grados
+
+`Sensors` conserva `left/front/right` y anade `sideLeft/sideRight`. El driver admite hasta cinco VL53L0X;
+los XSHUT nuevos sin asignar se omiten y la placa sigue consultando tres sensores. Cuando se configuran
+y responden, consulta los cinco por turnos. `sideEnabled` activa la fusion, independientemente de la
+lectura de diagnostico. El formato `NAV` anterior no cambia: las lecturas nuevas van en `LATERALES`.
+
+`side_sensors.h` comprueba geometria, validez, distancia a postes y persistencia de evidencia. El
+navegador aporta votos solo a aristas desconocidas con pose precisa. Con ambas paredes confirmadas,
+la diferencia entre distancias a izquierda y derecha corrige el filtro lateral, evitando convertir el
+error del ancho de pasillo en un error de centrado. Con aperturas, muestras incoherentes o caducadas,
+se mantienen las correcciones de los diagonales y el giroscopio. No se aprenden automaticamente los
+offsets de los sensores nuevos; deben medirse antes de habilitarlos. La carga de parametros acepta
+tambien el formato guardado antes de esta ampliacion.

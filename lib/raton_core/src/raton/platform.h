@@ -19,7 +19,8 @@ struct Sensors {
   float encRightMm = 0;
   float gyroDeg = 0;      // rumbo acumulado del giroscopio (positivo = izquierda, antihorario)
   bool gyroFresh = false; // muestra nueva del giroscopio en este ciclo
-  Range front, left, right;
+  Range front, left, right;  // frontal y diagonales originales
+  Range sideLeft, sideRight;  // opcionales a 90 grados; sin dato = -1 / fresh=false
 };
 
 class Platform {

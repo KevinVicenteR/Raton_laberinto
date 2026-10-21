@@ -60,9 +60,10 @@ const raton::Sensors& Board::tick() {
   lastR_ = r;
 
   // Un laser por ciclo, por turnos (cada uno mide a ~50 Hz; asi el ciclo no pasa de ~0.6 ms de I2C).
-  raton::Range* rr[3] = {&s_.left, &s_.front, &s_.right};
-  const int offs[3] = {p_.leftOffsetMm, p_.frontOffsetMm, p_.rightOffsetMm};
-  for (int i = 0; i < 3; ++i) rr[i]->fresh = false;
+  raton::Range* rr[5] = {&s_.left, &s_.front, &s_.right, &s_.sideLeft, &s_.sideRight};
+  const int offs[5] = {p_.leftOffsetMm, p_.frontOffsetMm, p_.rightOffsetMm,
+                       p_.sideLeftOffsetMm, p_.sideRightOffsetMm};
+  for (int i = 0; i < 5; ++i) rr[i]->fresh = false;
   int mm;
   if (lasers_.poll(laser_, mm)) {
     if (mm >= 0) mm += offs[laser_];
@@ -70,7 +71,7 @@ const raton::Sensors& Board::tick() {
     rr[laser_]->mm = mm;
     rr[laser_]->fresh = true;
   }
-  laser_ = (laser_ + 1) % 3;
+  laser_ = (laser_ + 1) % lasers_.pollCount();
   lastReturn_ = micros();
   return s_;
 }

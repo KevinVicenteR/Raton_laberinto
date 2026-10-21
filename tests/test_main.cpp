@@ -9,6 +9,7 @@
 #include "raton/frame.h"
 #include "raton/autocal.h"
 #include "raton/lateral.h"
+#include "raton/side_sensors.h"
 #include "raton/line_queue.h"
 #include "raton/maze.h"
 #include "raton/navigator.h"
@@ -591,6 +592,68 @@ void testThreeModes() {
   CHECK(!mouse.navigator().sensorFault());
 }
 
+// Geometria observada, huecos, datos perdidos y misiones con cinco sensores.
+void testSideSensors() {
+  Params p;
+  Range r;
+  r.fresh = true; r.mm = 42;
+  CHECK(!sideObservation(p, r, 1, 71.5f, 0, 0, 0, 0, 0).usable);
+  p.sideEnabled = 1;
+  // Pasillo de 143 mm: desplazado 8 mm a la izquierda.
+  r.mm = 34;
+  auto o = sideObservation(p, r, 1, 71.5f, 0, 8, 0, 0, 0);
+  CHECK(o.usable && o.wall == 1 && fabsf(o.y - 7.5f) < 1);
+  r.mm = 50;
+  o = sideObservation(p, r, -1, 71.5f, 0, 8, 0, 0, 0);
+  CHECK(o.usable && o.wall == 1 && fabsf(o.y - 8.5f) < 1);
+  r.mm = 150;
+  o = sideObservation(p, r, 1, 71.5f, 0, 0, 0, 0, 0);
+  CHECK(o.usable && o.wall == -1); // lectura lejana valida, no una perdida
+  SideEvidence evidence;
+  CHECK(!evidence.accept(o, 150, 0.02f, 0));
+  CHECK(evidence.accept(o, 151, 0.04f, 0));
+  CHECK(!evidence.accept(o, 151, 0.06f, 1)); // otra celda
+  CHECK(!evidence.accept(o, 151, 0.30f, 1)); // dato envejecido
+  CHECK(!evidence.accept(o, 151, 0.30f, 1)); // muestra repetida
+  r.mm = -1;
+  o = sideObservation(p, r, 1, 71.5f, 0, 0, 0, 0, 0);
+  CHECK(!o.usable && !evidence.accept(o, -1, 0.32f, 1));
+  r.mm = 42; r.fresh = false;
+  CHECK(!sideObservation(p, r, 1, 71.5f, 0, 0, 0, 0, 0).usable);
+  r.fresh = true;
+  CHECK(!sideObservation(p, r, 1, 71.5f, 60, 0, 0, 0, 0).usable); // poste/cruce
+  CHECK(!sideObservation(p, r, 1, 71.5f, 0, 0, 15, 0, 0).usable); // girando
+  r.mm = 65;
+  CHECK(sideObservation(p, r, 1, 71.5f, 0, 0, 0, 0, 0).wall == 0); // ambiguo
+  // Comparar contra rayos geometricos reales con el robot torcido y sensor adelantado.
+  Maze truth; truth.reset(3, 4, true);
+  for (int y = 0; y < 4; ++y) { truth.set(1, y, WEST, Wall::Closed); truth.set(1, y, EAST, Wall::Closed); }
+  sim::Physical ph; ph.rangeNoise = ph.rangeNoiseMm = ph.dropout = ph.outlier = 0;
+  sim::World world(truth, ph);
+  p.sideAheadMm = 15;
+  const float a = 5 * 0.01745329252f, c = cosf(a), sn = sinf(a);
+  const float x = 1.5f * 155 - 8, y = 1.5f * 155;
+  for (int sign : {1, -1}) {
+    const float sx = x - p.sideAheadMm * sn - sign * p.sideLateralMm * c;
+    const float sy = y + p.sideAheadMm * c - sign * p.sideLateralMm * sn;
+    const float ray = 1.5707963268f + a + sign * 1.5707963268f;
+    r.mm = static_cast<int>(world.raycast(sx, sy, ray, 600) + 0.5f);
+    o = sideObservation(p, r, sign, 71.5f, 0, 8, 5, 0, 0);
+    CHECK(o.usable && o.wall == 1 && fabsf(o.y - 8) < 1);
+  }
+  CHECK(sim::loadMazeFile(std::string(RATON_MAZES_DIR) + "/reglamento_2026.txt", truth));
+  for (int mode = 0; mode < 4; ++mode) {
+    Params pc; pc.sideEnabled = 1;
+    auto phys = sim::perturbed(pc, mode == 0 ? 0 : 2, 76);
+    phys.sideSensors = mode != 3; // habilitado sin hardware: volver a los originales
+    if (mode == 2) phys.laserFailAt[3] = phys.laserFailAt[4] = 3.0f;
+    auto result = sim::runCase(truth, pc, phys, 4, false);
+    printf("  cinco sensores escenario %d: %s\n", mode, sim::describe(result).c_str());
+    CHECK(result.ok());
+    CHECK(result.proven && result.backHome);
+  }
+}
+
 void testMissions() {
   Params p;
   Maze truth;
@@ -645,6 +708,7 @@ int main() {
   testRecoveryAndTiming();
   testAutoCalibration();
   testThreeModes();
+  testSideSensors();
   testMissions();
   testPractice();
   printf("%d comprobaciones, %d fallos\n", checks, failures);

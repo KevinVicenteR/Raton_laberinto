@@ -33,6 +33,8 @@ const Entry kTable[] = {
     PF(frontTiltDeg, -10, 10), PF(rightTiltDeg, -10, 10), PI(learnVertical, 0, 1), PI(rangeBiasFromCell, 0, 1), PF(motorBalance, -0.25f, 0.25f),
     PF(startBoostLF, 0, 0.22f), PF(startBoostLR, 0, 0.22f), PF(startBoostRF, 0, 0.22f), PF(startBoostRR, 0, 0.22f),
     PF(learnedCellMm, 0, 432), PF(learnedCellRefMm, 0, 400), PF(learnedWheelDiamMm, 0, 80), PF(learnedCountsPerRev, 0, 100000), PI(precisionMode, 0, 1),
+    PI(sideEnabled, 0, 1), PF(sideAheadMm, -80, 80), PF(sideLateralMm, 0, 70),
+    PI(sideLeftOffsetMm, -60, 60), PI(sideRightOffsetMm, -60, 60),
 };
 
 const int kCount = sizeof(kTable) / sizeof(kTable[0]);
