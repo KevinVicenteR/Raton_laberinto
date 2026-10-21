@@ -74,13 +74,17 @@ scripts/run.sh subir                # compila y sube el firmware (PlatformIO)
 2. **Arrancar:** deja la mano delante más de 1 s y retírala. El ratón espera 0,7 s, calibra el giroscopio quieto y arranca.
 3. **Bluetooth "Raton" o Monitor Serie:** `s` arranca, `x` para, `m<n>` elige modo y `help` lista las órdenes.
 
+Si "Raton" no aparece, reinicia la placa y revisa el Monitor Serie a 115200: si BLE no pudo iniciar,
+el firmware lo informa ahí. Conecta un solo cliente Bluetooth a la vez; después de una desconexión
+inesperada, la web intenta recuperar el enlace automáticamente.
+
 | Modo | Qué hace |
 |---|---|
 | 1 Resolver desconocido | Parte de un mapa vacío y busca la meta. Conserva el mapa guardado en flash. |
 | 2 Mapear y guardar | Explora todo lo alcanzable, vuelve a la salida, guarda el mapa y calcula la ruta más corta en número de celdas. |
 | 3 Resolver aprendido | Carga el mapa guardado y busca la ruta más corta por pasos conocidos hasta la meta. Si falta mapa o ruta, informa y permanece parado. |
 
-Envía **`1`, `2` o `3`** para arrancar directamente (también sin salto de línea). Se mantienen `s1`–`s3` para arrancar y `m1`–`m3` para seleccionar. `x` detiene, incluso durante la preparación del arranque. `erase` borra el mapa; no es un cuarto modo.
+Envía **`1`, `2` o `3`** para arrancar directamente (también sin salto de línea). Se mantienen `s1`–`s3` para arrancar y `m1`–`m3` para seleccionar. `x` detiene, incluso durante la preparación del arranque. `sensores` muestra lecturas sin mover el ratón; `x` vuelve al menú. `erase` borra el mapa; no es un cuarto modo.
 
 Configura `cellMm`, tamaño, salida y meta para la pista real. Coloca el ratón en la salida con el rumbo configurado antes de cada intento. Los tres modos usan esa geometría; no miden automáticamente una pista de tamaño desconocido.
 

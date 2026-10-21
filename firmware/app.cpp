@@ -74,7 +74,7 @@ void App::setup() {
   motors_.coast();
   encoders_.begin();
   // Bluetooth lo primero: si luego falla un sensor, la web se puede conectar y ver el error.
-  telemetry::begin();
+  if (!telemetry::begin() && Serial) Serial.println("ERROR Bluetooth: BLE.begin() fallo; no se anunciara Raton.");
   board_.service = serviceTrampoline;
   const uint32_t t0 = millis();
   while (millis() - t0 < 300) service();  // margen para que laseres, IMU y OLED se enciendan
@@ -301,6 +301,12 @@ void App::command(char* cmd) {
     calibrateFront();
     return;
   }
+  if (!strcmp(cmd, "sensores")) {
+    requestedMode_ = kSensors;
+    startRequested_ = true;
+    reply("DIAGNOSTICO_SENSORES: sin movimiento; x para salir");
+    return;
+  }
   if (!strcmp(cmd, "calsonda")) {
     // Gira en el sitio: se hace desde el bucle principal, como un modo.
     requestedMode_ = kCalibrate;
@@ -326,7 +332,7 @@ void App::command(char* cmd) {
   }
   snprintf(out, sizeof(out), "? orden desconocida: %s", cmd);
   reply(out);
-  reply("ordenes: 1 2 3 s s<1-3> x m<n> G<x>,<y> set <p> <v> get <p> params save defaults map erase calsonda calfront calside <mm> estado R");
+  reply("ordenes: 1 2 3 s s<1-3> x m<n> sensores G<x>,<y> set <p> <v> get <p> params save defaults map erase calsonda calfront calside <mm> estado R");
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -386,17 +392,26 @@ int App::menu() {
 bool App::armStart() {
   // Manos fuera, raton quieto: calibrar el giroscopio y arrancar.
   display_.show(kModeNames[mode_], "", "No tocar...");
+  reply("PREPARANDO: deja el raton quieto");
   const uint32_t t0 = millis();
   while (millis() - t0 < 700) {
     board_.tick();
-    if (board_.stopRequested()) return false;
+    if (board_.stopRequested()) {
+      reply("ARRANQUE_CANCELADO");
+      return false;
+    }
   }
   display_.show(kModeNames[mode_], "", "Calibrando giro");
-  imu_.calibrate(500);
+  reply("CALIBRANDO_GIRO");
+  imu_.calibrate(500, serviceTrampoline);
   service();
-  if (board_.stopRequested()) return false;
+  if (board_.stopRequested()) {
+    reply("ARRANQUE_CANCELADO");
+    return false;
+  }
   board_.resetLoad();
   display_.show(kModeNames[mode_], "", "EN MARCHA", "x = parar");
+  reply("GIRO_LISTO: iniciando movimiento");
   return true;
 }
 
@@ -432,6 +447,7 @@ void App::runMode(int mode) {
     case MAP: {
       if (!armStart()) break;
       // No exigir paredes en la salida: usar los parametros guardados y aprender en marcha.
+      reply("INICIANDO_EXPLORACION");
       mouse_.resetMap();
       board_.saveEnabled = mode == MAP;
       const raton::MissionResult result = mode == MAP ? mouse_.mapAll() : mouse_.toGoal();
@@ -440,6 +456,9 @@ void App::runMode(int mode) {
       board_.saveEnabled = true;
       break;
     }
+    case kSensors:
+      sensorsMode();
+      break;
     case kCalibrate: {
       if (!armStart()) break;
       const float corridor = mouse_.calibrateSensors(params_, true);
@@ -545,11 +564,13 @@ void App::sensorsMode() {
       snprintf(l2, sizeof(l2), "Frente %d", s.front.mm);
       snprintf(l3, sizeof(l3), "Giro %d", static_cast<int>(s.gyroDeg));
       display_.show("SENSORES", l1, l2, l3, "tapar 2 s = salir");
-      snprintf(line, sizeof(line), "SENS I%d F%d D%d giro=%d encI=%d encD=%d", s.left.mm, s.front.mm, s.right.mm,
-               static_cast<int>(s.gyroDeg), static_cast<int>(s.encLeftMm), static_cast<int>(s.encRightMm));
+      snprintf(line, sizeof(line), "SENS I%d F%d D%d fresh=%d,%d,%d giro=%d encI=%d encD=%d", s.left.mm, s.front.mm,
+               s.right.mm, s.left.fresh, s.front.fresh, s.right.fresh, static_cast<int>(s.gyroDeg),
+               static_cast<int>(s.encLeftMm), static_cast<int>(s.encRightMm));
       telemetry::println(line, false);
     }
   }
+  reply("FIN_DIAGNOSTICO_SENSORES");
 }
 
 void App::calibrateFront() {

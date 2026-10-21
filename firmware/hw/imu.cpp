@@ -33,15 +33,20 @@ bool Imu::begin() {
   return true;
 }
 
-void Imu::calibrate(uint32_t ms) {
+void Imu::calibrate(uint32_t ms, void (*service)()) {
   float sum = 0;
   int n = 0;
   const uint32_t t0 = millis();
+  uint32_t lastService = t0;
   while (millis() - t0 < ms) {
     float x, y, z;
     if (IMU.gyroscopeAvailable() && IMU.readGyroscope(x, y, z)) {
       sum += z;
       ++n;
+    }
+    if (service && millis() - lastService >= 5) {
+      service();
+      lastService = millis();
     }
   }
   if (n > 0) bias_ = sum / n;

@@ -10,8 +10,9 @@ export class BleTransport implements Transport {
   private buffer = '';
   private decoder = new TextDecoder();
   private lastSeq?: number;
-  private resetPending = false;
   private generation = 0;
+  private wasConnected = false;
+  private reconnectingGeneration?: number;
   stats = { ok: 0, bad: 0, lost: 0, duplicates: 0 };
   onLine: (line: string) => void = () => {};
   onConnection: (connected: boolean, name: string) => void = () => {};
@@ -21,7 +22,6 @@ export class BleTransport implements Transport {
   }
   async connect() {
     this.generation++;
-    this.resetPending = false;
     this.disconnect();
     if (!navigator.bluetooth)
       throw Error('Web Bluetooth no está disponible. Usa Chrome o Edge con HTTPS o localhost.');
@@ -30,7 +30,7 @@ export class BleTransport implements Transport {
       optionalServices: [NUS],
     });
     this.device.addEventListener('gattserverdisconnected', this.disconnected);
-    await this.open();
+    await this.openWithRetries(this.generation, 3);
   }
   private async open() {
     try {
@@ -45,12 +45,28 @@ export class BleTransport implements Transport {
       this.rx = rx;
       this.buffer = '';
       this.lastSeq = undefined;
+      this.wasConnected = true;
       this.onConnection(true, this.device?.name ?? 'Ratón');
     } catch (error) {
       this.rx = undefined;
       this.device?.gatt?.disconnect();
       throw error;
     }
+  }
+  private async openWithRetries(generation: number, attempts: number) {
+    let lastError: unknown;
+    for (let attempt = 0; attempt < attempts; attempt++) {
+      if (generation !== this.generation) throw Error('Conexión cancelada.');
+      try {
+        await this.open();
+        return;
+      } catch (error) {
+        lastError = error;
+        if (attempt + 1 < attempts)
+          await new Promise((resolve) => setTimeout(resolve, 400 * (attempt + 1)));
+      }
+    }
+    throw lastError;
   }
   private notify = (event: Event) => {
     const value = (event.target as BluetoothRemoteGATTCharacteristic).value;
@@ -80,7 +96,6 @@ export class BleTransport implements Transport {
         this.lastSeq = f.seq;
         this.stats.ok++;
       }
-      if (f.payload === 'REINICIO') this.resetPending = true;
       this.onLine(f.payload);
     }
     if (this.buffer.length > 65536) {
@@ -89,25 +104,30 @@ export class BleTransport implements Transport {
     }
   }
   private disconnected = () => {
+    if (this.device?.gatt?.connected) return;
     this.rx = undefined;
     this.onConnection(false, '');
-    if (this.resetPending) {
-      this.resetPending = false;
+    if (this.wasConnected && this.reconnectingGeneration !== this.generation)
       void this.reconnect(this.generation);
-    }
   };
   private async reconnect(generation: number) {
-    for (let i = 0; i < 10; i++) {
-      await new Promise((r) => setTimeout(r, 1500));
-      if (generation !== this.generation) return;
-      try {
-        await this.open();
-        return;
-      } catch {
-        /* board still rebooting */
+    if (this.reconnectingGeneration === generation) return;
+    this.reconnectingGeneration = generation;
+    try {
+      for (let i = 0; i < 10; i++) {
+        await new Promise((r) => setTimeout(r, 1500));
+        if (generation !== this.generation) return;
+        try {
+          await this.open();
+          return;
+        } catch {
+          // La placa puede estar reiniciando o recuperando el enlace.
+        }
       }
+      this.onError('Se perdió la conexión y no se pudo recuperar. Pulsa Conectar.');
+    } finally {
+      if (this.reconnectingGeneration === generation) this.reconnectingGeneration = undefined;
     }
-    this.onError('No se pudo reconectar tras reiniciar. Pulsa Conectar.');
   }
   async write(text: string) {
     if (!this.rx || !this.connected) throw Error('Robot desconectado');
@@ -116,7 +136,7 @@ export class BleTransport implements Transport {
   }
   disconnect() {
     this.generation++;
-    this.resetPending = false;
+    this.wasConnected = false;
     this.device?.removeEventListener('gattserverdisconnected', this.disconnected);
     this.tx?.removeEventListener('characteristicvaluechanged', this.notify);
     this.device?.gatt?.disconnect();

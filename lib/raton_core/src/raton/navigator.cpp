@@ -44,42 +44,45 @@ void Navigator::computeSmoothGeometry() {
   const float ramp = 12.0f;
   float bestT = 1e9f, bestR = -1, bestX = 0, bestY = 0, bestS = 0;
   float firstR = -1, firstX = 0, firstY = 0, firstS = 0;  // la mas cerrada que cabe (como antes)
-  for (float radius = p_.smoothRadiusMm; radius < 2.0f * cell_; radius += 2.0f) {
-    const float w = kDeg / radius;
-    const float alpha = w * w / (2.0f * ramp);
-    float th = 0, rate = 0, x = 0, y = 0, s = 0;
-    const float dt = 0.0005f / (w / 90.0f);
-    // Trayectoria en ejes de la entrada (x = avance, y = hacia el lado del giro).
-    static float px[2000], py[2000];
-    int n = 0;
-    for (int i = 0; i < 400000 && th < 90.0f; ++i) {
-      const float allowed = sqrtf(2.0f * alpha * (90.0f - th));
-      const float target = allowed < w ? allowed : w;
-      rate = rate < target ? (rate + alpha * dt > target ? target : rate + alpha * dt) : target;
-      if (rate < 1e-4f) rate = 1e-4f;
-      th += rate * dt;
-      x += cosf(th / kDeg) * dt;
-      y += sinf(th / kDeg) * dt;
-      s += dt;
-      if ((i & 7) == 0 && n < 2000) {
-        px[n] = x;
-        py[n] = y;
-        ++n;
-      }
+  // La trayectoria escala linealmente con el radio; integrarla una vez evita bloquear sensores/BLE
+  // mientras se repite el mismo calculo para cada radio candidato.
+  const float dtPerRadius = 0.0005f / (kDeg / 90.0f);
+  const float rateStep = kDeg * dtPerRadius / (2.0f * ramp);
+  static float pathX[2000], pathY[2000];
+  float th = 0, rate = 0, endX = 0, endY = 0, endS = 0;
+  int n = 0;
+  for (int i = 0; i < 400000 && th < 90.0f; ++i) {
+    const float allowed = sqrtf((90.0f - th) / ramp);
+    const float target = allowed < 1.0f ? allowed : 1.0f;
+    rate = rate < target ? (rate + rateStep > target ? target : rate + rateStep) : target;
+    if (rate < 1e-4f) rate = 1e-4f;
+    th += kDeg * rate * dtPerRadius;
+    endX += cosf(th / kDeg) * dtPerRadius;
+    endY += sinf(th / kDeg) * dtPerRadius;
+    endS += dtPerRadius;
+    if ((i & 7) == 0 && n < 2000) {
+      pathX[n] = endX;
+      pathY[n] = endY;
+      ++n;
     }
+  }
+  for (float radius = p_.smoothRadiusMm; radius < 2.0f * cell_; radius += 2.0f) {
+    const float x = radius * endX, y = radius * endY, s = radius * endS;
     // Simetrica: avance hasta el centro = x final; la celda tiene su centro en (x, 0) en estos ejes.
     // Poste interior en (x - half, half) [lado del giro], esquina exterior en (x + half - hw, -(half - hw)).
-    float minPost = 1e9f, minOuter = 1e9f;
+    float minPost2 = 1e9f, minOuter = 1e9f;
     for (int i = 0; i < n; ++i) {
-      const float dxp = px[i] - (x - half), dyp = py[i] - half;
-      const float dp = sqrtf(dxp * dxp + dyp * dyp) - hw * 1.42f;
-      if (dp < minPost) minPost = dp;
-      const float dxo = (x + half - hw) - px[i], dyo = py[i] + (half - hw);
+      const float px = radius * pathX[i], py = radius * pathY[i];
+      const float dxp = px - (x - half), dyp = py - half;
+      const float dp2 = dxp * dxp + dyp * dyp;
+      if (dp2 < minPost2) minPost2 = dp2;
+      const float dxo = (x + half - hw) - px, dyo = py + (half - hw);
       const float dout = dxo < dyo ? dxo : dyo;  // distancia a la pared exterior mas cercana
       if (dout < minOuter) minOuter = dout;
     }
     if (minOuter < need - 4.0f) break;  // mas abierta ya no cabe
-    const bool fits = minPost >= need && x < cell_ - 10.0f;
+    const float postLimit = need + hw * 1.42f;
+    const bool fits = minPost2 >= postLimit * postLimit && x < cell_ - 10.0f;
     if (!fits) continue;
     if (firstR < 0) {
       firstR = radius;
@@ -138,7 +141,6 @@ void Navigator::begin(int x, int y, Dir h) {
     const float sd = (learnCell_ ? 0.06f : 0.03f) * cell_;  // duda inicial del paso
     cellVar_ = sd * sd;
   }
-  startStraight();
   halfCorr_ = 0.5f * (cell_ - p_.wallMm);
   sonda_.setup(cell_, p_.wallMm, p_.sensorFovDeg, p_.sensorMaxMm);
   // Lo vertical se aprende en marcha: se conserva de una mision a otra salvo que cambien los parametros.
@@ -159,6 +161,14 @@ void Navigator::begin(int x, int y, Dir h) {
   snprintf(line, sizeof(line), "CURVA radio=%d avance=%d %s", static_cast<int>(smoothRadius_),
            static_cast<int>(smoothDf_), smoothOk_ ? "ok" : "NO CABE: giros en el sitio");
   io_.report(line, true);
+  s_ = io_.tick();
+  t_ = s_.t;
+  motion_.reset(s_);
+  for (int i = 0; i < 3; ++i) {
+    rangeSeen_[i] = t_;
+    rangeLost_[i] = false;
+  }
+  startStraight();
   resetBeams();
   maze_.markVisited(cx_, cy_);
 }

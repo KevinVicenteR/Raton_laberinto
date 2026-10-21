@@ -7,8 +7,8 @@
 class Imu {
  public:
   bool begin();
-  // Sesgo con el raton quieto (ms de muestras).
-  void calibrate(uint32_t ms);
+  // Sesgo con el raton quieto (ms de muestras); atiende comunicaciones mientras espera.
+  void calibrate(uint32_t ms, void (*service)() = nullptr);
   // Si hay muestra nueva la integra (grados acumulados, + = izquierda) y devuelve true.
   bool poll(float nowS);
   float yawDeg() const { return yaw_; }

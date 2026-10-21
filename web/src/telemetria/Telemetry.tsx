@@ -139,6 +139,9 @@ export function Telemetry() {
           <button className="go" disabled={!canSend || busy} onClick={() => void run(commands.start)}>
             ARRANCAR
           </button>
+          <button disabled={!canSend || busy} onClick={() => void run(() => live.send('sensores'))}>
+            Probar sensores (sin mover)
+          </button>
           <button className="stop" disabled={!canSend} onClick={() => void commands.stop()}>
             PARAR
           </button>
