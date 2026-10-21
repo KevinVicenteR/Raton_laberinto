@@ -21,16 +21,17 @@ void Motors::begin() {
 }
 
 void Motors::drive(mbed::PwmOut* in1, mbed::PwmOut* in2, float duty) {
-  if (duty > 1.0f) duty = 1.0f;
-  if (duty < -1.0f) duty = -1.0f;
-  // Slow decay (hoja de datos del DRV8833): adelante = IN1 alto e IN2 con PWM invertido; entre pulsos
-  // las dos entradas quedan en alto (freno), asi la corriente no cae y el par a baja velocidad se mantiene.
+  // Recupera la senal usada antes de la reescritura: PWM activo y la otra
+  // entrada baja (rueda libre entre pulsos). Mantener el limite para motores
+  // de 6 V alimentados desde la bateria 2S del raton.
+  if (duty > wiring::PWM_MAX) duty = wiring::PWM_MAX;
+  if (duty < -wiring::PWM_MAX) duty = -wiring::PWM_MAX;
   if (duty >= 0) {
-    in1->write(1.0f);
-    in2->write(1.0f - duty);
+    in1->write(duty);
+    in2->write(0.0f);
   } else {
-    in1->write(1.0f + duty);
-    in2->write(1.0f);
+    in1->write(0.0f);
+    in2->write(-duty);
   }
 }
 

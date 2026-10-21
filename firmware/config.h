@@ -39,9 +39,11 @@ const bool INVERT_ENC_RIGHT = false;
 const bool ENCODERS_SWAPPED = true;  // el encoder del motor izquierdo esta en los pines del derecho
 const float GYRO_SIGN = 1.0f;        // +1 si girar a la izquierda da rumbo positivo
 
-// PWM del DRV8833 en "slow decay" (una entrada fija en alto y la otra con PWM invertido): la velocidad es
-// casi proporcional al duty y el N20 tiene par a baja velocidad. 20 kHz no se oye.
-const uint32_t PWM_PERIOD_US = 50;
+// Configuracion del firmware anterior (49e0e8a): los N20 del robot arrancaban
+// con PWM de 500 Hz. La reescritura cambio a 20 kHz y frenado entre pulsos;
+// se restaura la senal anterior ante la falta de arranque del motor izquierdo.
+const uint32_t PWM_PERIOD_US = 2000;
+const float PWM_MAX = 0.70f;  // motores de 6 V con bateria 2S
 
 const char* const BLE_NAME = "Raton";
 
