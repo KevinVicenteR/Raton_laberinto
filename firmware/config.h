@@ -14,9 +14,9 @@ const uint8_t ADDR_LEFT = 0x30;
 const uint8_t ADDR_FRONT = 0x31;
 const uint8_t ADDR_RIGHT = 0x32;
 const uint8_t ADDR_OLED = 0x3C;
-// Sin asignar: no se accede a ningun pin nuevo hasta conocer el cableado.
-const int XSHUT_SIDE_LEFT = -1;
-const int XSHUT_SIDE_RIGHT = -1;
+// Asignacion solicitada. Validar conflictos antes de accionar estos pines.
+const int XSHUT_SIDE_LEFT = A0;
+const int XSHUT_SIDE_RIGHT = A4;
 const uint8_t ADDR_SIDE_LEFT = 0x33;
 const uint8_t ADDR_SIDE_RIGHT = 0x34;
 
@@ -31,6 +31,18 @@ const uint8_t ENC_LEFT_A = 2;
 const uint8_t ENC_LEFT_B = 3;
 const uint8_t ENC_RIGHT_A = 4;
 const uint8_t ENC_RIGHT_B = 7;
+
+// Impedir que un XSHUT adicional reutilice el bus o una funcion existente.
+constexpr bool occupied(int pin) {
+  return pin == A4 || pin == A5 || pin == XSHUT_LEFT || pin == XSHUT_FRONT || pin == XSHUT_RIGHT ||
+         pin == AIN1 || pin == AIN2 || pin == BIN1 || pin == BIN2 || pin == ENC_LEFT_A ||
+         pin == ENC_LEFT_B || pin == ENC_RIGHT_A || pin == ENC_RIGHT_B || pin == LED_BUILTIN;
+}
+constexpr bool sidePinsConflict() {
+  return (XSHUT_SIDE_LEFT >= 0 && occupied(XSHUT_SIDE_LEFT)) ||
+         (XSHUT_SIDE_RIGHT >= 0 && occupied(XSHUT_SIDE_RIGHT)) ||
+         (XSHUT_SIDE_LEFT >= 0 && XSHUT_SIDE_LEFT == XSHUT_SIDE_RIGHT);
+}
 
 }  // namespace pins
 

@@ -151,7 +151,8 @@ Más detalle en [docs/arquitectura.md](docs/arquitectura.md).
 
 ### Laterales opcionales (cinco VL53L0X)
 
-Soporte para dos sensores adicionales a 90 grados, conservando los tres actuales. Pines XSHUT pendientes
-(`-1`) y control desactivado (`sideEnabled=0`) por defecto. Con montaje y offsets medidos, ayudan a
+Soporte para dos sensores adicionales a 90 grados, conservando los tres actuales. Asignacion solicitada: izquierdo A0 y derecho A4; entra en conflicto con diagonal izquierdo y SDA.
+El firmware informa `CONFIG_LATERALES_CONFLICTO` y no acciona esos XSHUT nuevos.
+Control desactivado (`sideEnabled=0`) por defecto. Con montaje y offsets medidos, ayudan a
 centrar y confirmar paredes/huecos antes de planificar. Si faltan o dejan de responder, se conservan
 los sensores originales. Ver [montaje, activacion y pruebas](docs/calibracion.md#dos-laterales-opcionales-a-90-grados).

@@ -62,8 +62,14 @@ Esta actualización conserva la configuración flash del formato anterior y aña
 ## Dos laterales opcionales a 90 grados
 
 Se conservan el frontal y los dos diagonales con su montaje y pines actuales. Los nuevos VL53L0X se leen
-como `sideLeft`/`sideRight` y no sustituyen los diagonales. `XSHUT_SIDE_LEFT` y `XSHUT_SIDE_RIGHT` en
-`firmware/config.h` quedan en `-1` hasta conocer el cableado; no se toca ningun pin adicional.
+como `sideLeft`/`sideRight` y no sustituyen los diagonales. El usuario asigno `XSHUT_SIDE_LEFT=A0` y `XSHUT_SIDE_RIGHT=A4` en `firmware/config.h`.
+Esta asignacion entra en conflicto con el diagonal izquierdo (A0) y SDA (A4). La comprobacion
+`sidePinsConflict()` impide accionar los XSHUT nuevos y muestra `CONFIG_LATERALES_CONFLICTO`.
+Aunque compile, **esta asignacion no habilita el funcionamiento de cinco sensores**. Si los modulos
+ya estan conectados compartiendo esos cables, tampoco se garantiza que los originales inicialicen:
+el software no puede separar dos dispositivos cuyo XSHUT esta fisicamente unido. Se necesita resolver
+el conflicto de cableado antes de usar los cinco. La comprobacion tambien admite `-1` para omitir
+sensores nuevos o pines libres cuando se acuerde la asignacion definitiva.
 **No conectar los nuevos al bus sin tener controlados sus XSHUT**: todos arrancan en 0x29 y pueden
 interferir con los sensores originales. Una vez asignados los pines, se inicializan individualmente con
 las direcciones 0x33 y 0x34. Revisar que los pines elegidos no tengan otra funcion.

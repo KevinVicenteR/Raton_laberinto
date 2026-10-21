@@ -78,6 +78,8 @@ void App::setup() {
   board_.service = serviceTrampoline;
   const uint32_t t0 = millis();
   while (millis() - t0 < 300) service();  // margen para que laseres, IMU y OLED se enciendan
+  if (pins::sidePinsConflict())
+    reply("CONFIG_LATERALES_CONFLICTO: A4=SDA, A0=diagonal; nuevos inactivos");
   Wire.begin();
   Wire.setClock(400000);
   display_.begin();
