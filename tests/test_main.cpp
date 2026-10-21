@@ -7,6 +7,7 @@
 #include <string>
 
 #include "raton/frame.h"
+#include "raton/autocal.h"
 #include "raton/lateral.h"
 #include "raton/line_queue.h"
 #include "raton/maze.h"
@@ -354,6 +355,117 @@ void testSensorFaults() {
   }
 }
 
+void testAutoCalibration() {
+  GyroBiasWindow stable, moving, empty, invalid;
+  for (int k = 0; k < 100; ++k) {
+    stable.add(0.4f + (k % 2 ? 0.02f : -0.02f));
+    moving.add(k % 2 ? 4.0f : -4.0f);
+    invalid.add(k == 20 ? NAN : 0.4f);
+  }
+  CHECK(stable.ready() && fabsf(stable.bias() - 0.4f) < 0.01f);
+  CHECK(!moving.ready() && !empty.ready() && !invalid.ready());
+  Breakaway startup;
+  float extra = 0, help = 0;
+  for (int k = 0; k < 200; ++k) help = startup.update(80, 0, 0.002f, true, extra);
+  CHECK(help > 0.15f && help <= 0.221f);
+  CHECK(extra == 0); // atascado: no se guarda un supuesto rozamiento
+  for (int k = 0; k < 30; ++k) startup.update(80, 30, 0.002f, true, extra);
+  CHECK(extra > 0 && extra <= 0.22f); // el encoder confirmo que volvio a girar
+  CHECK(startup.update(0, 0, 0.002f, true, extra) == 0);
+  startup.reset();
+  float disabled = 0;
+  for (int k = 0; k < 200; ++k) help = startup.update(80, 0, 0.002f, false, disabled);
+  CHECK(help == 0 && disabled == 0);
+
+  Params p;
+  Motion motion(p);
+  Sensors v;
+  v.gyroFresh = true;
+  motion.reset(v);
+  motion.cruise(200);
+  float l = 0, r = 0;
+  for (int k = 0; k < 200; ++k) {
+    v.t += p.dt;
+    v.encLeftMm -= 0.2f; v.encRightMm -= 0.2f;
+    motion.update(v, l, r);
+  }
+  CHECK(motion.encoderFault() && l == 0 && r == 0);
+
+  p.motorBalance = 0.12f;
+  p.startBoostLF = 0.08f;
+  motion.loadLearned();
+  CHECK(motion.motorBalance() == p.motorBalance && motion.startBoost(0) == p.startBoostLF);
+  p = Params();
+  motion.loadLearned();
+  CHECK(motion.motorBalance() == 0 && motion.startBoost(0) == 0);
+
+  // El paso aprendido solo se carga para la misma geometria y unidades de encoder.
+  Maze truth;
+  CHECK(sim::loadMazeFile(std::string(RATON_MAZES_DIR) + "/reglamento_2026.txt", truth));
+  p.learnedCellMm = 159;
+  p.learnedCellRefMm = p.cellMm;
+  p.learnedWheelDiamMm = p.wheelDiamMm;
+  p.learnedCountsPerRev = p.countsPerRev;
+  auto ph = sim::perturbed(p, 0, 1);
+  sim::World world(truth, ph);
+  sim::SimPlatform io(world, p, ph, 1);
+  io.place(p.startX, p.startY, p.startDir);
+  Mouse mouse(io, p);
+  mouse.navigator().begin(p.startX, p.startY, static_cast<Dir>(p.startDir));
+  CHECK(fabsf(mouse.navigator().cellPitch() - 159) < 0.01f);
+  p.wheelDiamMm += 1;
+  mouse.navigator().begin(p.startX, p.startY, static_cast<Dir>(p.startDir));
+  CHECK(fabsf(mouse.navigator().cellPitch() - p.cellMm) < 0.01f);
+
+  // Un motor derecho mas fuerte necesita menos anticipacion que el izquierdo.
+  {
+    Params drive;
+    Maze open;
+    open.reset(4, 12, true);
+    auto physical = sim::perturbed(drive, 0, 1);
+    physical.motorAsym = 0.2f;
+    sim::World flat(open, physical);
+    sim::SimPlatform wheels(flat, drive, physical, 1);
+    wheels.place(1, 0, NORTH);
+    Sensors sample = wheels.tick();
+    Motion controller(drive);
+    controller.reset(sample);
+    controller.cruise(200);
+    for (int k = 0; k < 1600; ++k) {
+      sample = wheels.tick();
+      controller.update(sample, l, r);
+      wheels.setMotors(l, r);
+    }
+    wheels.setMotors(0, 0);
+    CHECK(!controller.sensorFault());
+    CHECK(controller.motorBalance() < -0.0001f);
+    CHECK(fabsf(controller.angle()) < 2);
+  }
+
+  // Giro lento con rozamiento alto: ambos encoders y el giroscopio deben confirmar el giro.
+  p = Params();
+  ph = sim::perturbed(p, 0, 1);
+  ph.stictionDuty = 0.24f;
+  sim::World hardWorld(truth, ph);
+  sim::SimPlatform hardIo(hardWorld, p, ph, 1);
+  hardIo.place(p.startX, p.startY, p.startDir);
+  Motion turn(p);
+  Sensors t = hardIo.tick();
+  turn.reset(t);
+  turn.turnTo(90, 90, 360);
+  float settledAt = -1;
+  for (int k = 0; k < 1400; ++k) {
+    t = hardIo.tick();
+    turn.update(t, l, r);
+    if (settledAt < 0 && fabsf(turn.angle() - 90) < 3 && fabsf(turn.measuredRate()) < 40) settledAt = t.t;
+    hardIo.setMotors(l, r);
+  }
+  hardIo.setMotors(0, 0);
+  CHECK(!turn.sensorFault());
+  CHECK(fabsf(turn.angle() - 90) < 3);
+  CHECK(settledAt > 0 && settledAt < 2.0f);
+}
+
 void testThreeModes() {
   Params p;
   p.mazeW = 4; p.mazeH = 4;
@@ -436,6 +548,7 @@ int main() {
   testFrames();
   testSonda();
   testSensorFaults();
+  testAutoCalibration();
   testThreeModes();
   testMissions();
   testPractice();

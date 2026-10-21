@@ -253,6 +253,7 @@ void App::command(char* cmd) {
     value = static_cast<float>(atof(p));
     if (*p == ' ' && raton::setParam(params_, name, value)) {
       snprintf(out, sizeof(out), "OK %s=%s", name, fmt(value, num, sizeof(num)));
+      mouse_.navigator().motion().loadLearned();
       // El tamano o la meta cambian el mapa.
       if (!strcmp(name, "mazeW") || !strcmp(name, "mazeH")) mouse_.resetMap();
       mouse_.maze().setGoal(params_.goalX, params_.goalY, params_.goalW, params_.goalH);
@@ -283,6 +284,8 @@ void App::command(char* cmd) {
   }
   if (!strcmp(cmd, "defaults")) {
     params_ = raton::Params();
+    mouse_.navigator().motion().loadLearned();
+    mouse_.navigator().invalidatePitch();
     storage::eraseParams();
     reply("PARAMETROS_DE_FABRICA");
     return;
@@ -403,7 +406,21 @@ bool App::armStart() {
   }
   display_.show(kModeNames[mode_], "", "Calibrando giro");
   reply("CALIBRANDO_GIRO");
-  imu_.calibrate(500, serviceTrampoline);
+  bool ready = false;
+  for (int attempt = 0; attempt < 3 && !ready; ++attempt) {
+    const long l = encoders_.left(), r = encoders_.right();
+    const bool gyroOk = imu_.calibrate(600, serviceTrampoline);
+    service();
+    if (board_.stopRequested()) break;
+    ready = gyroOk && labs(encoders_.left() - l) <= 2 && labs(encoders_.right() - r) <= 2;
+    if (!ready) reply("CAL_REINTENTO: no mover; comprobar IMU y encoders");
+  }
+  if (!ready) {
+    board_.setMotors(0, 0);
+    reply(board_.stopRequested() ? "ARRANQUE_CANCELADO" :
+          "CAL_NO_ESTABLE: arranque cancelado; deja quieto y vuelve a iniciar");
+    return false;
+  }
   service();
   if (board_.stopRequested()) {
     reply("ARRANQUE_CANCELADO");
@@ -528,6 +545,11 @@ void App::saveLearned() {
   const float k = mo.motorScale();
   if (k > 0.6f && k < 1.6f) params_.kV *= k;
   mo.setMotorScale(1.0f);
+  params_.motorBalance = mo.motorBalance();
+  params_.startBoostLF = mo.startBoost(0);
+  params_.startBoostLR = mo.startBoost(1);
+  params_.startBoostRF = mo.startBoost(2);
+  params_.startBoostRR = mo.startBoost(3);
   const float g = mo.gyroScale();
   if (g > 0.93f && g < 1.07f) params_.gyroScale = g;
   // Inclinacion de cada sensor y reflejo del piso, aprendidos con las paredes ya seguras.
@@ -539,12 +561,24 @@ void App::saveLearned() {
   }
   const float fl = nav.floorReflect();
   if (fl > 0.0f && fl <= 1.0f) params_.floorReflect = fl;
+  if (nav.pitchConfident()) {
+    params_.learnedCellMm = nav.cellPitch();
+    params_.learnedCellRefMm = params_.cellMm;
+    params_.learnedWheelDiamMm = params_.wheelDiamMm;
+    params_.learnedCountsPerRev = params_.countsPerRev;
+  }
   const bool ok = storage::saveParams(params_);
+  mo.loadLearned();
   char out[120];
   snprintf(out, sizeof(out), "APRENDIDO motor x%d/1000 giro x%d/1000 inclinacion %d/%d/%d decimas piso %d%% %s",
            static_cast<int>(k * 1000), static_cast<int>(g * 1000), static_cast<int>(params_.leftTiltDeg * 10),
            static_cast<int>(params_.frontTiltDeg * 10), static_cast<int>(params_.rightTiltDeg * 10),
            static_cast<int>(params_.floorReflect * 100), ok ? "(guardado)" : "(ERROR_FLASH)");
+  reply(out);
+  snprintf(out, sizeof(out), "AUTOCAL balance=%d/1000 arranque=%d/%d/%d/%d paso=%d/10mm",
+           static_cast<int>(params_.motorBalance * 1000), static_cast<int>(params_.startBoostLF * 1000),
+           static_cast<int>(params_.startBoostLR * 1000), static_cast<int>(params_.startBoostRF * 1000),
+           static_cast<int>(params_.startBoostRR * 1000), static_cast<int>(params_.learnedCellMm * 10));
   reply(out);
 }
 

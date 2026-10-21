@@ -63,6 +63,8 @@ class Navigator {
   float sensorTilt(int sensor) const { return sonda_.tiltDeg(sensor); }
   float floorReflect() const { return sonda_.floorReflect(); }
   float cellPitch() const { return cell_; }
+  void invalidatePitch() { cellRef_ = 0; pitchSavedRef_ = -1; }
+  bool pitchConfident() const { return pitchFits_ >= 3 && cellVar_ < 4.0f; }
   // Pista de medida incierta (practica): ajustar el paso de celda en marcha con las paredes de enfrente.
   void setLearnCell(bool on) { learnCell_ = on; }
   // Paso de celda que se supuso al calibrar los desfases de los sensores (0 = el de los parametros). Si la
@@ -217,6 +219,8 @@ class Navigator {
   float straightStart_ = 0;
   int regN_ = 0;
   float regS_ = 0, regS2_ = 0, regC_ = 0, regSC_ = 0;
+  int pitchFits_ = 0;
+  float pitchSavedRef_ = -1, pitchWheelRef_ = -1, pitchCountsRef_ = -1;
   float cellVar_ = 0;
   float offsetsCell_ = 0;
   float halfCorr_ = 71.5f;   // medio pasillo

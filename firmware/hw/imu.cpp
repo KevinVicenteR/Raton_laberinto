@@ -4,6 +4,7 @@
 #include <Wire.h>
 
 #include "config.h"
+#include "raton/autocal.h"
 
 namespace {
 const uint8_t kAddr = 0x68;     // BMI270 en Wire1
@@ -33,25 +34,25 @@ bool Imu::begin() {
   return true;
 }
 
-void Imu::calibrate(uint32_t ms, void (*service)()) {
-  float sum = 0;
-  int n = 0;
+bool Imu::calibrate(uint32_t ms, void (*service)()) {
+  raton::GyroBiasWindow window;
   const uint32_t t0 = millis();
   uint32_t lastService = t0;
   while (millis() - t0 < ms) {
     float x, y, z;
     if (IMU.gyroscopeAvailable() && IMU.readGyroscope(x, y, z)) {
-      sum += z;
-      ++n;
+      window.add(z);
     }
     if (service && millis() - lastService >= 5) {
       service();
       lastService = millis();
     }
   }
-  if (n > 0) bias_ = sum / n;
+  const bool ok = window.ready();
+  if (ok) bias_ = window.bias();
   rate_ = 0;
   lastT_ = -1;
+  return ok;
 }
 
 bool Imu::poll(float now) {

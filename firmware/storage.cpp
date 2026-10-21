@@ -14,6 +14,7 @@
 #include <FlashIAPBlockDevice.h>
 #include <TDBStore.h>
 #include <string.h>
+#include <stddef.h>
 
 namespace {
 
@@ -79,7 +80,8 @@ namespace storage {
 bool saveParams(const raton::Params& p) { return save("params", kParamsMagic, &p, sizeof(p)); }
 bool loadParams(raton::Params& p) {
   raton::Params tmp;
-  if (!load("params", kParamsMagic, &tmp, sizeof(tmp))) return false;
+  if (!load("params", kParamsMagic, &tmp, sizeof(tmp)) &&
+      !load("params", kParamsMagic, &tmp, offsetof(raton::Params, motorBalance))) return false;
   p = tmp;
   return true;
 }

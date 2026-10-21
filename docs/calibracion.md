@@ -1,89 +1,52 @@
-> Actualización 2026-10-21: el menú tiene únicamente 1 Resolver desconocido, 2 Mapear/guardar/ruta mínima, 3 Resolver aprendido. Los números arrancan directamente; `s1`–`s3` y `m1`–`m3` siguen disponibles. La calibración de paredes es opcional (`calsonda`) y no forma parte del arranque. Las referencias posteriores a los siete modos o práctica corresponden al diseño anterior. Véase README para el funcionamiento actual.
+# Calibración y aprendizaje automático
 
-# Calibración
+Los tres modos son: **1 Resolver desconocido**, **2 Mapear y guardar**, **3 Resolver aprendido**. Todos usan el mismo control y aprendizaje. Coloca el ratón en el centro de la salida, con el rumbo configurado, y envía `1`, `2` o `3`. `x` detiene también durante la preparación.
 
-## Lo que hace solo (no hay que tocar nada)
+## Antes de moverse
 
-| Qué | Cuándo |
-|---|---|
-| Giroscopio en reposo | al arrancar cualquier modo ("No tocar...") |
-| Desfase de los tres láseres y ancho real del pasillo | al arrancar el **modo 1**, con un barrido continuo en la salida (unos 4 s). Se guarda solo |
-| Láseres laterales y medida de la celda en otra pista | al arrancar el **modo 3** |
-| Modelo de los motores (y lo que cambia con la batería) | en cada recta mientras corre; se guarda solo al terminar |
-| Escala del giroscopio | con las paredes después de cada giro; se guarda sola al terminar |
-| Paso real de la celda (y error de las ruedas) | en marcha en cada recta, en todos los modos |
-| Lo que la pista mide de más o de menos en los láseres | a la vez que el paso de celda |
-| Inclinación de cada láser y reflejo del piso | en marcha con las paredes ya seguras; se guarda solo al terminar |
-| Velocidad máxima real (batería) | en marcha: la carrera y las curvas no piden más de lo que dan los motores |
+El robot mantiene los motores parados y calibra el sesgo del giroscopio durante 600 ms. Acepta la medida solo si recibe al menos 25 muestras finitas, su dispersión es menor de 0,35 °/s, el sesgo está dentro de ±10 °/s y ninguno de los encoders cambia más de dos cuentas. Reintenta hasta tres veces. Si no logra reposo, informa `CAL_NO_ESTABLE` y cancela el arranque; deja el robot quieto y vuelve a iniciar. Las comunicaciones siguen atendidas durante la calibración.
 
-En la competencia basta con poner el ratón en la salida y arrancar el modo 1. Lo único que el ratón no puede saber solo es **dónde está la meta** (no tiene sensor de suelo para ver la línea blanca) y el tamaño del laberinto y la salida si no son los del reglamento: ver los puntos 1 y 2.
+No exige paredes visibles para comenzar. Una muestra nueva fuera de alcance no equivale a un láser desconectado.
 
-Todas las órdenes se envían por Bluetooth (web o app UART, nombre `Raton`) o por el Monitor Serie a 115200. `save` guarda los parámetros en flash (las calibraciones automáticas ya se guardan solas).
+## Mientras recorre el laberinto
 
-## 0. Cableado (una vez)
+| Ajuste | Referencia utilizada | Qué conserva |
+|---|---|---|
+| Potencia común de los motores | Corrección necesaria en rectas estables | Modelo de velocidad `kV` |
+| Diferencia entre motores | Error de rumbo, giroscopio y encoders durante rectas estables | `motorBalance`, limitado a ±25 % |
+| Ayuda al arranque por rueda y sentido | Orden de movimiento sin respuesta inicial del encoder y movimiento posterior confirmado | `startBoostLF/LR/RF/RR`, hasta 0,22 de PWM adicional |
+| Distancia por celda en unidades del encoder | Regresión de correcciones con paredes/postes a lo largo de rectas | `learnedCellMm`, solo tras tres rectas informativas y varianza menor de 4 mm² |
+| Escala del giroscopio | Correcciones de rumbo con paredes después de giros | `gyroScale`, con cambios graduales |
+| Inclinación de láseres y reflejo del piso | Lecturas comparadas con paredes ya confirmadas | Inclinaciones individuales y `floorReflect` |
 
-Modo 6 "Ruedas", con el ratón **levantado**. Cada línea debe dar:
-- `izq adelante`: izq > 0 y der ≈ 0;
-- `der adelante`: der > 0 y izq ≈ 0.
+La ayuda de arranque aumenta gradualmente cuando hay una orden de avance/giro o un error final significativo y la rueda no responde. Desaparece al ganar velocidad. No genera una maniobra independiente. Un bloqueo sin movimiento posterior no se guarda como rozamiento aprendido. El controlador conserva los límites de PWM y la detección de atascos.
 
-Si no es así, cambia `INVERT_*` o `ENCODERS_SWAPPED` en `firmware/config.h`. Comprueba también el giroscopio: en el modo 4, girar el ratón a la izquierda a mano debe subir "Giro". Si baja, cambia `GYRO_SIGN`.
+Si el encoder indica movimiento sostenido en sentido opuesto a la orden aplicada, o un valor no finito, aparece `FALLO_ENCODER` y la parada queda enclavada para ese intento. Esto señala que debe revisarse cableado, polaridad o configuración; no invierte automáticamente los motores para adivinar la causa.
 
-## 1. Pista
+Al terminar una misión sin fallo de sensores se guardan los ajustes en flash. `APRENDIDO` indica el resultado del guardado y `AUTOCAL` muestra el balance, las cuatro ayudas y el paso aprendido. No se escribe flash en cada ciclo. El paso guardado se reutiliza únicamente con la misma celda configurada, diámetro de rueda y cuentas por vuelta. Cambiar esos parámetros invalida su uso. El sesgo del giroscopio se vuelve a medir en reposo en cada arranque.
 
-El reglamento da medidas aproximadas. Mide con una regla:
-- pasillo (de pared a pared) y grosor de pared → `set wallMm 12` y `set cellMm <pasillo + pared>`;
-- tamaño en celdas → `set mazeW 19`, `set mazeH 10`;
-- salida → `set startX 18`, `set startY 0`, `set startDir 0`.
+## Datos que necesita como referencia
 
-Coordenadas: (0,0) es la celda de abajo a la izquierda; dirección 0 = norte, 1 = este, 2 = sur, 3 = oeste.
+Los pulsos del encoder por sí solos no permiten conocer milímetros reales ni separar diámetro de rueda, patinaje y tamaño de celda. El aprendizaje corrige el paso efectivo; no deduce ni modifica automáticamente el diámetro físico o la relación de la caja reductora.
 
-## 2. Meta
+Mide/configura una vez:
 
-El ratón no tiene sensor de suelo y no ve la línea blanca. Se le dice la celda de la meta:
-- `G 4,2`, o `set goalX 4` y `set goalY 2`;
-- si la meta es una zona, `set goalW 2` y `set goalH 2`.
+- `wheelDiamMm`, `countsPerRev` y `trackMm`; `firmware/config.h` contiene polaridad y asignación de motores/encoders.
+- `cellMm` = pasillo + grosor de pared, `wallMm`, `mazeW` y `mazeH`.
+- `startX`, `startY`, `startDir`; dirección 0=norte, 1=este, 2=sur, 3=oeste.
+- `goalX`, `goalY`, `goalW` y `goalH`; `G 4,2` cambia la meta. El robot no tiene detector de la línea del suelo.
+- Altura y posición de láseres (`sensorHeightMm`, `frontAheadMm`, `diagAheadMm`, `diagLateralMm`) y dimensiones del cuerpo.
 
-Recomendación de hardware: un sensor de reflexión (TCRT5000/QRE1113) mirando al suelo permitiría detectar la línea blanca de la meta sin configurarla.
+Para comprobar los encoders sin movimiento automático, envía `sensores`, levanta el robot y gira cada rueda a mano: debe cambiar su encoder correspondiente. `x` sale del diagnóstico. Un giro manual del robot hacia la izquierda debe aumentar el ángulo del giroscopio. Corrige los signos en `firmware/config.h` si no coinciden.
 
-## 3. Sensores (automático)
+## Desfases de distancia de los láseres
 
-Cada VL53L0X sale de fábrica con su propio desfase (1–2 cm). Sin corregirlo, el ratón cree estar descentrado y se pega a una pared. En el simulador, con desfases de hasta 16 mm cumple 123 de 161 casos sin calibrar; calibrando, la calibración deja ~2 mm de error.
+Los desfases absolutos necesitan una distancia de referencia. No se confunden con la inclinación y el reflejo del piso que sí se aprenden en marcha. El barrido `calsonda` es opcional: coloca el robot centrado entre paredes laterales de la geometría configurada; gira a cada lado, ajusta las lecturas y guarda si obtiene una medida válida. No se ejecuta obligatoriamente al enviar 1–3.
 
-Cómo lo hace: un barrido continuo a cada lado (hasta 110°) y vuelta. La lectura más corta de cada láser es la perpendicular a la pared.
+También existen `calfront` (robot centrado mirando una pared) y `calside <ancho del pasillo>`. Los offsets son `frontOffsetMm`, `leftOffsetMm` y `rightOffsetMm`. Una carcasa que tapa el cono o un sensor mal cableado requiere corregir el montaje.
 
-- El **modo 1 lo hace solo al arrancar** en la salida (la salida de la competencia tiene pared a los dos lados) y lo guarda. Si la salida está a otra distancia que la de `cellMm`, avisa `PISTA_DISTINTA` y no sale.
-- El **modo 3** (práctica) calibra los laterales al arrancar; el frontal lo toma de la última vez del modo 1.
-- A mano, solo si se quiere: `calsonda` (o el botón "Calibrar sensores"), `calfront` (solo el frontal, centrado mirando a una pared) y `calside <ancho del pasillo>` (fija `cellMm` y calibra). También se guardan solos.
-- `diagMountDeg` (45) y `sensorFovDeg` (25) describen el montaje y el cono; solo cambiarlos si el montaje es otro.
+## Consultar y restablecer
 
-**Medir una vez con una regla** (lo único que conviene dar a mano; el resto se ajusta solo):
-- `set sensorHeightMm <altura del centro de los láseres sobre el piso>` (por defecto 40);
-- `set wallHeightMm 50` (alto de las paredes de la pista);
-- `set frontAheadMm`, `set diagAheadMm`, `set diagLateralMm`: posición de los láseres respecto al eje de las ruedas;
-- `set bodyFrontMm`, `set bodyRearMm`, `set bodyWidthMm`: chasis visto desde arriba respecto al eje;
-- `set wheelDiamMm` (diámetro de las ruedas).
+Todas las órdenes se envían por Bluetooth o Serie a 115200. `params` lista valores; `get <nombre>` consulta; `set <nombre> <valor>` cambia; `save` guarda cambios manuales. `learnMotor 1`, `learnGyro 1` y `learnVertical 1` están activados por defecto (usa `set` antes del nombre). `defaults` restablece todos los parámetros, incluida la geometría: configura otra vez la pista antes de correr.
 
-Altura de los láseres: con el sensor **alto** (cerca del borde de la pared) la parte de arriba del cono pasa por encima de las paredes y ve lo de fuera del laberinto (personas, mochilas). Con el sensor **bajo**, la parte de abajo toca el piso a pocos cm (a 25 mm, a ~11 cm) y en un pasillo vacío parece que hay algo delante. El ratón modela las dos cosas y aprende la inclinación real, pero lo mejor es:
-- el centro del láser a unos 25–35 mm del piso, con paredes de 50 mm;
-- el láser **a ras** de la carcasa (o con el agujero ancho y limpio): si queda metido detrás de un agujero estrecho, el borde del agujero refleja luz y da lecturas falsas cortas;
-- para probar en casa, paredes al menos tan altas como las de la competencia.
-
-Nota: si el firmware nuevo añade parámetros, los guardados en flash con la versión anterior no se cargan (otro tamaño) y se usan los valores por defecto. La calibración automática los vuelve a ajustar en la primera salida del modo 1.
-
-## 4. Motores (automático)
-
-El ratón aprende en cada recta cuánto le falta o le sobra al modelo del motor (`learnMotor 1`): con motores un 40 % más débiles de lo previsto pasa de 56 a 76 de 81 casos en el simulador. Lo aprendido se guarda solo al terminar cada misión. El modo 5 sigue disponible para medir `kV`, `kS` y `motorTauS` desde cero (ratón en el suelo, pasillo recto de 2 celdas), pero ya no hace falta.
-
-## 5. Velocidad
-
-Empieza con los valores por defecto:
-- explorar: `searchSpeed 400` (aceleración `accel`/`decel` 3000 mm/s²);
-- carrera: `runSpeed 650`, `turnSpeed 280`.
-
-Sube en pasos de 10 % solo si el ratón va limpio. Si en la carrera roza en las curvas, baja `turnSpeed` o usa giros en el sitio. Explorando, los giros son siempre en el sitio: con curvas y paredes aún sin conocer el simulador falla mucho más. En el simulador se puede probar antes: `scripts/run.sh bateria 20 --set searchSpeed=450`.
-
-## 6. Comprobación
-
-- `estado`: tiempo máximo de cálculo de un ciclo (debe quedar muy por debajo de 2000 µs), ciclos tarde y escala del giroscopio aprendida.
-- La web muestra la línea `NAV` (sensores, velocidad, posición), el **radar** (los tres conos con su lectura y las paredes de un pasillo centrado como referencia) y las celdas del mapa en directo.
-- Tras actualizar el firmware los parámetros guardados vuelven a los de fábrica (cambió la estructura). No hace falta hacer nada: la primera vez que corra el modo 1 se calibra y aprende solo.
+Esta actualización conserva la configuración flash del formato anterior y añade los ajustes nuevos con valores neutros. `erase` borra el mapa, no es necesario para calibrar. Los tres modos del robot permanecen iguales.

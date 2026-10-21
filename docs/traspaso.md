@@ -177,3 +177,17 @@ que el traspaso anterior documenta como descartadas. Para el chasis real siguen 
 Compilación para la placa con PlatformIO: no completada en este entorno; la instalación quedó en
 `platformio/toolchain-gccarmnoneeabi`. La comprobación con stubs no sustituye `pio run` ni una prueba física.
 Publicación pendiente: Git no tiene credenciales de escritura y el conector devolvió 403.
+
+## Autocalibración por rueda — 21 de octubre de 2026
+
+Parte de `854a912` y conserva las correcciones de arranque/sensores y Bluetooth aportadas por Kevin. No cambia los tres modos. Antes de moverse valida el sesgo del giroscopio con muestras suficientes, finitas y estables y comprueba reposo de encoders; reintenta tres veces y cancela si no hay estabilidad.
+
+En marcha añade trim diferencial lento del modelo de motor y apoyo de arranque independiente para cada rueda/sentido. El apoyo se acota a 0,22 y solo se conserva tras confirmar respuesta del encoder. Se aplica también al error final significativo de un giro. Encoders no finitos o movimiento sostenido contrario a la salida aplicada provocan parada enclavada. No adivina ni cambia polaridades de cableado.
+
+Guarda el paso efectivo aprendido solamente con al menos tres regresiones informativas y varianza menor de 4 mm². Reutiliza el paso si coinciden celda configurada, diámetro de rueda y cuentas por vuelta. No identifica diámetro físico ni relación de engranajes sin referencia externa. Inclinación/piso y escala del giroscopio conservan el aprendizaje con paredes seguras. Los offsets absolutos de distancia siguen necesitando una referencia (`calsonda` opcional).
+
+Los nuevos parámetros se añaden al final de Params y el cargador acepta también el tamaño anterior con CRC válido, conservando la configuración existente. No hay escrituras flash durante el control; se guarda al terminar sin fallo de sensores.
+
+Validación: 364 comprobaciones del núcleo (incluyen sesgo inestable/NaN, ayuda de arranque sin guardar bloqueos, encoder invertido, invalidación de paso guardado, asimetría de motores y giro lento con rozamiento 0,24, completado dentro de los 2 s del pivote). Firmware comprobado en PC con stubs. Banco nominal 161/161, 157 sin contacto, 3 paredes mal, carrera 15,8 s; base del día 161/161, 158 sin contacto, 5 paredes mal, carrera 15,8 s. Contactos de carrera: 68 base frente a 38 nuevos. Sensores bajos 81/81 (79 sin contacto), motores al 80 % 81/81 (81 sin contacto).
+
+El trim inicial al 10 % por segundo fallaba un caso (1046): se redujo al 2 % por segundo y se repitió todo el banco. Compilación real y prueba física: consultar el resultado de entrega; las pruebas del simulador no validan el cableado ni el par real.

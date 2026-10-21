@@ -115,6 +115,16 @@ struct Params {
   int learnVertical = 1;  // inclinacion de cada sensor y reflejo del piso
   int rangeBiasFromCell = 0;  // experimental: corregir los laseres con el paso de celda aprendido
   float gyroScale = 1.0f;  // escala del giroscopio aprendida (se guarda sola al terminar cada mision)
+
+  // Ajustes aprendidos. Se anaden al final para conservar la configuracion flash anterior.
+  float motorBalance = 0.0f;  // trim diferencial: izquierda 1-b, derecha 1+b
+  float startBoostLF = 0.0f, startBoostLR = 0.0f;
+  float startBoostRF = 0.0f, startBoostRR = 0.0f;
+  float learnedCellMm = 0.0f;      // paso en unidades del encoder; no cambia el diametro fisico
+  float learnedCellRefMm = 0.0f;   // geometria y escala con las que se aprendio
+  float learnedWheelDiamMm = 0.0f;
+  float learnedCountsPerRev = 0.0f;
+
 };
 
 }  // namespace raton

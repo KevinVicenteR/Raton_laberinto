@@ -24,8 +24,8 @@ En los videos el ratón se pegaba a las paredes, se atoraba en sitios sencillos,
 | Problema | Solución |
 |---|---|
 | Ve mal, mapea mal, vuelve a sitios ya vistos | **Sonda/radar:** cada lectura se compara con lo que el sensor debería leer con su cono real, el mapa y la posición. Se prueban todas las combinaciones de paredes que el cono alcanza y solo se vota lo que todas las explicaciones aceptan. |
-| Se pega a las paredes | **Calibración automática** de los desfases de los tres sensores al arrancar (gira en el sitio en la salida) y posición lateral corregida con la sonda. |
-| Hay que calibrar a mano | Todo es automático: sensores en la salida, motores y giroscopio aprendidos en marcha y guardados solos (ver [docs/calibracion.md](docs/calibracion.md)). Solo hay que decirle dónde está la meta. |
+| Se pega a las paredes | **Calibración opcional** de los desfases con paredes de referencia, aprendizaje de inclinación/piso en marcha y posición lateral corregida con la sonda. |
+| Hay que calibrar a mano | Giroscopio en reposo validado, motores aprendidos por rueda y sentido, y paso efectivo del encoder guardado (ver [docs/calibracion.md](docs/calibracion.md)). La geometría inicial y los desfases de distancia requieren referencias conocidas. |
 | Pierde la cuenta de celdas | El avance se corrige con postes, huecos y paredes de frente usando la sonda, comprobando cada corrección antes de aplicarla. |
 | Zigzag, torcido tras girar | Filtro de Kalman lateral; cada giro en el sitio termina alineado con la cuadrícula. |
 | Empuja la pared sin avanzar | Tres detectores de atasco y recuperación determinista: retroceder, enderezarse, recentrarse en "S" y replanificar. |
@@ -52,8 +52,13 @@ Errores del nivel 2: celda ±6 mm, pared ±4, ruedas ±2 %, eje ±4 %, motores, 
 | Pistas de práctica de 170–300 mm completas | 18 de 28 | **70 de 70** |
 | Laberinto del reglamento | | meta explorando ~50 s, carrera ~12 s, 0 roces |
 
-Banco de nivel 2 verificado con `scripts/banco.sh 160`: meta media 63,4 s, exploración 117,3 s y carrera
-16,0 s. Inyección de averías y política de parada: [traspaso](docs/traspaso.md#continuación-fallos-de-sensores-20-de-octubre-de-2026).
+La tabla anterior es la referencia histórica previa a la autocalibración por rueda. La actualización del
+21 de octubre se comprobó con `scripts/banco.sh 160`: **161/161**, 157 sin contacto, 3 paredes mal en total,
+meta media 63,4 s, exploración 117,1 s y carrera 15,8 s. En la misma prueba, tu versión base del día daba
+161/161, 158 sin contacto y 68 contactos en carrera; la nueva da 38 contactos en carrera.
+También pasa **81/81 con motores un 20 % más débiles** y **81/81 con sensores a 25 mm**.
+Véase [calibración](docs/calibracion.md) para el arranque validado, aprendizaje y límites físicos.
+La política de averías está descrita en el [traspaso](docs/traspaso.md).
 
 El simulador es un modelo: la pista real tiene diferencias. Por eso hay que **calibrar en la pista**
 ([docs/calibracion.md](docs/calibracion.md)) antes de competir.
@@ -61,7 +66,7 @@ El simulador es un modelo: la pista real tiene diferencias. Por eso hay que **ca
 ## Uso rápido
 
 ```bash
-scripts/run.sh pruebas              # compila y pasa las pruebas (324 comprobaciones, incluidas misiones)
+scripts/run.sh pruebas              # compila y pasa las pruebas (364 comprobaciones, incluidas misiones)
 scripts/run.sh sim                  # laberinto del reglamento con detalle y mapa final
 scripts/run.sh sim --random 7 --perturb 2   # aleatorio con errores fisicos
 scripts/run.sh bateria 20           # bateria completa

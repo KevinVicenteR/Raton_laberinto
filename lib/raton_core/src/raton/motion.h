@@ -8,16 +8,20 @@
 #pragma once
 
 #include "raton/params.h"
+#include "raton/autocal.h"
 #include "raton/platform.h"
 
 namespace raton {
 
 class Motion {
  public:
-  explicit Motion(const Params& p) : p_(p) {}
+  explicit Motion(const Params& p) : p_(p) { loadLearned(); }
 
   // Pone todo a cero en la pose actual (llamar con el raton quieto).
   void reset(const Sensors& s);
+
+  // Recarga los parametros despues de guardarlos/restablecerlos, con el robot parado.
+  void loadLearned();
 
   // ---- Avance ----
   // Ir hasta la posicion absoluta end (mm de recorrido del eje), sin pasar de vmax, llegando a vEnd.
@@ -33,6 +37,7 @@ class Motion {
   void turnTo(float target, float rate, float accel);
   bool turning() const { return !rotDone_; }
   bool sensorFault() const { return sensorFault_; }
+  bool encoderFault() const { return encoderFault_; }
   // Correccion de rumbo de las paredes (grados) sumada al rumbo objetivo cuando no se gira.
   void setSteer(float deg) { steer_ = deg; }
   float headingTarget() const { return angleTarget_; }
@@ -54,6 +59,8 @@ class Motion {
   float idealAngle() const { return idealAngle_; }
   // Escala del modelo del motor aprendida en marcha (1 = los parametros; > 1 = motores mas debiles).
   float motorScale() const { return ffScale_; }
+  float motorBalance() const { return motorBalance_; }
+  float startBoost(int i) const { return boost_[i]; }
   // Velocidad de crucero que los motores dan de verdad (modelo aprendido, con margen para el rumbo).
   float topSpeed() const { return (0.9f * p_.maxDuty - p_.kS) / (ffScale_ * p_.kV); }
   void setMotorScale(float k) { ffScale_ = k; }
@@ -65,7 +72,8 @@ class Motion {
 
   const Params& p_;
   // Fallo enclavado hasta reset: no reanudar al reaparecer una muestra.
-  bool sensorFault_ = false;
+  bool sensorFault_ = false, encoderFault_ = false;
+  float oppositeT_[2] = {}, previousDuty_[2] = {};
   float lastGyroT_ = 0, gyroProgressT_ = 0, gyroProgress_ = 0, encProgress_ = 0;
   // Medidas
   float encL0_ = 0, encR0_ = 0;
@@ -83,6 +91,10 @@ class Motion {
   float lastErrR_ = 0;
   float iF_ = 0, iR_ = 0;
   float ffScale_ = 1.0f;
+  float motorBalance_ = 0, balanceRef_ = 1e9f;
+  float boost_[4] = {}, boostRef_[4] = {-1, -1, -1, -1};
+  Breakaway breakaway_[2];
+  float wheelLast_[2] = {}, wheelSpeed_[2] = {};
   float satF_ = 0;  // el ciclo anterior el avance iba con duty al maximo (+1 adelante, -1 atras)
 };
 

@@ -136,10 +136,22 @@ void Navigator::begin(int x, int y, Dir h) {
   stallTimer_ = 0;
   // El paso de celda aprendido se conserva de una mision a otra (explorar y luego la carrera) salvo que
   // cambie el parametro.
-  if (p_.cellMm != cellRef_) {
+  if (p_.cellMm != cellRef_ || pitchSavedRef_ != p_.learnedCellMm || pitchWheelRef_ != p_.wheelDiamMm || pitchCountsRef_ != p_.countsPerRev) {
+    pitchFits_ = 0;
+    regN_ = 0;
+    pitchSavedRef_ = p_.learnedCellMm;
+    pitchWheelRef_ = p_.wheelDiamMm;
+    pitchCountsRef_ = p_.countsPerRev;
     cell_ = cellRef_ = p_.cellMm;
     const float sd = (learnCell_ ? 0.06f : 0.03f) * cell_;  // duda inicial del paso
     cellVar_ = sd * sd;
+    // Reutilizar solo con la misma pista y conversion de pulsos a mm.
+    if (p_.learnedCellRefMm == p_.cellMm && p_.learnedWheelDiamMm == p_.wheelDiamMm &&
+        p_.learnedCountsPerRev == p_.countsPerRev && p_.learnedCellMm > 0.95f * p_.cellMm &&
+        p_.learnedCellMm < 1.05f * p_.cellMm) {
+      cell_ = p_.learnedCellMm;
+      cellVar_ = 2.0f; // aun puede reajustarse con otra bateria/suelo
+    }
   }
   halfCorr_ = 0.5f * (cell_ - p_.wallMm);
   sonda_.setup(cell_, p_.wallMm, p_.sensorFovDeg, p_.sensorMaxMm);
@@ -215,7 +227,8 @@ void Navigator::setMotorsFromMotion() {
   motion_.update(s_, l, r);
   io_.setMotors(l, r);
   if (motion_.sensorFault() && !faultReported_) {
-    io_.report("FALLO_IMU parada enclavada", true);
+    io_.report(motion_.encoderFault() ? "FALLO_ENCODER: respuesta opuesta o no finita; revisar cableado/sentido" :
+                                      "FALLO_IMU parada enclavada", true);
     faultReported_ = true;
   }
 }
@@ -645,6 +658,7 @@ void Navigator::learnPitch() {
   const float n = static_cast<float>(regN_), ms = regS_ / n, mc = regC_ / n;
   const float sss = regS2_ - n * ms * ms;
   if (sss < n * 0.1f * cell_ * cell_) return;  // poco recorrido entre correcciones (desv. < 0.3 celdas)
+  ++pitchFits_;
   const float b = (regSC_ - n * ms * mc) / sss;
   const float z = cell_ * b, r = cell_ * cell_ * 25.0f / sss;  // ~5 mm de ruido por correccion
   const float k = cellVar_ / (cellVar_ + r);
