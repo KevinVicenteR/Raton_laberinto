@@ -39,7 +39,7 @@ La placa (`firmware/board.cpp`) atiende Bluetooth y Serie en el tiempo sobrante 
 - **Curvas de la carrera:** la velocidad de curva se limita para que la rueda de fuera no pida más de lo que da el motor (`Navigator::arcSpeed`); si no, la curva se abre y choca.
 - **Rumbo medido:** giroscopio interpolado con los encoders entre muestras.
 
-El DRV8833 usa PWM a 500 Hz: una entrada recibe PWM y la otra queda baja, con rueda libre entre pulsos. Se restaura la señal del firmware anterior (`49e0e8a`) después de que el robot dejara de arrancar el motor izquierdo en la prueba `T`. El duty se limita al 70 % para los motores de 6 V con batería 2S. La compilación no confirma el arranque físico: hay que repetir `T` con ambas ruedas levantadas y comprobar movimiento y conteos en ambos sentidos.
+El DRV8833 se maneja en *slow decay* a 20 kHz: una entrada fija en alto y la otra con PWM invertido. Así la velocidad es casi proporcional al duty y el N20 conserva par a baja velocidad, según la hoja de datos del DRV8833.
 
 ## Sonda y radar (`sonda.cpp`, `navigator.cpp`)
 

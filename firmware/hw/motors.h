@@ -1,4 +1,4 @@
-// DRV8833: PWM a 500 Hz, rueda libre entre pulsos, como el firmware anterior.
+// DRV8833 con PWM en "slow decay" (frenado entre pulsos): velocidad proporcional al duty.
 #pragma once
 
 #include <Arduino.h>
@@ -7,7 +7,7 @@
 class Motors {
  public:
   void begin();
-  // -1..1 solicitado por rueda, limitado a wiring::PWM_MAX; positivo = adelante.
+  // -1..1 por rueda, positivo = adelante.
   void set(float left, float right);
   void brake();  // las dos entradas en alto: frena en corto
   void coast();  // las dos en bajo: rueda libre
