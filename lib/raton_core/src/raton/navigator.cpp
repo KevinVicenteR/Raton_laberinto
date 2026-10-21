@@ -248,8 +248,12 @@ float Navigator::rangeBias() const {
 }
 
 void Navigator::tick() {
+  const float previous = t_;
   s_ = io_.tick();
   t_ = s_.t;
+  tickDt_ = t_ - previous;
+  if (tickDt_ <= 0 || fabsf(tickDt_ - p_.dt) < 0.05f * p_.dt) tickDt_ = p_.dt;
+  tickDt_ = clampf(tickDt_, 0.0002f, 0.2f);
   filterSensors();
   const int bias = p_.rangeBiasFromCell ? static_cast<int>(floorf(rangeBias() + 0.5f)) : 0;
   if (bias != 0) {
@@ -261,9 +265,16 @@ void Navigator::tick() {
   if (sensorFault()) return;
   const bool straight = !motion_.turning();
   if (straight) {
-    while (cellPos() > 0.5f * cell_) enterNextCell();
-    sense();
-    steer();
+    if (!recovering_) {
+      while (cellPos() > 0.5f * cell_) enterNextCell();
+      sense();
+      steer();
+    } else {
+      // Retroceso/S: la pose aun se esta reconstruyendo; no mapear ni dejar que el centrado
+      // lateral contradiga el giro que intenta enderezarlo.
+      motion_.setSteer(0);
+      lastOdo_ = motion_.position();
+    }
     checkStall();
   } else {
     // Girando: lo que se mueva el eje no es avance en el rumbo de la celda (en un giro en el sitio las ruedas
@@ -341,7 +352,7 @@ void Navigator::sense() {
   const float bias = clampf(lateral_.takeBias() * kDeg, -0.5f, 0.5f);
   gridAngle_ -= bias;
   gridCorr_ += bias;
-  latAge_ += p_.dt;
+  latAge_ += tickDt_;
   const Range* rr[3] = {&s_.left, &s_.front, &s_.right};
   for (int i = 0; i < 3; ++i) {
     const Range& r = *rr[i];
@@ -495,7 +506,12 @@ void Navigator::radar(int sensor, int mm) {
                mm, tol, good, 1 << nc, (allClosed >> k) & 1, (allOpen >> k) & 1, candT[k], h0);
 #endif
       // Sin medida no se deduce ninguna pared cerrada (solo que lo cercano esta libre).
-      if (((allClosed >> k) & 1) && mm >= 0) maze_.segObserve(cand[k], true, 1);
+      if (((allClosed >> k) & 1) && mm >= 0) {
+        // Descentrado junto a un poste: una lectura oblicua no debe cerrar un paso ya conocido.
+        // El frontal conserva la parada inmediata; tras recentrar puede confirmar una pared nueva.
+        const bool uncertainPose = fabsf(lateral_.y()) > 8.0f || fabsf(headingError()) > 3.0f;
+        if (!(maze_.segVotes(cand[k]) <= -Maze::kKnown && uncertainPose)) maze_.segObserve(cand[k], true, 1);
+      }
       else if ((allOpen >> k) & 1) maze_.segObserve(cand[k], false, 1);
     }
   }
@@ -620,12 +636,18 @@ void Navigator::frontCheck(int mm) {
   const float residual = sensorRel + dist + halfWall - 0.5f * cell_;  // respecto a la frontera de esta celda
   const bool passing = !decided_ || act_ == Act::Forward || !(cx_ == actX_ && cy_ == actY_);
   const float vv = motion_.speed();
-  const float stopDist = vv * vv / (2.0f * p_.decel);
+  const float braking = p_.precisionMode && p_.decel > 2000 ? 2000 : p_.decel;
+  const float stopDist = vv * vv / (2.0f * braking);
   if (fabsf(residual) < 0.3f * cell_ && passing && dist < frontStopReading() + stopDist + 30.0f &&
       frontSeesWall(0, mm)) {
     if (++blockedHits_ >= 2) {
-      blocked_ = true;
-      maze_.observe(cx_, cy_, h_, true, 2);
+      if (maze_.wall(cx_, cy_, h_) == Wall::Open && latAge_ < 0.3f && fabsf(lateral_.y()) > 8.0f) {
+        stalled_ = true; // probablemente roza el poste de un paso abierto: recentrar primero
+        io_.report("PASO_DESCENTRADO: paro y recentro antes de cambiar el mapa", true);
+      } else {
+        blocked_ = true;
+        maze_.observe(cx_, cy_, h_, true, 2);
+      }
     }
   } else {
     blockedHits_ = 0;
@@ -703,13 +725,14 @@ void Navigator::steer() {
 }
 
 void Navigator::checkStall() {
+  if (motion_.gyroDisagreement()) stalled_ = true;
   // 1) Las ruedas no siguen a la consigna (bloqueadas contra algo): error de seguimiento sostenido.
   const bool wantMove = fabsf(motion_.speed()) > 40.0f || fabsf(motion_.angularRate()) > 120.0f;
   const bool moving = fabsf(motion_.measuredSpeed()) > 12.0f || fabsf(motion_.measuredRate()) > 25.0f;
   const bool lagging = fabsf(motion_.idealPosition() - motion_.position()) > 20.0f ||
                        fabsf(motion_.idealAngle() - motion_.angle()) > 15.0f;
   if ((wantMove && !moving) || lagging) {
-    stallTimer_ += p_.dt;
+    stallTimer_ += tickDt_;
     if (stallTimer_ > p_.stallS) stalled_ = true;
   } else {
     stallTimer_ = 0;
@@ -840,7 +863,9 @@ bool Navigator::waitStopped(float timeout, float speedTol) {
     tick();
     if (stopped()) return false;
     if (motion_.arrived() && !motion_.turning() && fabsf(motion_.measuredSpeed()) < speedTol &&
-        fabsf(motion_.measuredRate()) < 30.0f)
+        fabsf(motion_.measuredRate()) < 30.0f &&
+        (!p_.precisionMode || (fabsf(motion_.idealPosition() - motion_.position()) < 3.0f &&
+                               fabsf(motion_.idealAngle() - motion_.angle()) < 3.0f)))
       return true;
   }
   return false;
@@ -851,7 +876,6 @@ bool Navigator::pivot(int q) {
   // Media vuelta: hacia el lado con mas sitio (el raton es redondo, da igual salvo por el roce).
   if (q == 2 || q == -2) q = (s_.right.mm >= 0 && (s_.left.mm < 0 || s_.right.mm > s_.left.mm)) ? -2 : 2;
   learnGyroScale();
-  turnSince_ += 90.0f * q;
   const float target = gridAngle_ + 90.0f * q;
   motion_.turnTo(target, p_.rotSpeed, p_.rotAccel);
   const float t0 = t_;
@@ -868,6 +892,15 @@ bool Navigator::pivot(int q) {
     printf("%.3f PIVOTE q=%d y=%.1f varY=%.1f pos=%.1f ang=%.1f target=%.1f\n", t_, q, lateral_.y(), lateral_.varY(),
            cellPos(), motion_.angle(), target);
 #endif
+  if (fabsf(motion_.angle() - target) >= 3.0f || motion_.turning()) {
+    char line[96];
+    snprintf(line, sizeof(line), "GIRO_INCOMPLETO real=%d objetivo=%d: recuperar sin cambiar rumbo del mapa",
+             static_cast<int>(motion_.angle()), static_cast<int>(target));
+    io_.report(line, true);
+    stalled_ = true;
+    return false;
+  }
+  turnSince_ += 90.0f * q;
   gridAngle_ = target;
   h_ = static_cast<Dir>((h_ + 4 - q) & 3);  // q > 0 = izquierda (antihorario)
   centerOdo_ = motion_.position();
@@ -909,7 +942,7 @@ void Navigator::learnGyroScale() {
 
 void Navigator::face(Dir d) {
   const int q = ((h_ - d) + 4) & 3;  // vueltas a la izquierda
-  pivot(q == 3 ? -1 : q);
+  if (!pivot(q == 3 ? -1 : q)) { io_.setMotors(0, 0); return; }
   // El giro acaba a menos de 3 grados: terminar de alinearse con la cuadricula (parado, sin prisa).
   motion_.turnTo(gridAngle_, 0.3f * p_.rotSpeed, p_.rotAccel);
   waitStopped(0.5f);
@@ -949,7 +982,7 @@ Navigator::Depart Navigator::depart(Brain& brain, float vmax) {
     if (dir < 0) return Depart::Stop;
     const Act a = actionFor(dir);
     const int q = a == Act::Left ? 1 : (a == Act::Right ? -1 : (a == Act::Back ? 2 : 0));
-    if (!pivot(q)) return Depart::Fail;
+    if (!pivot(q)) return stopped() || brain.shouldAbort() ? Depart::Fail : Depart::Retry;
     if (checkFrontAfterPivot()) {
       decided_ = false;
       act_ = Act::None;
@@ -992,11 +1025,16 @@ void Navigator::centerOnFront(int k) {
 }
 
 bool Navigator::recover(Brain& brain) {
-  (void)brain;
+  if (stopped() || brain.shouldAbort()) return false;
+  struct RecoveryGuard {
+    bool& active;
+    explicit RecoveryGuard(bool& flag) : active(flag) { active = true; }
+    ~RecoveryGuard() { active = false; }
+  } guard(recovering_);
   ++stalls_;
   ++recoveries_;
   char line[64];
-  snprintf(line, sizeof(line), "ATASCO x=%d y=%d", cx_, cy_);
+  snprintf(line, sizeof(line), "ATASCO x=%d y=%d rumbo=%d/%d", cx_, cy_, static_cast<int>(motion_.angle()), static_cast<int>(gridAngle_));
   io_.report(line, true);
   const int idx = maze_.index(cx_, cy_);
   recoverCount_ = idx == recoverCellIdx_ ? recoverCount_ + 1 : 1;
@@ -1006,11 +1044,21 @@ bool Navigator::recover(Brain& brain) {
   stalled_ = false;
   stallTimer_ = 0;
   pushRefOdo_ = -1e9f;
-  const float back = motion_.position() - p_.backoffMm;
+  float roomBack = cellPos() + 0.35f * cell_;
+  if (maze_.wall(cx_, cy_, opposite(h_)) == Wall::Closed) {
+    const bool roundBody = p_.bodyFrontMm == 45 && p_.bodyRearMm == 45 && p_.bodyWidthMm == 90;
+    const float rearExtent = !roundBody && fabsf(headingError()) > 10 ?
+        sqrtf(p_.bodyRearMm * p_.bodyRearMm + 0.25f * p_.bodyWidthMm * p_.bodyWidthMm) : p_.bodyRearMm;
+    const float rearRoom = cellPos() + 0.5f * (cell_ - p_.wallMm) - rearExtent - 12.0f;
+    if (rearRoom < roomBack) roomBack = rearRoom;
+  }
+  const float backoff = roomBack > 0 ? (p_.backoffMm < roomBack ? p_.backoffMm : roomBack) : 0;
+  const float back = motion_.position() - backoff;
   motion_.moveTo(back, 150.0f, 0);
   motion_.turnTo(gridAngle_, p_.rotSpeed * 0.5f, p_.rotAccel);
-  waitStopped(1.5f);
+  if (!waitStopped(1.5f) || brain.shouldAbort()) return false;
   stalled_ = false;
+  if (fabsf(motion_.angle() - gridAngle_) > 4.0f) return false;
   // 3) Recentrar en el pasillo si los laterales ven que esta desplazado (si no, chocaria otra vez con el
   //    mismo poste): paso en "S" de 35 grados.
   int l, f, r;
@@ -1032,13 +1080,13 @@ bool Navigator::recover(Brain& brain) {
       const float sgn = y > 0 ? -1.0f : 1.0f;  // desplazado a la izquierda: ir a la derecha
       const float d = fabsf(y) / sinf(th / kDeg);
       motion_.turnTo(gridAngle_ + sgn * th, p_.rotSpeed * 0.5f, p_.rotAccel);
-      waitStopped(0.8f);
+      if (!waitStopped(0.8f) || brain.shouldAbort()) return false;
       motion_.moveTo(motion_.position() + d, 150.0f, 0);
-      waitStopped(1.0f);
+      if (!waitStopped(1.0f) || brain.shouldAbort()) return false;
       motion_.turnTo(gridAngle_, p_.rotSpeed * 0.5f, p_.rotAccel);
-      waitStopped(0.8f);
+      if (!waitStopped(0.8f) || brain.shouldAbort()) return false;
       motion_.moveTo(motion_.position() - d * cosf(th / kDeg), 150.0f, 0);
-      waitStopped(1.0f);
+      if (!waitStopped(1.0f) || brain.shouldAbort()) return false;
       lateral_.setY(0, 25.0f);
       stalled_ = false;
       sample(2, l, f, r);
@@ -1058,7 +1106,9 @@ bool Navigator::recover(Brain& brain) {
   }
   // 5) Al centro de la celda.
   motion_.moveTo(centerOdo_, 150.0f, 0);
-  waitStopped(1.2f);
+  if (!waitStopped(1.2f) || brain.shouldAbort()) return false;
+  if (fabsf(motion_.position() - centerOdo_) > 5.0f || fabsf(motion_.angle() - gridAngle_) > 4.0f) return false;
+  io_.report("RECUPERADO: replanificando", true);
   stalled_ = false;
   decided_ = false;
   act_ = Act::None;
@@ -1072,6 +1122,11 @@ void Navigator::sweep(float deg, float rate, SweepLog& log) {
   while (t_ - t0 < limit) {
     step();
     if (stopped()) return;
+    if (motion_.gyroDisagreement()) {
+      io_.setMotors(0, 0);
+      io_.report("CAL_GIRO_SIN_RESPUESTA: revisar atasco o giroscopio", true);
+      return;
+    }
     // La lectura llega sensorLatencyS tarde: el angulo al que se tomo es el de entonces.
     const float a = aimAngle() - motion_.measuredRate() * p_.sensorLatencyS;
     const Range* rr[3] = {&s_.left, &s_.front, &s_.right};
@@ -1119,29 +1174,44 @@ float Navigator::actCenterOdo() const {
 
 NavResult Navigator::run(Brain& brain, float vmax, bool smoothTurns) {
   vmax_ = vmax;
-  smooth_ = smoothTurns;
+  if (p_.precisionMode) io_.report("PERFIL_PRECISION: v<=300 giro<=360 sin curvas", true);
+  smooth_ = smoothTurns && !p_.precisionMode;
   stalled_ = false;
   blocked_ = false;
   decided_ = false;
   act_ = Act::None;
   // Arranca quieto en el centro de una celda.
   Depart dep = depart(brain, vmax);
-  while (dep == Depart::Go) {
+  int retryCell = -1, retries = 0;
+  while (dep == Depart::Go || dep == Depart::Retry) {
+    if (dep == Depart::Retry) {
+      const int idx = maze_.index(cx_, cy_);
+      retries = idx == retryCell ? retries + 1 : 1;
+      retryCell = idx;
+      if (retries > 3 || stopped() || brain.shouldAbort()) {
+        io_.report("RECUPERACION_AGOTADA: no logra salir tras tres intentos", true);
+        dep = Depart::Fail;
+        break;
+      }
+      const bool recovered = recover(brain);
+      if (stopped() || brain.shouldAbort()) { dep = Depart::Fail; break; }
+      if (!recovered) { dep = Depart::Retry; continue; }
+      smooth_ = false;
+      if (vmax > 250) vmax = 250;
+      vmax_ = vmax;
+      io_.report("MODO_SEGURO", true);
+      dep = depart(brain, vmax);
+      continue;
+    }
     tick();
+    const int currentCell = maze_.index(cx_, cy_);
+    if (currentCell != retryCell) { retryCell = currentCell; retries = 0; }
     if (stopped() || brain.shouldAbort()) {
       dep = Depart::Fail;
       break;
     }
     if (stalled_) {
-      recover(brain);
-      // Tras un atasco el resto del recorrido va en modo seguro: giros en el sitio y velocidad de
-      // exploracion. Mas vale llegar que arriesgar el intento.
-      if (smooth_ || vmax_ > p_.searchSpeed) {
-        smooth_ = false;
-        vmax_ = vmax = p_.searchSpeed;
-        io_.report("MODO_SEGURO", true);
-      }
-      dep = depart(brain, vmax);
+      dep = Depart::Retry;
       continue;
     }
     if (blocked_) {
@@ -1202,8 +1272,11 @@ NavResult Navigator::run(Brain& brain, float vmax, bool smoothTurns) {
     if (arcPlanned_) continue;
     // Parada en el centro de la celda de la accion (el objetivo ya se corrige arriba).
     if (motion_.arrived() && cx_ == actX_ && cy_ == actY_) {
-      // Casi parado basta para empezar a girar: los ultimos mm/s tardan en irse y el giro los absorbe.
-      waitStopped(0.4f, 40.0f);
+      // En precision se confirma frenado y posicion antes de iniciar el siguiente giro.
+      if (!waitStopped(p_.precisionMode ? 0.8f : 0.4f, p_.precisionMode ? 15.0f : 40.0f)) {
+        dep = stopped() ? Depart::Fail : Depart::Retry;
+        continue;
+      }
       centerOdo_ = motion_.position();
       if (act_ == Act::Stop) {
         dep = Depart::Stop;
@@ -1218,7 +1291,7 @@ NavResult Navigator::run(Brain& brain, float vmax, bool smoothTurns) {
   io_.setMotors(0, 0);
   decided_ = false;
   act_ = Act::None;
-  if (sensorFault()) return NavResult::Failed;
+  if (sensorFault() || retries > 3) return NavResult::Failed;
   if (dep == Depart::Stop) return NavResult::Arrived;
   if (stopped() || brain.shouldAbort()) return NavResult::Aborted;
   return NavResult::NoPath;

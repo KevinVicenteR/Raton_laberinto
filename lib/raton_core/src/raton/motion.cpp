@@ -45,7 +45,9 @@ void Motion::reset(const Sensors& s) {
   for (int i = 0; i < 2; ++i) { breakaway_[i].reset(); wheelSpeed_[i] = 0; }
   wheelLast_[0] = s.encLeftMm;
   wheelLast_[1] = s.encRightMm;
-  sensorFault_ = encoderFault_ = false;
+  sensorFault_ = encoderFault_ = gyroDisagreement_ = false;
+  updateT_ = measureT_ = s.t;
+  controlDt_ = p_.dt;
   for (int i = 0; i < 2; ++i) oppositeT_[i] = previousDuty_[i] = 0;
   lastGyroT_ = gyroProgressT_ = s.t;
   gyroProgress_ = s.gyroDeg;
@@ -80,22 +82,27 @@ void Motion::measure(const Sensors& s) {
     encAngleAtSample_ = encAngle;
   }
   angle_ = gyroAtSample_ + (encAngle - encAngleAtSample_);
-  const float dt = p_.dt;
+  float dt = s.t - measureT_;
+  if (dt <= 0) return; // hold() puede recibir la misma muestra: no inventar una velocidad cero
+  if (fabsf(dt - p_.dt) < 0.05f * p_.dt) dt = p_.dt;
+  dt = clampf(dt, 0.0002f, 0.2f);
+  measureT_ = s.t;
+  const float alpha = clampf(0.3f * dt / p_.dt, 0.02f, 0.9f);
   const float wheel[2] = {s.encLeftMm, s.encRightMm};
   for (int i = 0; i < 2; ++i) {
-    wheelSpeed_[i] += 0.3f * ((wheel[i] - wheelLast_[i]) / dt - wheelSpeed_[i]);
+    wheelSpeed_[i] += alpha * ((wheel[i] - wheelLast_[i]) / dt - wheelSpeed_[i]);
     wheelLast_[i] = wheel[i];
   }
-  vMeas_ += 0.3f * ((pos_ - lastPos_) / dt - vMeas_);
-  wMeas_ += 0.3f * ((angle_ - lastAngle_) / dt - wMeas_);
+  vMeas_ += alpha * ((pos_ - lastPos_) / dt - vMeas_);
+  wMeas_ += alpha * ((angle_ - lastAngle_) / dt - wMeas_);
   lastPos_ = pos_;
   lastAngle_ = angle_;
 }
 
 void Motion::moveTo(float end, float vmax, float vEnd) {
   end_ = end;
-  vmax_ = vmax;
-  vEnd_ = vEnd;
+  vmax_ = p_.precisionMode && vmax > 300 ? 300 : vmax;
+  vEnd_ = vEnd > vmax_ ? vmax_ : vEnd;
   done_ = false;
   dir_ = end >= ideal_ ? 1.0f : -1.0f;
   // Si se cambia de sentido con el raton en marcha, primero frena (la velocidad en "u" seria negativa).
@@ -103,8 +110,8 @@ void Motion::moveTo(float end, float vmax, float vEnd) {
 
 void Motion::turnTo(float target, float rate, float accel) {
   angleTarget_ = target;
-  rate_ = rate;
-  rotAccel_ = accel;
+  rate_ = p_.precisionMode && rate > 360 ? 360 : rate;
+  rotAccel_ = p_.precisionMode && accel > 1800 ? 1800 : accel;
   rotDone_ = false;
   steer_ = 0;
   rotDir_ = target >= idealAngle_ ? 1.0f : -1.0f;
@@ -112,6 +119,10 @@ void Motion::turnTo(float target, float rate, float accel) {
 
 void Motion::hold(const Sensors& s) {
   measure(s);
+  gyroDisagreement_ = false;
+  gyroProgress_ = s.gyroDeg;
+  gyroProgressT_ = s.t;
+  encProgress_ = ((s.encRightMm - encR0_) - (s.encLeftMm - encL0_)) / p_.trackMm * kDeg;
   ideal_ = end_ = pos_;
   v_ = a_ = 0;
   done_ = true;
@@ -125,7 +136,8 @@ void Motion::hold(const Sensors& s) {
 
 void Motion::update(const Sensors& s, float& dutyL, float& dutyR) {
   // Una IMU sin muestras no debe quedar sustituida indefinidamente por encoders.
-  // Detecta tambien una salida congelada que sigue marcando muestras como nuevas.
+  // Si llegan muestras validas pero no hay giro mientras las ruedas giran, puede ser
+  // patinaje/atasco: es una discrepancia recuperable, no prueba de una IMU averiada.
   const float encAngle = ((s.encRightMm - encR0_) - (s.encLeftMm - encL0_)) / p_.trackMm * kDeg;
   if (s.gyroFresh && isfinite(s.gyroDeg)) {
     lastGyroT_ = s.t;
@@ -133,8 +145,9 @@ void Motion::update(const Sensors& s, float& dutyL, float& dutyR) {
       gyroProgress_ = s.gyroDeg;
       gyroProgressT_ = s.t;
       encProgress_ = encAngle;
+      gyroDisagreement_ = false;
     } else if (s.t - gyroProgressT_ > 0.2f && fabsf(encAngle - encProgress_) > 20.0f) {
-      sensorFault_ = true;
+      gyroDisagreement_ = true;
     }
   }
   if (!isfinite(s.gyroDeg) || s.t - lastGyroT_ > 0.1f) sensorFault_ = true;
@@ -143,8 +156,14 @@ void Motion::update(const Sensors& s, float& dutyL, float& dutyR) {
     dutyL = dutyR = 0;
     return;
   }
+  float elapsed = s.t - updateT_;
+  updateT_ = s.t;
+  if (elapsed <= 0 || fabsf(elapsed - p_.dt) < 0.05f * p_.dt) elapsed = p_.dt;
+  controlDt_ = clampf(elapsed, 0.0002f, 0.02f);
   measure(s);
-  const float dt = p_.dt;
+  const float dt = controlDt_;
+  const float accel = p_.precisionMode && p_.accel > 1500 ? 1500 : p_.accel;
+  const float decel = p_.precisionMode && p_.decel > 2000 ? 2000 : p_.decel;
 
   // ---- Perfil de avance ----
   const float vPrev = v_;
@@ -152,14 +171,14 @@ void Motion::update(const Sensors& s, float& dutyL, float& dutyR) {
     float u = dir_ * v_;  // velocidad en el sentido del movimiento
     if (u < 0) {
       // Va en sentido contrario: frenar primero.
-      u += 1.5f * p_.decel * dt;
+      u += 1.5f * decel * dt;
       if (u > 0) u = 0;
     } else {
       // No pedir mas de lo que los motores dan (bateria baja, motores lentos): con duty al maximo hace un
       // ciclo, la consigna no se adelanta a lo medido. Si no, la consigna se escapa, el error crece y parece
       // un atasco a toda velocidad. Tope de crucero con el modelo aprendido y margen para corregir el rumbo.
       const float vTop = topSpeed();
-      u = profileStep(u, dir_ * (end_ - ideal_), vmax_ < vTop ? vmax_ : vTop, vEnd_, p_.accel, p_.decel, dt);
+      u = profileStep(u, dir_ * (end_ - ideal_), vmax_ < vTop ? vmax_ : vTop, vEnd_, accel, decel, dt);
       const float uMeas = dir_ * vMeas_;
       if (satF_ * dir_ > 0 && u > uMeas + 40.0f) u = uMeas + 40.0f > 0 ? uMeas + 40.0f : 0;
     }

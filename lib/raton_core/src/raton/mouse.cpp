@@ -203,9 +203,13 @@ float Mouse::calibrateSensors(Params& out, bool cellKnown) {
   log = Navigator::SweepLog();
   const float rate = 120.0f;
   nav_.sweep(110.0f, rate, log);
+  if (nav_.motion().gyroDisagreement() || nav_.sensorFault() || io_.stopRequested()) return -1;
   nav_.sweep(0.0f, rate, log);
+  if (nav_.motion().gyroDisagreement() || nav_.sensorFault() || io_.stopRequested()) return -1;
   nav_.sweep(-110.0f, rate, log);
+  if (nav_.motion().gyroDisagreement() || nav_.sensorFault() || io_.stopRequested()) return -1;
   nav_.sweep(0.0f, rate, log);
+  if (nav_.motion().gyroDisagreement() || nav_.sensorFault() || io_.stopRequested()) return -1;
   if (nav_.sensorFault() || io_.stopRequested()) return -1;
 #ifdef RATON_DEBUG
   if (getenv("SWEEPDBG"))

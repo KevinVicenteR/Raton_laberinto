@@ -469,7 +469,9 @@ void App::runMode(int mode) {
       board_.saveEnabled = mode == MAP;
       const raton::MissionResult result = mode == MAP ? mouse_.mapAll() : mouse_.toGoal();
       showResult(result, mode == MAP ? "MAPEAR" : "DESCONOCIDO");
-      if (!mouse_.navigator().sensorFault()) saveLearned();
+      const bool completed = mode == MAP ? result.exploredAll && result.backHome : result.reachedGoal;
+      if (completed && !mouse_.navigator().sensorFault()) saveLearned();
+      else mouse_.navigator().motion().loadLearned();
       board_.saveEnabled = true;
       break;
     }
@@ -498,8 +500,10 @@ void App::runMode(int mode) {
       }
       mouse_.maze() = learned;
       if (!armStart()) break;
-      showResult(mouse_.solveLearned(), "APRENDIDO");
-      if (!mouse_.navigator().sensorFault()) saveLearned();
+      const raton::MissionResult result = mouse_.solveLearned();
+      showResult(result, "APRENDIDO");
+      if (result.reachedGoal && !mouse_.navigator().sensorFault()) saveLearned();
+      else mouse_.navigator().motion().loadLearned();
       break;
     }
   }

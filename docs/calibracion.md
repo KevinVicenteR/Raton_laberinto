@@ -1,5 +1,13 @@
 # Calibración y aprendizaje automático
 
+El perfil `precisionMode 1` está activado por defecto, también al cargar parámetros de las versiones anteriores. Limita el avance a 300 mm/s y la aceleración a 1500 mm/s²; los giros se hacen en el sitio, a un máximo de 360 °/s y 1800 °/s². El frenado usa hasta 2000 mm/s² (o menos si configuraste un límite inferior). Estos topes también se aplican a la carrera mientras se comprueba el robot físico. No borra tu geometría ni los ajustes aprendidos.
+
+Ante un atasco intenta retroceder, alinear y replanificar hasta tres veces seguidas en la misma celda. Avanzar a otra celda reinicia ese contador. El retroceso se limita si conoce una pared detrás. Un giro incompleto no cambia el rumbo del mapa: informa `GIRO_INCOMPLETO` e intenta recuperarse. `RECUPERADO` indica que retoma la marcha; `RECUPERACION_AGOTADA` indica que no consiguió moverse tras los intentos. No se guarda un mapa parcial por ese fallo.
+
+Durante el retroceso y la maniobra de rescate se suspende el centrado lateral y la escritura de paredes con una pose todavía incierta; así no contradicen el giro de alineación ni corrompen el mapa.
+
+Una discrepancia entre ruedas y ángulo con muestras válidas puede ser patinaje o bloqueo: se trata como atasco, no se declara avería de IMU solo por ello. La pérdida de muestras, NaN o respuesta opuesta de encoder siguen causando parada enclavada. El barrido de calibración se cancela si no puede verificar el giro. El controlador y el temporizador de atasco usan el tiempo real entre lecturas.
+
 Los tres modos son: **1 Resolver desconocido**, **2 Mapear y guardar**, **3 Resolver aprendido**. Todos usan el mismo control y aprendizaje. Coloca el ratón en el centro de la salida, con el rumbo configurado, y envía `1`, `2` o `3`. `x` detiene también durante la preparación.
 
 ## Antes de moverse
@@ -23,7 +31,7 @@ La ayuda de arranque aumenta gradualmente cuando hay una orden de avance/giro o 
 
 Si el encoder indica movimiento sostenido en sentido opuesto a la orden aplicada, o un valor no finito, aparece `FALLO_ENCODER` y la parada queda enclavada para ese intento. Esto señala que debe revisarse cableado, polaridad o configuración; no invierte automáticamente los motores para adivinar la causa.
 
-Al terminar una misión sin fallo de sensores se guardan los ajustes en flash. `APRENDIDO` indica el resultado del guardado y `AUTOCAL` muestra el balance, las cuatro ayudas y el paso aprendido. No se escribe flash en cada ciclo. El paso guardado se reutiliza únicamente con la misma celda configurada, diámetro de rueda y cuentas por vuelta. Cambiar esos parámetros invalida su uso. El sesgo del giroscopio se vuelve a medir en reposo en cada arranque.
+Al completar una misión sin fallo de sensores se guardan los ajustes en flash (meta alcanzada en 1/3; mapa completo y vuelta en 2). Si se interrumpe o no consigue salir de un atasco, se recuperan los ajustes de motor previamente guardados. `APRENDIDO` indica el resultado del guardado y `AUTOCAL` muestra el balance, las cuatro ayudas y el paso aprendido. No se escribe flash en cada ciclo. El paso guardado se reutiliza únicamente con la misma celda configurada, diámetro de rueda y cuentas por vuelta. Cambiar esos parámetros invalida su uso. El sesgo del giroscopio se vuelve a medir en reposo en cada arranque.
 
 ## Datos que necesita como referencia
 

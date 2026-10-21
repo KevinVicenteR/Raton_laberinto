@@ -191,3 +191,24 @@ Los nuevos parámetros se añaden al final de Params y el cargador acepta tambi�
 Validación: 364 comprobaciones del núcleo (incluyen sesgo inestable/NaN, ayuda de arranque sin guardar bloqueos, encoder invertido, invalidación de paso guardado, asimetría de motores y giro lento con rozamiento 0,24, completado dentro de los 2 s del pivote). Firmware comprobado en PC con stubs. Banco nominal 161/161, 157 sin contacto, 3 paredes mal, carrera 15,8 s; base del día 161/161, 158 sin contacto, 5 paredes mal, carrera 15,8 s. Contactos de carrera: 68 base frente a 38 nuevos. Sensores bajos 81/81 (79 sin contacto), motores al 80 % 81/81 (81 sin contacto).
 
 El trim inicial al 10 % por segundo fallaba un caso (1046): se redujo al 2 % por segundo y se repitió todo el banco. La compilación real con `pio run` para `nano33ble` finalizó correctamente: RAM estática 179584/262144 bytes (68,5 %), flash 464444/983040 bytes (47,2 %). Falta cargarla y probarla físicamente; el simulador no valida el cableado ni el par real.
+
+
+## Recuperación de atascos y perfil físico — 21 de octubre de 2026
+
+El informe de la pista real indica parada tras atascarse, desvíos en recta/giro y contactos frecuentes. No se dispone todavía del registro NAV de ese intento físico; estos cambios corrigen fallos reproducidos en el control y se deben comprobar en el robot.
+
+Cambios:
+
+- La discrepancia entre encoders y ángulo con muestras de IMU válidas se trata como bloqueo/patinaje recuperable. No se diagnostica IMU averiada solo con ese desacuerdo. Pérdida de muestras, NaN y encoders en sentido opuesto mantienen parada enclavada.
+- Un pivote no cambia rumbo/celda si no alcanzó el ángulo. `GIRO_INCOMPLETO` solicita rescate y un nuevo intento. Los giros también pueden recuperarse al salir de la celda inicial.
+- El rescate desactiva temporalmente el centrado lateral y las actualizaciones del mapa con pose incierta: antes el centrado podía contradecir la alineación, manteniéndolo a unos 5° del rumbo y consumiendo los intentos. Comprueba tiempos, alineación y posición antes de anunciar `RECUPERADO`.
+- Retroceso limitado al interior de la celda y al espacio conocido detrás del cuerpo, con 12 mm de margen. Tres intentos consecutivos por celda; avanzar a otra reinicia el contador. Si el bloqueo es permanente, `RECUPERACION_AGOTADA` termina la misión sin guardar mapa parcial ni aprendizaje de motor de ese intento.
+- Ante una lectura de poste con descentrado, no se cierra directamente un paso conocido: se recentra y se vuelve a comprobar. El frontal mantiene su función de parada.
+- Velocidad/derivadas y temporización de atasco usan el intervalo real. `hold` no convierte una muestra repetida en una velocidad cero ficticia.
+- `precisionMode=1` por defecto, también migrando los dos formatos anteriores de parámetros. Máximo 300 mm/s de avance, 360 °/s y 1800 °/s² de giro, 1500 mm/s² de aceleración y 2000 mm/s² de frenado (se respetan valores inferiores). Sin curvas en carrera; prima control sobre tiempo. No añade modos al menú.
+
+Pruebas nuevas: ciclos de 2/6/30 ms; rescate tras bloqueo temporal en pasillo estrecho empezando descentrado 18 mm sin contacto; giro parcial bloqueado y llegada a la celda física correcta; bloqueo permanente acotado a tres intentos sin guardar; separación entre ausencia de IMU y desacuerdo de giro. Total 378 comprobaciones.
+
+La compilación real con PlatformIO para Nano 33 BLE pasa. Los límites del perfil son parte del comportamiento que se prueba: los tiempos de carrera de la sección previa corresponden a la versión rápida anterior. Las simulaciones calibran los offsets con paredes de referencia; en la placa, `calsonda` es opcional y debe ejecutarse centrado entre paredes laterales si los offsets no se han medido. Conservar las dimensiones reales del cuerpo/ruedas/sensores. Falta el registro de telemetría y comprobación física de esta corrección.
+
+Resultado final de esta corrección: **378/378 comprobaciones**, firmware Nano 33 BLE compilado (179600 bytes RAM, 467092 bytes flash). Banco nominal **161/161**, 157 sin contacto, 16 paredes mal acumuladas; meta media 88,4 s, exploración 166,0 s, carrera 42,3 s; 6 contactos en carrera. Motores al 80 %: **81/81**, 76 sin contacto. Sensores a 25 mm: **80/81**, fallo de carrera en aleatorio 1046 (sí alcanza meta explorando); pendiente. No presentar ese escenario como resuelto ni trasladar los resultados del simulador a una garantía de precisión física. El perfil rápido (`precisionMode=0`) no es la configuración verificada para esta entrega.

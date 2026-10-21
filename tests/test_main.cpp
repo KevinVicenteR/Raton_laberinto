@@ -64,6 +64,7 @@ void testMazeVotes() {
   CHECK(m.wall(1, 1, EAST) == Wall::Unknown);
   CHECK(m.wall(2, 2, NORTH) == Wall::Closed);
   CHECK(m.wallMask(0, 0) == (4 | 8));
+
 }
 
 void testFloodAndRoute() {
@@ -240,7 +241,7 @@ void testSonda() {
 
 // El raton completo en el simulador: laberinto del reglamento y aleatorios, con fisica ideal y con
 // errores (pista de otra medida, ruedas distintas, sensores y giroscopio descalibrados).
-// Fallos de transporte y salida congelada: salida cero enclavada, sin depender del timeout global.
+// Transporte sin respuesta: parada enclavada. Desacuerdo de giro con muestras validas: recuperacion.
 void testSensorFaults() {
   Params p;
   Sensors s;
@@ -266,7 +267,7 @@ void testSensorFaults() {
     s.encLeftMm -= 0.3f;
     motion.update(s, l, r);  // gyroFresh pero angulo congelado
   }
-  CHECK(motion.sensorFault() && l == 0 && r == 0);
+  CHECK(!motion.sensorFault() && motion.gyroDisagreement());
   motion.reset(s);
   s.gyroDeg = NAN;
   motion.update(s, l, r);
@@ -350,10 +351,103 @@ void testSensorFaults() {
     nav.begin(p.startX, p.startY, static_cast<Dir>(p.startDir));
     Navigator::SweepLog log;
     nav.sweep(110, 120, log);
-    CHECK(nav.motion().sensorFault());
+    CHECK(frozen ? nav.motion().gyroDisagreement() : nav.motion().sensorFault());
     CHECK(nav.now() < 1.0f);
   }
 }
+
+void testRecoveryAndTiming() {
+  Params p;
+  Sensors s;
+  s.gyroFresh = true;
+  Motion motion(p);
+  motion.reset(s);
+  motion.cruise(200);
+  float l = 0, r = 0;
+  for (int k = 0; k < 150; ++k) {
+    const float intervals[3] = {0.002f, 0.006f, 0.03f};
+    const float dt = intervals[k % 3];
+    s.t += dt;
+    s.encLeftMm += 200 * dt; s.encRightMm += 200 * dt;
+    motion.update(s, l, r);
+  }
+  CHECK(fabsf(motion.measuredSpeed() - 200) < 1);
+  const float before = motion.measuredSpeed();
+  motion.hold(s);
+  CHECK(motion.measuredSpeed() == before);
+
+  class Jammed : public sim::SimPlatform {
+   public:
+    using sim::SimPlatform::SimPlatform;
+    bool reversed = false;
+    void setMotors(float left, float right) override {
+      if (time() < 0.65f) sim::SimPlatform::setMotors(0, 0);
+      else { reversed |= left < -0.05f && right < -0.05f; sim::SimPlatform::setMotors(left, right); }
+    }
+  };
+  p.mazeW = p.mazeH = 5;
+  p.startX = 2; p.startY = 0; p.startDir = NORTH;
+  p.goalX = 2; p.goalY = 3; p.goalW = p.goalH = 1;
+  Maze truth;
+  truth.reset(5, 5, true);
+  const auto ph = sim::perturbed(p, 0, 1);
+  sim::World world(truth, ph);
+  Maze corridor;
+  corridor.reset(5, 5, true);
+  for (int y = 0; y < 5; ++y) {
+    corridor.set(2, y, WEST, Wall::Closed);
+    corridor.set(2, y, EAST, Wall::Closed);
+  }
+  auto shifted = ph;
+  shifted.startX = 18; // el centrado lateral no debe oponerse al giro de recuperacion
+  sim::World jamWorld(corridor, shifted);
+  Jammed io(jamWorld, p, shifted, 1);
+  io.place(2, 0, NORTH);
+  Mouse mouse(io, p);
+  const auto result = mouse.toGoal();
+  if (!result.reachedGoal) for (const auto& event : io.events) printf("JAM %.2f %s\n", event.t, event.text.c_str());
+  CHECK(result.reachedGoal);
+  CHECK(result.recoveries > 0 && io.reversed);
+  CHECK(!mouse.navigator().sensorFault());
+  CHECK(result.totalTime < 30);
+  CHECK(io.contacts() == 0); // rescate en pasillo estrecho sin golpear las paredes
+
+  // Bloqueo durante un pivote: no dar por completados los 90 grados ni salir hacia otra celda.
+  class SpinJammed : public sim::SimPlatform {
+   public:
+    using sim::SimPlatform::SimPlatform;
+    void setMotors(float left, float right) override {
+      const bool jam = time() > 0.09f && time() < 0.70f && left * right < 0;
+      sim::SimPlatform::setMotors(jam ? 0 : left, jam ? 0 : right);
+    }
+  };
+  p.goalX = 1; p.goalY = 0;
+  SpinJammed spin(world, p, ph, 1);
+  spin.place(2, 0, NORTH);
+  Mouse turning(spin, p);
+  const auto turned = turning.toGoal();
+  bool incomplete = false;
+  for (const auto& event : spin.events) incomplete |= event.text.find("GIRO_INCOMPLETO") == 0;
+  if (!turned.reachedGoal) for (const auto& event : spin.events) printf("SPIN %.2f %s\n", event.t, event.text.c_str());
+  CHECK(incomplete && turned.recoveries > 0);
+  CHECK(turned.reachedGoal && spin.cellX() == 1 && spin.cellY() == 0);
+  CHECK(!turning.navigator().sensorFault());
+
+  class Locked : public sim::SimPlatform {
+   public:
+    using sim::SimPlatform::SimPlatform;
+    void setMotors(float, float) override { sim::SimPlatform::setMotors(0, 0); }
+  };
+  p.goalX = 2; p.goalY = 3;
+  Locked locked(world, p, ph, 1);
+  locked.place(2, 0, NORTH);
+  Mouse blocked(locked, p);
+  const auto failure = blocked.toGoal();
+  CHECK(!failure.reachedGoal && failure.recoveries == 3);
+  CHECK(!locked.saved && failure.totalTime < 10);
+  CHECK(!blocked.navigator().sensorFault()); // bloqueo mecanico no se etiqueta como averia de IMU
+}
+
 
 void testAutoCalibration() {
   GyroBiasWindow stable, moving, empty, invalid;
@@ -548,6 +642,7 @@ int main() {
   testFrames();
   testSonda();
   testSensorFaults();
+  testRecoveryAndTiming();
   testAutoCalibration();
   testThreeModes();
   testMissions();

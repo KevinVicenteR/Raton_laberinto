@@ -124,7 +124,7 @@ class Navigator {
   void steer();
   Act actionFor(int dir) const;
   void plan(Brain& brain);
-  enum class Depart { Go, Stop, Fail };
+  enum class Depart { Go, Stop, Retry, Fail };
   Depart depart(Brain& brain, float vmax);
   void centerOnFront(int k);
   float actCenterOdo() const;
@@ -150,7 +150,7 @@ class Navigator {
   Maze& maze_;
   Motion motion_;
   Sensors s_;
-  float t_ = 0;
+  float t_ = 0, tickDt_ = 0.002f;
   float rangeSeen_[3] = {};
   bool rangeLost_[3] = {};
   bool faultReported_ = false;
@@ -198,6 +198,7 @@ class Navigator {
   float pushRefOdo_ = -1e9f;
   int pushRefFront_ = 0;
   bool stalled_ = false;
+  bool recovering_ = false;
   int stalls_ = 0;
   int recoveries_ = 0;
   int recoverCellIdx_ = -1;

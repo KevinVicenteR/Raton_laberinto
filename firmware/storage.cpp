@@ -81,6 +81,7 @@ bool saveParams(const raton::Params& p) { return save("params", kParamsMagic, &p
 bool loadParams(raton::Params& p) {
   raton::Params tmp;
   if (!load("params", kParamsMagic, &tmp, sizeof(tmp)) &&
+      !load("params", kParamsMagic, &tmp, offsetof(raton::Params, precisionMode)) &&
       !load("params", kParamsMagic, &tmp, offsetof(raton::Params, motorBalance))) return false;
   p = tmp;
   return true;

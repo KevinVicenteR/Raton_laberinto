@@ -124,6 +124,7 @@ struct Params {
   float learnedCellRefMm = 0.0f;   // geometria y escala con las que se aprendio
   float learnedWheelDiamMm = 0.0f;
   float learnedCountsPerRev = 0.0f;
+  int precisionMode = 1;  // perfil fisico prudente; 0 habilita las velocidades configuradas
 
 };
 

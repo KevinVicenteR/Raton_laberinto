@@ -66,7 +66,7 @@ El simulador es un modelo: la pista real tiene diferencias. Por eso hay que **ca
 ## Uso rápido
 
 ```bash
-scripts/run.sh pruebas              # compila y pasa las pruebas (364 comprobaciones, incluidas misiones)
+scripts/run.sh pruebas              # compila y pasa las pruebas (378 comprobaciones, incluidas misiones)
 scripts/run.sh sim                  # laberinto del reglamento con detalle y mapa final
 scripts/run.sh sim --random 7 --perturb 2   # aleatorio con errores fisicos
 scripts/run.sh bateria 20           # bateria completa
@@ -84,6 +84,14 @@ bash ./web.sh
 Requiere Node.js y npm. Instala las dependencias si no existe `web/node_modules`, inicia Vite y abre el
 navegador. La terminal indica la dirección disponible (normalmente `http://localhost:5173`); `Ctrl+C` detiene
 el servidor. Puedes pasar opciones: `bash ./web.sh --port 5174`.
+
+### Perfil para comprobar el robot físico
+
+Esta versión arranca con `precisionMode=1`: avance de hasta 300 mm/s, giros en el sitio de hasta 360 °/s,
+aceleración de avance limitada a 1500 mm/s² y de giro a 1800 °/s². Mantiene los tres modos y los parámetros
+previos de pista. Al atascarse intenta retroceder, alinearse y replanificar; un giro incompleto no se da por
+realizado. Tras tres intentos consecutivos sin lograr salir, informa `RECUPERACION_AGOTADA`.
+La pérdida real de sensores y la orden `x` detienen el movimiento. Véase [calibración](docs/calibracion.md).
 
 ### Subir desde VS Code en Windows
 

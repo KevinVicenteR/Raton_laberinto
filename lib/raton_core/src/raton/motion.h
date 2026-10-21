@@ -28,7 +28,7 @@ class Motion {
   void moveTo(float end, float vmax, float vEnd);
   void cruise(float vmax) { moveTo(1e9f, vmax, vmax); }
   void stopAt(float end) { moveTo(end, vmax_, 0); }
-  void setMaxSpeed(float vmax) { vmax_ = vmax; }
+  void setMaxSpeed(float vmax) { vmax_ = p_.precisionMode && vmax > 300 ? 300 : vmax; }
   float endPosition() const { return end_; }
   bool arrived() const { return done_; }
 
@@ -38,6 +38,7 @@ class Motion {
   bool turning() const { return !rotDone_; }
   bool sensorFault() const { return sensorFault_; }
   bool encoderFault() const { return encoderFault_; }
+  bool gyroDisagreement() const { return gyroDisagreement_; }
   // Correccion de rumbo de las paredes (grados) sumada al rumbo objetivo cuando no se gira.
   void setSteer(float deg) { steer_ = deg; }
   float headingTarget() const { return angleTarget_; }
@@ -72,7 +73,8 @@ class Motion {
 
   const Params& p_;
   // Fallo enclavado hasta reset: no reanudar al reaparecer una muestra.
-  bool sensorFault_ = false, encoderFault_ = false;
+  bool sensorFault_ = false, encoderFault_ = false, gyroDisagreement_ = false;
+  float updateT_ = 0, measureT_ = 0, controlDt_ = 0.002f;
   float oppositeT_[2] = {}, previousDuty_[2] = {};
   float lastGyroT_ = 0, gyroProgressT_ = 0, gyroProgress_ = 0, encProgress_ = 0;
   // Medidas
