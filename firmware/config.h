@@ -14,9 +14,9 @@ const uint8_t ADDR_LEFT = 0x30;
 const uint8_t ADDR_FRONT = 0x31;
 const uint8_t ADDR_RIGHT = 0x32;
 const uint8_t ADDR_OLED = 0x3C;
-// Asignacion solicitada. Validar conflictos antes de accionar estos pines.
+// Laterales nuevos confirmados: izquierdo A6, derecho A3. SDA/SCL quedan en A4/A5.
 const int XSHUT_SIDE_LEFT = A6;
-const int XSHUT_SIDE_RIGHT = A4;
+const int XSHUT_SIDE_RIGHT = A3;
 const uint8_t ADDR_SIDE_LEFT = 0x33;
 const uint8_t ADDR_SIDE_RIGHT = 0x34;
 

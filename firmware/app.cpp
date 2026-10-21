@@ -80,7 +80,7 @@ void App::setup() {
   const uint32_t t0 = millis();
   while (millis() - t0 < 300) service();  // margen para que laseres, IMU y OLED se enciendan
   if (pins::sidePinsConflict())
-    reply("CONFIG_LATERALES_CONFLICTO: XSHUT derecho A4=SDA; derecho inactivo");
+    reply("CONFIG_LATERALES_CONFLICTO: XSHUT en pin ocupado");
   Wire.begin();
   Wire.setClock(400000);
   display_.begin();

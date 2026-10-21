@@ -62,14 +62,11 @@ Esta actualización conserva la configuración flash del formato anterior y aña
 ## Dos laterales opcionales a 90 grados
 
 Se conservan el frontal y los dos diagonales con su montaje y pines actuales. Los nuevos VL53L0X se leen
-como `sideLeft`/`sideRight` y no sustituyen los diagonales. El usuario asigno `XSHUT_SIDE_LEFT=A6` y `XSHUT_SIDE_RIGHT=A4` en `firmware/config.h`.
-El izquierdo en A6 no comparte pin con los originales; el derecho en A4 entra en conflicto con SDA. La comprobacion
-`sidePinsConflict()` impide accionar el XSHUT derecho en conflicto y muestra `CONFIG_LATERALES_CONFLICTO`.
-Aunque compile, **esta asignacion no habilita el funcionamiento de cinco sensores**. Si los modulos
-ya estan conectados compartiendo esos cables, tampoco se garantiza que los originales inicialicen:
-el software no puede convertir la misma conexion fisica en SDA y XSHUT independientes. Se necesita resolver
-el conflicto de cableado antes de usar los cinco. La comprobacion tambien admite `-1` para omitir
-sensores nuevos o pines libres cuando se acuerde la asignacion definitiva.
+como `sideLeft`/`sideRight` y no sustituyen los diagonales. Asignacion confirmada en `firmware/config.h`: `XSHUT_SIDE_LEFT=A6` y `XSHUT_SIDE_RIGHT=A3`.
+El usuario movio el XSHUT derecho de A4 a A3; A4 queda exclusivamente como SDA.
+Los XSHUT originales siguen en A0/A1/A2. SDA de los cinco sensores comparte A4 y SCL comparte A5.
+`sidePinsConflict()` comprueba que los XSHUT nuevos no compartan el bus ni otros pines ocupados;
+`-1` permite omitir un sensor adicional si se retira del montaje.
 **No conectar los nuevos al bus sin tener controlados sus XSHUT**: todos arrancan en 0x29 y pueden
 interferir con los sensores originales. Una vez asignados los pines, se inicializan individualmente con
 las direcciones 0x33 y 0x34. Revisar que los pines elegidos no tengan otra funcion.
@@ -128,7 +125,6 @@ cambien al mover la superficie. `CONFLICTO_PIN` indica que no se intenta control
 
 La prueba tambien se admite en el bucle de error de arranque, manteniendo los motores sin movimiento;
 asi se pueden inspeccionar los sensores que si inicializaron aunque falle otro o la IMU. Un sensor
-sin inicializar no se da por probado. Con la asignacion solicitada A6 izquierdo/A4 derecho se puede
-intentar inicializar el izquierdo sin accionar el XSHUT derecho, pero el cable fisico compartido entre
-SDA y XSHUT derecho puede impedir la comunicacion del bus completo. No se elimina esa limitacion con
-la prueba ni se presenta como una solucion de cableado.
+sin inicializar no se da por probado. Con la asignacion confirmada A6 izquierdo/A3 derecho, la prueba intenta medir los cinco sensores.
+Comprobar que ambos nuevos reporten `LECTURAS_VALIDAS` y que sus medidas cambien al acercar una pared.
+El montaje y los offsets deben medirse antes de activar el control lateral con `set sideEnabled 1` y `save`.
