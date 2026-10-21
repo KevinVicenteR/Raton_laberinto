@@ -20,7 +20,7 @@ class App {
   void service();
 
  private:
-  enum Mode { EXPLORE = 1, MAP, RACE, kModes = RACE, kCalibrate = 20, kSensors = 21 };
+  enum Mode { EXPLORE = 1, MAP, RACE, kModes = RACE, kCalibrate = 20, kSensors = 21, kSensorTest = 22 };
   void fail(const char* msg);
   int menu();
   bool armStart();
@@ -29,6 +29,9 @@ class App {
   void command(char* line);
   void reply(const char* line);
   void sensorsMode();
+  void sensorTest();
+  bool startupFailed_ = false;
+  bool sensorTestRunning_ = false;
   void practiceRun();
   void saveLearned();
   void motorCalibration();

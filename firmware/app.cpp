@@ -48,6 +48,7 @@ App::App()
 }
 
 void App::fail(const char* msg) {
+  startupFailed_ = true;
   // Sin parar el Bluetooth: la web sigue conectada y ve el error (y puede reiniciar la placa con R).
   motors_.coast();
   busy_ = true;
@@ -79,7 +80,7 @@ void App::setup() {
   const uint32_t t0 = millis();
   while (millis() - t0 < 300) service();  // margen para que laseres, IMU y OLED se enciendan
   if (pins::sidePinsConflict())
-    reply("CONFIG_LATERALES_CONFLICTO: A4=SDA, A0=diagonal; nuevos inactivos");
+    reply("CONFIG_LATERALES_CONFLICTO: XSHUT derecho A4=SDA; derecho inactivo");
   Wire.begin();
   Wire.setClock(400000);
   display_.begin();
@@ -187,6 +188,11 @@ void App::command(char* cmd) {
     reply("REINICIO");
     telemetry::flush(300);
     NVIC_SystemReset();
+  }
+  // Prueba sin movimiento disponible tambien si fallo el arranque del hardware.
+  if (startupFailed_ && !strcmp(cmd, "pruebasensores")) {
+    sensorTest();
+    return;
   }
   if (busy_) {
     reply("OCUPADO (x = parar)");
@@ -310,6 +316,12 @@ void App::command(char* cmd) {
     calibrateFront();
     return;
   }
+  if (!strcmp(cmd, "pruebasensores")) {
+    requestedMode_ = kSensorTest;
+    startRequested_ = true;
+    reply("PRUEBA_SENSORES: 8 s sin movimiento; acercar una pared a cada lente");
+    return;
+  }
   if (!strcmp(cmd, "sensores")) {
     requestedMode_ = kSensors;
     startRequested_ = true;
@@ -341,7 +353,7 @@ void App::command(char* cmd) {
   }
   snprintf(out, sizeof(out), "? orden desconocida: %s", cmd);
   reply(out);
-  reply("ordenes: 1 2 3 s s<1-3> x m<n> sensores G<x>,<y> set <p> <v> get <p> params save defaults map erase calsonda calfront calside <mm> estado R");
+  reply("ordenes: 1 2 3 s s<1-3> x m<n> sensores pruebasensores G<x>,<y> set <p> <v> get <p> params save defaults map erase calsonda calfront calside <mm> estado R");
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -484,6 +496,9 @@ void App::runMode(int mode) {
     case kSensors:
       sensorsMode();
       break;
+    case kSensorTest:
+      sensorTest();
+      break;
     case kCalibrate: {
       if (!armStart()) break;
       const float corridor = mouse_.calibrateSensors(params_, true);
@@ -590,6 +605,60 @@ void App::saveLearned() {
            static_cast<int>(params_.startBoostLR * 1000), static_cast<int>(params_.startBoostRF * 1000),
            static_cast<int>(params_.startBoostRR * 1000), static_cast<int>(params_.learnedCellMm * 10));
   reply(out);
+}
+
+void App::sensorTest() {
+  if (sensorTestRunning_) { reply("PRUEBA_EN_CURSO"); return; }
+  sensorTestRunning_ = true;
+  motors_.coast();
+  board_.clearStop();
+  // Usar Lasers directamente: no depender de que IMU/encoders terminaran el arranque.
+  struct Stats { int n = 0, valid = 0, min = 32767, max = -1, last = -1; } stats[5];
+  const char* names[5] = {"diagonal_izq", "frontal", "diagonal_der", "lateral_izq", "lateral_der"};
+  const int pinsUsed[5] = {pins::XSHUT_LEFT, pins::XSHUT_FRONT, pins::XSHUT_RIGHT,
+                           pins::XSHUT_SIDE_LEFT, pins::XSHUT_SIDE_RIGHT};
+  reply("PRUEBA_INICIO: 8 s; sin movimiento; x interrumpe");
+  const uint32_t start = millis();
+  uint32_t reportAt = start;
+  while (millis() - start < 8000 && !board_.stopRequested()) {
+    service();
+    for (int i = 0; i < 5; ++i) {
+      int mm;
+      if (!lasers_.poll(i, mm)) continue;
+      Stats& st = stats[i];
+      ++st.n; st.last = mm;
+      if (mm >= 0) {
+        ++st.valid;
+        if (mm < st.min) st.min = mm;
+        if (mm > st.max) st.max = mm;
+      }
+    }
+    if (millis() - reportAt >= 500) {
+      reportAt = millis();
+      char line[96];
+      snprintf(line, sizeof(line), "PRUEBA_MM DI=%d F=%d DD=%d LI=%d LD=%d",
+               stats[0].last, stats[1].last, stats[2].last, stats[3].last, stats[4].last);
+      telemetry::println(line, false);
+      if (Serial) Serial.println(line);
+    }
+    delay(5);
+  }
+  for (int i = 0; i < 5; ++i) {
+    const Stats& st = stats[i];
+    const bool conflict = i >= 3 && pins::sidePinConflict(pinsUsed[i], pinsUsed[i == 3 ? 4 : 3]);
+    const char* state = conflict ? "CONFLICTO_PIN" : (!lasers_.ok(i) ? "NO_INICIALIZADO" :
+                         (st.n == 0 ? "SIN_RESPUESTA" : (st.valid == 0 ? "RESPONDE_SIN_DISTANCIA" : "LECTURAS_VALIDAS")));
+    char line[180], pinLabel[8];
+    if (pinsUsed[i] >= A0 && pinsUsed[i] <= A7) snprintf(pinLabel, sizeof(pinLabel), "A%d", pinsUsed[i] - A0);
+    else snprintf(pinLabel, sizeof(pinLabel), "D%d", pinsUsed[i]);
+    snprintf(line, sizeof(line), "PRUEBA_SENSOR %s pin=%s %s nuevas=%d validas=%d invalidas=%d min=%d max=%d",
+             names[i], pinLabel, state, st.n, st.valid, st.n - st.valid,
+             st.valid ? st.min : -1, st.max);
+    reply(line);
+  }
+  reply(board_.stopRequested() ? "PRUEBA_FIN interrumpida" : "PRUEBA_FIN");
+  motors_.coast();
+  sensorTestRunning_ = false;
 }
 
 void App::sensorsMode() {

@@ -15,7 +15,7 @@ const uint8_t ADDR_FRONT = 0x31;
 const uint8_t ADDR_RIGHT = 0x32;
 const uint8_t ADDR_OLED = 0x3C;
 // Asignacion solicitada. Validar conflictos antes de accionar estos pines.
-const int XSHUT_SIDE_LEFT = A0;
+const int XSHUT_SIDE_LEFT = A6;
 const int XSHUT_SIDE_RIGHT = A4;
 const uint8_t ADDR_SIDE_LEFT = 0x33;
 const uint8_t ADDR_SIDE_RIGHT = 0x34;
@@ -38,10 +38,12 @@ constexpr bool occupied(int pin) {
          pin == AIN1 || pin == AIN2 || pin == BIN1 || pin == BIN2 || pin == ENC_LEFT_A ||
          pin == ENC_LEFT_B || pin == ENC_RIGHT_A || pin == ENC_RIGHT_B || pin == LED_BUILTIN;
 }
+constexpr bool sidePinConflict(int pin, int other) {
+  return pin >= 0 && (occupied(pin) || pin == other);
+}
 constexpr bool sidePinsConflict() {
-  return (XSHUT_SIDE_LEFT >= 0 && occupied(XSHUT_SIDE_LEFT)) ||
-         (XSHUT_SIDE_RIGHT >= 0 && occupied(XSHUT_SIDE_RIGHT)) ||
-         (XSHUT_SIDE_LEFT >= 0 && XSHUT_SIDE_LEFT == XSHUT_SIDE_RIGHT);
+  return sidePinConflict(XSHUT_SIDE_LEFT, XSHUT_SIDE_RIGHT) ||
+         sidePinConflict(XSHUT_SIDE_RIGHT, XSHUT_SIDE_LEFT);
 }
 
 }  // namespace pins

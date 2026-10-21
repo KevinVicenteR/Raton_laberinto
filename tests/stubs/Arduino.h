@@ -6,7 +6,7 @@
 #include <string.h>
 #include <math.h>
 enum { INPUT, OUTPUT, INPUT_PULLUP, LOW = 0, HIGH = 1, CHANGE = 2 };
-enum { A0 = 14, A1, A2, A3, A4, A5, LED_BUILTIN = 13 };
+enum { A0 = 14, A1, A2, A3, A4, A5, A6, A7, LED_BUILTIN = 13 };
 enum PinName { P0_0 = 0 };
 inline void pinMode(int, int) {}
 inline void digitalWrite(int, int) {}

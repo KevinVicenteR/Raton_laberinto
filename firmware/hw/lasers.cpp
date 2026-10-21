@@ -8,7 +8,7 @@ const int kXshut[Lasers::COUNT] = {pins::XSHUT_LEFT, pins::XSHUT_FRONT, pins::XS
 const uint8_t kAddr[Lasers::COUNT] = {pins::ADDR_LEFT, pins::ADDR_FRONT, pins::ADDR_RIGHT,
                                          pins::ADDR_SIDE_LEFT, pins::ADDR_SIDE_RIGHT};
 bool configured(int i) {
-  return kXshut[i] >= 0 && (i < 3 || !pins::sidePinsConflict());
+  return kXshut[i] >= 0 && (i < 3 || !pins::sidePinConflict(kXshut[i], kXshut[i == 3 ? 4 : 3]));
 }
 }  // namespace
 

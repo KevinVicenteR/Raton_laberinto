@@ -62,12 +62,12 @@ Esta actualización conserva la configuración flash del formato anterior y aña
 ## Dos laterales opcionales a 90 grados
 
 Se conservan el frontal y los dos diagonales con su montaje y pines actuales. Los nuevos VL53L0X se leen
-como `sideLeft`/`sideRight` y no sustituyen los diagonales. El usuario asigno `XSHUT_SIDE_LEFT=A0` y `XSHUT_SIDE_RIGHT=A4` en `firmware/config.h`.
-Esta asignacion entra en conflicto con el diagonal izquierdo (A0) y SDA (A4). La comprobacion
-`sidePinsConflict()` impide accionar los XSHUT nuevos y muestra `CONFIG_LATERALES_CONFLICTO`.
+como `sideLeft`/`sideRight` y no sustituyen los diagonales. El usuario asigno `XSHUT_SIDE_LEFT=A6` y `XSHUT_SIDE_RIGHT=A4` en `firmware/config.h`.
+El izquierdo en A6 no comparte pin con los originales; el derecho en A4 entra en conflicto con SDA. La comprobacion
+`sidePinsConflict()` impide accionar el XSHUT derecho en conflicto y muestra `CONFIG_LATERALES_CONFLICTO`.
 Aunque compile, **esta asignacion no habilita el funcionamiento de cinco sensores**. Si los modulos
 ya estan conectados compartiendo esos cables, tampoco se garantiza que los originales inicialicen:
-el software no puede separar dos dispositivos cuyo XSHUT esta fisicamente unido. Se necesita resolver
+el software no puede convertir la misma conexion fisica en SDA y XSHUT independientes. Se necesita resolver
 el conflicto de cableado antes de usar los cinco. La comprobacion tambien admite `-1` para omitir
 sensores nuevos o pines libres cuando se acuerde la asignacion definitiva.
 **No conectar los nuevos al bus sin tener controlados sus XSHUT**: todos arrancan en 0x29 y pueden
@@ -115,3 +115,20 @@ sensores: 81 completadas, 80 sin contacto, 8 contactos y 4 aristas mal clasifica
 con tres sensores: 81 completadas, 79 sin contacto, 6 contactos y 6 aristas mal clasificadas. La mejora
 no es uniforme: algunos indicadores mejoran y otros no; falta medir el montaje real. Las misiones de
 prueba con ausencia de los dos nuevos y con perdida de sus lecturas completan exploracion y carrera.
+
+
+### Prueba fisica de los cinco sensores sin movimiento
+
+Enviar `pruebasensores` desde la web o por Serie. Durante ocho segundos acerca una superficie a cada
+lente (por ejemplo a 5 y 10 cm); se imprimen `PRUEBA_MM` y cinco resumenes `PRUEBA_SENSOR` con pin,
+estado, muestras nuevas, validas, invalidas y rango minimo/maximo. `x` interrumpe. No modifica offsets,
+mapas ni el modelo de motores. Las distancias de esta prueba son crudas, sin offsets guardados.
+`LECTURAS_VALIDAS` confirma respuestas validas, no certifica precision: comprobar que las distancias
+cambien al mover la superficie. `CONFLICTO_PIN` indica que no se intenta controlar ese XSHUT.
+
+La prueba tambien se admite en el bucle de error de arranque, manteniendo los motores sin movimiento;
+asi se pueden inspeccionar los sensores que si inicializaron aunque falle otro o la IMU. Un sensor
+sin inicializar no se da por probado. Con la asignacion solicitada A6 izquierdo/A4 derecho se puede
+intentar inicializar el izquierdo sin accionar el XSHUT derecho, pero el cable fisico compartido entre
+SDA y XSHUT derecho puede impedir la comunicacion del bus completo. No se elimina esa limitacion con
+la prueba ni se presenta como una solucion de cableado.
