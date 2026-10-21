@@ -654,6 +654,87 @@ void testSideSensors() {
   }
 }
 
+// Todos los estados locales (pared/abierto/desconocido), vistos con los cuatro rumbos.
+// Una cruz o una T no debe convertir las dos salidas laterales en una sola opcion.
+void testIntersectionChoices() {
+  for (int pattern = 0; pattern < 81; ++pattern) {
+    Maze maze; maze.reset(3, 3, true);
+    for (int y = 0; y < 3; ++y)
+      for (int x = 0; x < 3; ++x)
+        for (int d = 0; d < 4; ++d) maze.set(x, y, static_cast<Dir>(d), Wall::Closed);
+    int code = pattern;
+    for (int d = 0; d < 4; ++d, code /= 3)
+      maze.set(1, 1, static_cast<Dir>(d), static_cast<Wall>(code % 3));
+    for (int heading = 0; heading < 4; ++heading) {
+      for (int target = 0; target < 4; ++target) {
+        const Dir d = static_cast<Dir>(target);
+        CellSet goals; goals.add(maze.index(1 + dx(d), 1 + dy(d)));
+        for (bool optimistic : {false, true}) {
+          uint16_t dist[Maze::kMax * Maze::kMax];
+          flood(maze, goals, optimistic, dist);
+          const bool allowed = maze.passable(1, 1, d, optimistic);
+          const auto h = static_cast<Dir>(heading);
+          CHECK(nextStep(maze, 1, 1, h, dist, optimistic) == (allowed ? target : -1));
+          Route route;
+          bestRoute(maze, 1, 1, h, goals, optimistic, 8, route);
+          CHECK(route.ok == allowed);
+          if (allowed) CHECK(route.length == 1 && route.steps[0] == d);
+        }
+      }
+    }
+  }
+  // Dos aperturas simultaneas: confirmar una no consume ni reinicia la otra.
+  Params p; p.sideEnabled = 1;
+  for (int heading = 0; heading < 4; ++heading) {
+    Maze maze; maze.reset(3, 3, true);
+    SideEvidence evidence[2];
+    for (int sample = 0; sample < 3; ++sample) {
+      for (int side = 0; side < 2; ++side) {
+        Range r; r.fresh = true; r.mm = side == 0 ? 150 : 200;
+        const auto o = sideObservation(p, r, side == 0 ? 1 : -1, 71.5f, 0, 0, 0, 0, 0);
+        CHECK(o.usable && o.wall == -1);
+        if (evidence[side].accept(o, r.mm, 0.02f * (sample + 1), heading))
+          maze.observe(1, 1, side == 0 ? turnLeft(static_cast<Dir>(heading)) : turnRight(static_cast<Dir>(heading)), false);
+      }
+    }
+    CHECK(maze.wall(1, 1, turnLeft(static_cast<Dir>(heading))) == Wall::Open);
+    CHECK(maze.wall(1, 1, turnRight(static_cast<Dir>(heading))) == Wall::Open);
+    // Perder una muestra izquierda no elimina la apertura derecha confirmada.
+    SideObservation lost;
+    CHECK(!evidence[0].accept(lost, -1, 0.08f, heading));
+    CHECK(maze.wall(1, 1, turnRight(static_cast<Dir>(heading))) == Wall::Open);
+  }
+}
+
+// Recorrido fisico simulado: la rama elegida no debe hacer olvidar la opuesta.
+void testMappingBothBranches() {
+  for (bool cross : {false, true}) {
+    Params p; p.sideEnabled = 1;
+    p.mazeW = p.mazeH = 5;
+    p.startX = 2; p.startY = 0; p.startDir = NORTH;
+    p.goalX = 4; p.goalY = 2; p.goalW = p.goalH = 1;
+    Maze truth; truth.reset(5, 5, true);
+    for (int y = 0; y < 5; ++y)
+      for (int x = 0; x < 5; ++x)
+        for (int d = 0; d < 4; ++d) truth.set(x, y, static_cast<Dir>(d), Wall::Closed);
+    for (int y = 0; y < (cross ? 4 : 2); ++y) truth.set(2, y, NORTH, Wall::Open);
+    for (int x = 0; x < 4; ++x) truth.set(x, 2, EAST, Wall::Open);
+    const auto ph = sim::perturbed(p, 0, 1);
+    sim::World world(truth, ph);
+    sim::SimPlatform io(world, p, ph, 1);
+    io.place(2, 0, NORTH);
+    Mouse mouse(io, p);
+    const auto mapped = mouse.mapAll();
+    CHECK(mapped.exploredAll && mapped.backHome && io.saved);
+    CHECK(mouse.maze().visited(0, 2) && mouse.maze().visited(4, 2));
+    CHECK(mouse.maze().wall(2, 2, WEST) == Wall::Open);
+    CHECK(mouse.maze().wall(2, 2, EAST) == Wall::Open);
+    if (cross) CHECK(mouse.maze().visited(2, 4));
+    io.place(2, 0, NORTH);
+    CHECK(mouse.solveLearned().reachedGoal);
+  }
+}
+
 void testMissions() {
   Params p;
   Maze truth;
@@ -709,6 +790,8 @@ int main() {
   testAutoCalibration();
   testThreeModes();
   testSideSensors();
+  testIntersectionChoices();
+  testMappingBothBranches();
   testMissions();
   testPractice();
   printf("%d comprobaciones, %d fallos\n", checks, failures);

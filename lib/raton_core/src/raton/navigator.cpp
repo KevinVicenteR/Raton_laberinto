@@ -403,6 +403,8 @@ void Navigator::senseSides() {
     for (auto& evidence : sideEvidence_) evidence = SideEvidence();
     return;
   }
+  // Evidencia independiente: una T o una cruz puede abrir ambos lados en el mismo ciclo.
+  // No usar else-if ni dar prioridad a un lateral al registrar las salidas.
   const Range* ranges[2] = {&s_.sideLeft, &s_.sideRight};
   for (int i = 0; i < 2; ++i) {
     const Range& r = *ranges[i];

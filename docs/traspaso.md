@@ -251,3 +251,23 @@ La compilación Nano con PlatformIO vuelve a quedar bloqueada descargando framew
 no atribuir a esta entrega una compilación real completada. No hay puerto serie conectado: faltan carga,
 prueba física de cinco canales y medición de montaje. Sigue pendiente el caso extremo con sensores
 bajos 1046 registrado antes.
+
+
+## Cruces y dos salidas laterales simultáneas
+
+Los dos canales de 90° mantienen evidencia independiente, sin else-if entre izquierda y derecha.
+Confirmar una apertura no borra la otra. En una T, cruz o bifurcación se conserva cada borde del mapa;
+el planificador compara las cuatro direcciones, incluida la vuelta cuando corresponde. Un dato
+desconocido puede ser candidato durante exploración, pero no habilita una ruta aprendida como abierta.
+Una lectura inválida o repetida no confirma una apertura. En mapeo completo, las ramas alcanzables
+siguen siendo objetivos aunque primero se elija el otro lado. En modo meta no se exige visitar todas
+las ramas antes de llegar: ese cometido corresponde al modo de mapeo.
+
+Se añaden regresiones exhaustivas de los 81 estados locales (abierto/cerrado/desconocido en cuatro
+direcciones) con cuatro rumbos: 324 configuraciones, cada una con objetivos en los cuatro vecinos,
+exploración optimista y rutas conocidas. Se comprueba que ambas salidas simultáneas sobreviven a
+la pérdida de una lectura lateral. Se añaden dos misiones físicas simuladas, T y cruz, con sensores
+laterales activos: mapear ambos extremos laterales, volver, guardar y resolver el mapa aprendido.
+El cambio no modifica las ganancias, calibración, temporización ni decisiones del control probado.
+
+Validación: 6939 comprobaciones del núcleo, 0 fallos, incluyendo las dos misiones de cruces.
