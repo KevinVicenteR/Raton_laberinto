@@ -15,7 +15,7 @@ export function useTelemetry() {
   const [queue] = useState(() => new CommandQueue(transport));
   const replay = useRef(false);
   const start = useRef(performance.now());
-  const settings = useRef({ mode: 1, supervisor: false, learn: true, speed: 100, range: 300 });
+  const settings = useRef({ mode: 1, supervisor: false, learn: true, speed: 100, range: 600 });
   const supervisor = useRef(initialSupervisor());
 
   useEffect(() => {
@@ -23,6 +23,10 @@ export function useTelemetry() {
       setConnected(on);
       setName(deviceName);
       if (!on) queue.cancel();
+      else {
+        setError('');
+        void queue.send('sync');
+      }
     };
     transport.onError = setError;
     transport.onLine = (line) => {
@@ -49,9 +53,17 @@ export function useTelemetry() {
       }
       setTick((n) => n + 1);
     };
+    const restore = () => {
+      if (!replay.current && document.visibilityState !== 'hidden') void transport.autoConnect();
+    };
+    restore();
+    const timer = setInterval(restore, 15000);
+    document.addEventListener('visibilitychange', restore);
     return () => {
+      clearInterval(timer);
+      document.removeEventListener('visibilitychange', restore);
       queue.cancel();
-      transport.disconnect();
+      transport.dispose();
     };
   }, [queue, transport]);
 

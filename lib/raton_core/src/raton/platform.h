@@ -34,6 +34,8 @@ class Platform {
   virtual void report(const char* line, bool important) = 0;
   // Orden externa de parar (Bluetooth 'x').
   virtual bool stopRequested() { return false; }
+  // Called only with motors at zero. Reset one VL53L0X, never the whole bus/IMU.
+  virtual bool recoverRange(int sensor) { (void)sensor; return false; }
   // Guarda el mapa (se llama al llegar a la meta y al volver). Devuelve true si se guardo.
   virtual bool saveMap(const Maze& maze) {
     (void)maze;
@@ -42,3 +44,4 @@ class Platform {
 };
 
 }  // namespace raton
+

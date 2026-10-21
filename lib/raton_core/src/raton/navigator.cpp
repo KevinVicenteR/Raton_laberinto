@@ -40,7 +40,7 @@ void Navigator::computeSmoothGeometry() {
   // centro y la curva se puede tomar mas deprisa con los mismos motores. Que empiece y acabe dentro de media
   // celda, para poder enlazar dos curvas seguidas sin parar.
   const float half = 0.5f * cell_, hw = 0.5f * p_.wallMm;
-  const float need = 0.5f * p_.bodyDiamMm + 8.0f;  // radio del raton + margen
+  const float need = (autonomous_ ? bodyEnvelope(p_) : 0.5f * p_.bodyDiamMm) + 8.0f;
   const float ramp = 12.0f;
   float bestT = 1e9f, bestR = -1, bestX = 0, bestY = 0, bestS = 0;
   float firstR = -1, firstX = 0, firstY = 0, firstS = 0;  // la mas cerrada que cabe (como antes)
@@ -114,6 +114,14 @@ void Navigator::computeSmoothGeometry() {
 }
 
 void Navigator::begin(int x, int y, Dir h) {
+  io_.report("FIRMWARE autonomia-v3", true);
+  repairAttempts_ = 0;
+  steerCommand_ = 0;
+  lastHealthReport_ = -1;
+  dampingUntil_=0;oscillationCount_=collisionCount_=0;
+  oscillation_=OscillationWatch();progress_=ProgressWatch();lastExternalProgress_=-1e9f;
+  for(auto& b:confirmedCells_)b=0;
+  for (auto& health : health_) health = RangeWatch();
   cx_ = x;
   cy_ = y;
   h_ = h;
@@ -192,6 +200,12 @@ float Navigator::frontStopReading() const {
 }
 
 void Navigator::filterSensors() {
+  if (autonomous_) {
+    Range* all[5] = {&s_.left, &s_.front, &s_.right, &s_.sideLeft, &s_.sideRight};
+    for (int i = 0; i < 5; ++i) if (health_[i].suspect) {
+      all[i]->mm = -1; all[i]->fresh = false;
+    }
+  }
   Range* sides[2] = {&s_.sideLeft, &s_.sideRight};
   for (int i = 0; i < 2; ++i) {
     if (sides[i]->fresh) sideSeen_[i] = t_;
@@ -224,6 +238,7 @@ void Navigator::filterSensors() {
 }
 
 void Navigator::setMotorsFromMotion() {
+  if (io_.stopRequested()) { io_.setMotors(0, 0); return; }
   float l, r;
   if (rangeFault_) {
     io_.setMotors(0, 0);
@@ -274,7 +289,7 @@ void Navigator::tick() {
   if (sensorFault()) return;
   const bool straight = !motion_.turning();
   if (straight) {
-    if (!recovering_) {
+    if (!recovering_ && !trajectory_) {
       while (cellPos() > 0.5f * cell_) enterNextCell();
       sense();
       steer();
@@ -297,7 +312,8 @@ void Navigator::tick() {
            motion_.angle(), motion_.idealAngle(), gridAngle_, lateral_.y(), latAge_, cellPos(), motion_.speed(),
            motion_.measuredSpeed(), motion_.angularRate(), motion_.measuredRate(), (int)act_, (int)decided_);
 #endif
-  report();
+  if (!trajectory_) report();
+  if (autonomous_) diagnose();
 }
 
 void Navigator::enterNextCell() {
@@ -306,6 +322,10 @@ void Navigator::enterNextCell() {
   cx_ += dx(h_);
   cy_ += dy(h_);
   maze_.markVisited(cx_, cy_);
+  if(autonomous_ && lateral_.varY()<36 && longVar_<64 && t_-lastExternalProgress_<0.3f) {
+    const int idx=maze_.index(cx_,cy_);
+    if(maze_.inside(cx_,cy_))confirmedCells_[idx>>3]|=1<<(idx&7);
+  }
   // Lo que se decidio para "la celda siguiente" es ahora la actual: si era seguir recto hay que decidir
   // la siguiente; si era parar o girar se ejecuta aqui.
   if (act_ == Act::Forward) {
@@ -379,6 +399,15 @@ void Navigator::sense() {
       if (b.near >= 2 && t_ - b.lastValidT < 0.06f) mm = b.lastValidMm;
     }
     if (i == 1) frontCheck(mm);
+    if(autonomous_ && i==1)progress_.corroborated=false;
+    if(autonomous_ && i==1 && !recovering_ && !trajectory_ && !motion_.turning() &&
+        fabsf(headingError())<4 && motion_.speed()>40 &&
+        progress_.observe(maze_.index(cx_,cy_)*4+int(h_),r,motion_.position(),t_,
+                          frontSeesWall(0,mm)||frontSeesWall(1,mm))) {
+      ++collisionCount_;stalled_=true;
+      io_.report("AUTO phase=COLISION reason=ENCODER_AVANZA_DISTANCIA_NO",true);
+    }
+    if(autonomous_ && i==1 && progress_.corroborated)lastExternalProgress_=t_;
     // Girando (o acabando de girar) la lectura es de otro rumbo: con 12 ms de retraso, a 100 grados/s ya
     // son mas de 1 grado.
     if (fabsf(headingError()) > 8.0f || fabsf(motion_.measuredRate()) > 40.0f) continue;
@@ -458,6 +487,19 @@ void Navigator::radar(int sensor, int mm) {
   // adelante o a la izquierda. Sirve para la tolerancia del mapa y para corregir la pose.
   float floor0 = 0;  // duda por el piso de la prediccion con el mapa de ahora
   const float h0 = sonda_.predict(maze_, scan_, nullptr, floor0);
+  if (autonomous_) {
+    health_[sensor].observe(Range{mm, true}, t_, h0,
+        !recovering_ && !trajectory_ && fabsf(headingError()) < 3 &&
+        lateral_.varY() < 36 && longVar_ < 100 &&
+        confident(scan_, mm >= 0 ? mm + 40.0f : 0));
+    if (health_[sensor].suspect) {
+      char diagnostic[80];
+      snprintf(diagnostic, sizeof(diagnostic), "AUTO phase=DIAGNOSTICO reason=LECTURA_CONGELADA sensor=%d", sensor);
+      io_.report(diagnostic, true);
+      if (sensor == 1) { rangeFault_ = true; io_.setMotors(0, 0); }
+      return;
+    }
+  }
   float hx = 0, hy = 0;
   bool slopes = h0 >= 0;
   if (slopes) {
@@ -541,7 +583,7 @@ void Navigator::radar(int sensor, int mm) {
     allOpen &= ~mask;
   }
   // Ninguna explica la lectura: la pose esta mal, no se vota (abajo puede corregirse con lo confirmado).
-  if (good > 0 && good < (1 << nc)) {
+  if (good > 0 && good < (1 << nc) && (!autonomous_ || t_ >= mapResumeAt_)) {
     for (int k = 0; k < nc; ++k) {
       if (candT[k] > voteReach) break;
 #ifdef RATON_DEBUG
@@ -759,11 +801,24 @@ void Navigator::startStraight() {
 
 void Navigator::steer() {
   const float psiDeg = headingError();
+  if(autonomous_ && oscillation_.observe(psiDeg,t_,fabsf(motion_.speed())>40 && !recovering_)) {
+    ++oscillationCount_;dampingUntil_=t_+6;
+    io_.report("AUTO phase=AUTOCORRECCION reason=OSCILACION_REDUCIR_GANANCIA_Y_VELOCIDAD",true);
+  }
   if (latAge_ < 0.3f && fabsf(motion_.speed()) > 30.0f) {
     const float target = clampf(-p_.kSteer * lateral_.y(), -p_.steerMaxDeg, p_.steerMaxDeg);
     (void)psiDeg;
-    motion_.setSteer(target - p_.steerRateGain * motion_.measuredSpeed() * sinf(psiDeg / kDeg));
+    float command = target - p_.steerRateGain * motion_.measuredSpeed() * sinf(psiDeg / kDeg);
+    if (autonomous_) {
+      const float confidence = clampf(36.0f / (36.0f + lateral_.varY()), 0.25f, 1.0f);
+      command *= confidence;
+      if(t_<dampingUntil_){command*=0.5f;motion_.setMaxSpeed(150);}
+      steerCommand_ += clampf(command - steerCommand_, -45.0f * tickDt_, 45.0f * tickDt_);
+      command = steerCommand_;
+    }
+    motion_.setSteer(command);
   } else {
+    steerCommand_ = 0;
     motion_.setSteer(0);
   }
 }
@@ -811,6 +866,11 @@ void Navigator::checkStall() {
 void Navigator::report() {
   if (t_ - lastReport_ < 0.1f) return;
   lastReport_ = t_;
+  {
+    char cellLine[64];
+    snprintf(cellLine,sizeof(cellLine),"CELL x=%d y=%d w=%d",cx_-p_.startX+20,cy_-p_.startY+20,maze_.wallMask(cx_,cy_));
+    io_.report(cellLine,false);
+  }
   // Pose estimada en el marco del laberinto: x, y = eje en mm (x este, y norte, desde la esquina de la celda
   // 0,0), a = rumbo de brujula (grados, 0 = norte, + = izquierda), P = paso de celda x10, H = rumbo x10
   // (0 = este), G = 1 en tramo recto.
@@ -854,6 +914,14 @@ void Navigator::plan(Brain& brain) {
     return;
   }
   const int dir = brain.decide(nx, ny, h_);
+  if (autonomous_) {
+    char line[100];
+    snprintf(line, sizeof(line), "AUTO phase=PLAN reason=RUTA_ACTUAL x=%d y=%d pick=%d", nx, ny, dir);
+    io_.report(line, true);
+    const bool known = maze_.fullyKnown(nx, ny) && maze_.visited(nx, ny);
+    vmax_ = autonomySpeed(requestedVmax_, known, sqrtf(lateral_.varY()), headingError(),
+        3 - rangeLost_[0] - rangeLost_[1] - rangeLost_[2], recoverCount_ > 0);
+  }
   act_ = actionFor(dir);
   nextDir_ = dir;
   actX_ = nx;
@@ -871,13 +939,14 @@ void Navigator::plan(Brain& brain) {
     if (k >= 0) {
       planX_ = nx + (k + 1) * dx(h_);
       planY_ = ny + (k + 1) * dy(h_);
-      planArc_ = smooth_ && smoothOk_;
+      planArc_ = smooth_ && smoothOk_ && !autonomous_;
       planVEnd_ = planArc_ ? arcSpeed() : 0.0f;
     } else {
       planActive_ = false;
       motion_.cruise(cruiseSpeed(nx, ny));
     }
   } else if ((act_ == Act::Left || act_ == Act::Right) && smooth_ && smoothOk_ &&
+             (!autonomous_ || safeCurve(nx, ny, h_, static_cast<Dir>(dir))) &&
              motion_.position() < cCenter - smoothDf_ - 5.0f) {
     planArc_ = true;
     planVEnd_ = arcSpeed();
@@ -890,6 +959,13 @@ void Navigator::plan(Brain& brain) {
 }
 
 float Navigator::cruiseSpeed(int nx, int ny) const {
+  if (autonomous_) {
+    const bool known = maze_.visited(nx, ny) && maze_.fullyKnown(nx, ny) &&
+                       maze_.votes(cx_, cy_, h_) <= -3;
+    const float requested = known && p_.knownSpeed > vmax_ ? p_.knownSpeed : vmax_;
+    return autonomySpeed(t_<dampingUntil_ && requested>150 ? 150 : requested, known, sqrtf(lateral_.varY()), headingError(),
+        3 - rangeLost_[0] - rangeLost_[1] - rangeLost_[2], recoverCount_ > 0);
+  }
   // Explorando, por celdas ya recorridas (paredes conocidas) y en recta, se puede ir mas rapido: no hay nada
   // que mirar con calma y la parada siguiente se decide con tiempo para frenar. En lo nuevo, vmax.
   const int fx = nx + dx(h_), fy = ny + dy(h_);
@@ -1025,11 +1101,22 @@ bool Navigator::checkFrontAfterPivot() {
 }
 
 Navigator::Depart Navigator::depart(Brain& brain, float vmax) {
+  if (autonomous_ && !sensorFault() && repairAttempts_ < 3 &&
+      (rangeLost_[0] || rangeLost_[2] || health_[0].suspect || health_[2].suspect)) repairRanges();
   // Quieto en el centro de (cx, cy): decide, gira en el sitio y comprueba con el frontal.
   for (int tries = 0; tries < 6; ++tries) {
     if (stopped() || brain.shouldAbort()) return Depart::Fail;
     const int dir = brain.decide(cx_, cy_, h_);
     if (dir < 0) return Depart::Stop;
+    if (autonomous_ && dir == static_cast<int>(h_) && p_.autoGeometryConfirmed) {
+      Dir next;
+      if (brain.diagonalPair(cx_, cy_, h_, next) &&
+          diagonalClear(maze_, p_, cell_, cx_, cy_, h_, next, sqrtf(lateral_.varY()))) {
+        if (!diagonal(next, brain)) return Depart::Fail;
+        tries = -1;
+        continue;
+      }
+    }
     const Act a = actionFor(dir);
     const int q = a == Act::Left ? 1 : (a == Act::Right ? -1 : (a == Act::Back ? 2 : 0));
     if (!pivot(q)) return stopped() || brain.shouldAbort() ? Depart::Fail : Depart::Retry;
@@ -1040,7 +1127,7 @@ Navigator::Depart Navigator::depart(Brain& brain, float vmax) {
       stalled_ = false;
       planActive_ = false;
       arcPlanned_ = false;
-      motion_.cruise(vmax);
+      motion_.cruise(autonomous_ ? cruiseSpeed(cx_ + dx(h_), cy_ + dy(h_)) : vmax);
       return Depart::Go;
     }
   }
@@ -1126,6 +1213,9 @@ bool Navigator::recover(Brain& brain) {
     else if (latR < wallMax) y = latR - halfCorr_;
     else known = false;
     if (known && fabsf(y) > 10.0f && fabsf(y) < 50.0f) {
+      const int continuous = autonomous_ ? continuousRecenter(y, brain) : 0;
+      if (continuous < 0) return false;
+      if (continuous == 0) {
       const float th = 35.0f;
       const float sgn = y > 0 ? -1.0f : 1.0f;  // desplazado a la izquierda: ir a la derecha
       const float d = fabsf(y) / sinf(th / kDeg);
@@ -1140,6 +1230,7 @@ bool Navigator::recover(Brain& brain) {
       lateral_.setY(0, 25.0f);
       stalled_ = false;
       sample(2, l, f, r);
+      } else sample(2, l, f, r);
     }
   }
   // 4) Si el frontal ve una pared cerca, es la de esta celda: ubicar el avance con ella.
@@ -1224,15 +1315,18 @@ float Navigator::actCenterOdo() const {
 
 NavResult Navigator::run(Brain& brain, float vmax, bool smoothTurns) {
   vmax_ = vmax;
-  if (p_.precisionMode) io_.report("PERFIL_PRECISION: v<=300 giro<=360 sin curvas", true);
-  smooth_ = smoothTurns && !p_.precisionMode;
+  requestedVmax_ = vmax;
+  if (p_.precisionMode) io_.report(autonomous_ && p_.autoGeometryConfirmed ?
+      "PERFIL_PRECISION: v<=300 giro<=360 curvas condicionadas" :
+      "PERFIL_PRECISION: v<=300 giro<=360 sin curvas", true);
+  smooth_ = smoothTurns && (!p_.precisionMode || (autonomous_ && p_.autoGeometryConfirmed));
   stalled_ = false;
   blocked_ = false;
   decided_ = false;
   act_ = Act::None;
   // Arranca quieto en el centro de una celda.
   Depart dep = depart(brain, vmax);
-  int retryCell = -1, retries = 0;
+  int retryCell = -1, retries = 0, diagonalChecked = -1;
   while (dep == Depart::Go || dep == Depart::Retry) {
     if (dep == Depart::Retry) {
       const int idx = maze_.index(cx_, cy_);
@@ -1256,6 +1350,11 @@ NavResult Navigator::run(Brain& brain, float vmax, bool smoothTurns) {
     tick();
     const int currentCell = maze_.index(cx_, cy_);
     if (currentCell != retryCell) { retryCell = currentCell; retries = 0; }
+    if (autonomous_ && sensorFault() && !motion_.sensorFault() && !io_.stopRequested() && !brain.shouldAbort()) {
+      bool repaired=false;
+      for(int attempt=0;attempt<3 && !repaired && repairAttempts_<3;++attempt) repaired=repairRanges();
+      if(repaired){dep=depart(brain,vmax);continue;}
+    }
     if (stopped() || brain.shouldAbort()) {
       dep = Depart::Fail;
       break;
@@ -1263,6 +1362,22 @@ NavResult Navigator::run(Brain& brain, float vmax, bool smoothTurns) {
     if (stalled_) {
       dep = Depart::Retry;
       continue;
+    }
+    // A learned route can become diagonal at an intermediate cell, not only at
+    // departure. Check once per cell, before committing to its outgoing turn.
+    if (autonomous_ && p_.autoGeometryConfirmed && currentCell != diagonalChecked &&
+        cellPos() >= -10 && cellPos() <= 10 && !blocked_ && !arcStarted_) {
+      diagonalChecked = currentCell;
+      Dir next;
+      if (brain.diagonalPair(cx_,cy_,h_,next) &&
+          diagonalClear(maze_,p_,cell_,cx_,cy_,h_,next,sqrtf(lateral_.varY()))) {
+        motion_.moveTo(centerOdo_,120,0);
+        if (!waitStopped(1.0f) || fabsf(cellPos())>3 || !diagonal(next,brain)) {
+          dep=Depart::Fail; break;
+        }
+        dep=depart(brain,vmax);
+        continue;
+      }
     }
     if (blocked_) {
       // Pared delante: parar sin tocarla y quedar en el centro de esta celda.
@@ -1286,6 +1401,7 @@ NavResult Navigator::run(Brain& brain, float vmax, bool smoothTurns) {
 
     const bool turnAct = act_ == Act::Left || act_ == Act::Right;
     if (turnAct && arcPlanned_ && !arcStarted_ && motion_.position() >= actCenterOdo() - smoothDf_ - 0.5f) {
+      if (autonomous_) io_.report("AUTO phase=CURVA reason=PASOS_CONFIRMADOS_Y_POSE_PRECISA",true);
       // Curva suave: girar a velocidad constante desde aqui (puede empezar aun en la celda anterior).
       while (!(cx_ == actX_ && cy_ == actY_) && maze_.inside(cx_ + dx(h_), cy_ + dy(h_))) enterNextCell();
       const float v = motion_.speed() > 80.0f ? motion_.speed() : 80.0f;
@@ -1307,6 +1423,7 @@ NavResult Navigator::run(Brain& brain, float vmax, bool smoothTurns) {
       centerOdo_ = motion_.position() - smoothDl_;
       startStraight();
       lateral_.setY(0, 100.0f);
+      if (autonomous_) mapResumeAt_ = t_ + 0.15f;
       lateral_.addHeadingVariance(7e-4f);
       lastOdo_ = motion_.position();
       latAge_ = 1e9f;
@@ -1349,3 +1466,4 @@ NavResult Navigator::run(Brain& brain, float vmax, bool smoothTurns) {
 }
 
 }  // namespace raton
+

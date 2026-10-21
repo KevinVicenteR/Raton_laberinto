@@ -19,9 +19,13 @@ inline void printStatus(const char* line) { println(line, false); }
 // Whole lines dropped due to queue pressure; diagnostic capture must report loss.
 uint32_t droppedLines();
 int pendingPriorityBytes();
+bool connected();
+bool journalNext(uint32_t after,char* line,size_t capacity,uint32_t& id);
+uint32_t journalOverwritten();
 // Envia lo que quede en la cola durante como mucho ms milisegundos (antes de reiniciar).
 void flush(uint32_t ms);
 // Siguiente caracter recibido, o -1.
 int read();
 
 }  // namespace telemetry
+

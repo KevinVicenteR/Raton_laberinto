@@ -86,3 +86,14 @@ bool Board::saveMap(const raton::Maze& maze) {
   motors_.set(0, 0);
   return storage::saveMap(maze);
 }
+
+bool Board::recoverRange(int sensor) {
+  setMotors(0,0);
+  if (stop_) return false;
+  if (service) service();
+  if (stop_) return false;
+  const bool recovered = lasers_.recover(sensor);
+  if (service) service();
+  return recovered && !stop_;
+}
+

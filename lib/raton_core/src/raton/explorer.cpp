@@ -11,6 +11,7 @@ const int kTurnCost = 8;  // un giro cuesta como 0.8 celdas rectas
 
 void Explorer::setPhase(Phase phase) {
   phase_ = phase;
+  stickyTarget_ = -1;
   escaping_ = false;
   ax_ = -1;
   routeX_ = -1;
@@ -118,6 +119,26 @@ void Explorer::watchArea(int x, int y) {
 int Explorer::stepTowardTargets(int x, int y, Dir h) {
   for (int attempt = 0; attempt < 2; ++attempt) {
     buildTargets(x, y);
+    if (autonomous_ && phase_ == Phase::ExploreAll && !escaping_ && targets_.count > 1) {
+      // Commit to one reachable frontier until observed, blocked or visited.
+      // Both lateral openings remain in the map and become subsequent targets.
+      CellSet origin; origin.add(maze_.index(x, y));
+      flood(maze_, origin, true, dist_);
+      const int here = maze_.index(x, y);
+      if (stickyTarget_ < 0 || !targets_.has(stickyTarget_) ||
+          stickyTarget_ == here || dist_[stickyTarget_] == kInf) {
+        stickyTarget_ = -1;
+        int best = kInf;
+        for (int cy = 0; cy < maze_.height(); ++cy)
+          for (int cx = 0; cx < maze_.width(); ++cx) {
+            const int idx = maze_.index(cx, cy);
+            if (idx != here && targets_.has(idx) && dist_[idx] < best) {
+              best = dist_[idx]; stickyTarget_ = idx;
+            }
+          }
+      }
+      if (stickyTarget_ >= 0) { targets_.clear(); targets_.add(stickyTarget_); }
+    }
     if (targets_.count > 0) {
       flood(maze_, targets_, true, dist_);
       if (dist_[maze_.index(x, y)] != kInf) return nextStep(maze_, x, y, h, dist_, true);
@@ -224,3 +245,4 @@ int Explorer::straightAfter(int x, int y, Dir d) {
 }
 
 }  // namespace raton
+

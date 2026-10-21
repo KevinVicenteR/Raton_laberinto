@@ -20,8 +20,8 @@ void serviceTrampoline() {
   if (gApp) gApp->service();
 }
 
-const char* const kModeNames[] = {"", "1 DESCONOCIDO", "2 MAPEAR Y GUARDAR", "3 APRENDIDO"};
-const char* const kModeHelp[] = {"", "buscar meta desde cero", "mapa y ruta mas corta", "resolver mapa guardado"};
+const char* const kModeNames[] = {"", "1 AUTONOMO", "2 COMPETENCIA", "3 CAMINO MAS CORTO"};
+const char* const kModeHelp[] = {"", "diagnostica mapea resuelve", "prioriza llegar a meta", "solo mapa confirmado"};
 
 // printf de la placa sin coma flotante: valor con 4 decimales significativos a mano.
 const char* fmt(float v, char* buf, int size) {
@@ -133,6 +133,42 @@ void App::service() {
   telemetry::poll();
   while (Serial.available()) feed(Serial.read());
   for (int c = telemetry::read(); c >= 0; c = telemetry::read()) feed(c);
+  streamSync();
+}
+
+void App::streamSync() {
+  if(syncPhase_<0 || !telemetry::connected() || millis()-syncAt_<5 || telemetry::pendingPriorityBytes()>300)return;
+  syncAt_=millis();
+  char out[192],num[24];
+  if(syncPhase_==0){reply("SYNC_BEGIN");++syncPhase_;return;}
+  if(syncPhase_==1){reply("FIRMWARE autonomia-v3");++syncPhase_;return;}
+  if(syncPhase_==2){snprintf(out,sizeof(out),"MODE %d",mode_);reply(out);++syncPhase_;return;}
+  if(syncPhase_==3){
+    if(syncParam_<raton::paramCount()){
+      snprintf(out,sizeof(out),"%s=%s",raton::paramInfo(syncParam_).name,fmt(raton::getParam(params_,syncParam_),num,sizeof(num)));
+      ++syncParam_;reply(out);return;
+    }
+    ++syncPhase_;
+  }
+  if(syncPhase_==4){
+    while(syncCell_<syncMap_.cells()){
+      const int x=syncCell_%syncMap_.width(),y=syncCell_/syncMap_.width();++syncCell_;
+      if(!syncMap_.visited(x,y))continue;
+      snprintf(out,sizeof(out),"SYNC_CELL x=%d y=%d w=%d",x-params_.startX+20,y-params_.startY+20,syncMap_.wallMask(x,y));
+      reply(out);return;
+    }
+    ++syncPhase_;
+  }
+  if(syncPhase_==5){mouse_.navigator().snapshot();++syncPhase_;return;}
+  if(syncPhase_==6){
+    uint32_t id=syncHistory_;
+    if(telemetry::journalNext(syncHistory_,out,sizeof(out),id)){
+      syncHistory_=id;reply(out);return;
+    }
+    ++syncPhase_;
+  }
+  snprintf(out,sizeof(out),"SYNC_DONE overwritten=%lu",(unsigned long)telemetry::journalOverwritten());
+  reply(out);syncPhase_=-1;
 }
 
 void App::feed(int c) {
@@ -190,6 +226,11 @@ void App::command(char* cmd) {
     NVIC_SystemReset();
   }
   // Prueba sin movimiento disponible tambien si fallo el arranque del hardware.
+  if(!strcmp(cmd,"sync")){
+    // Read-only and incremental: allowed while solving, no delays or flash I/O.
+    syncMap_=mouse_.maze();syncParam_=syncCell_=0;syncHistory_=0;syncPhase_=0;
+    return;
+  }
   if (startupFailed_ && !strcmp(cmd, "pruebasensores")) {
     sensorTest();
     return;
@@ -303,7 +344,18 @@ void App::command(char* cmd) {
     return;
   }
   if (!strcmp(cmd, "map")) {
-    printMap();
+    static raton::Maze saved;
+    if (!storage::loadMap(saved) || saved.width()!=params_.mazeW || saved.height()!=params_.mazeH) {
+      reply("SIN_MAPA_GUARDADO"); return;
+    }
+    reply("MAPA_NUEVO");
+    reply("MAPA_CELDAS_INICIO");
+    for (int y=0;y<saved.height();++y)
+      for (int x=0;x<saved.width();++x) if(saved.visited(x,y)) {
+        snprintf(out,sizeof(out),"CELL x=%d y=%d w=%d",x-params_.startX+20,y-params_.startY+20,saved.wallMask(x,y));
+        reply(out); service();
+      }
+    reply("MAPA_LISTO");
     return;
   }
   if (!strcmp(cmd, "erase")) {
@@ -403,6 +455,7 @@ int App::menu() {
                     l3, l4);
     }
     if (now - lastMode > 2000) {  // la web se puede conectar en cualquier momento
+      reply("FIRMWARE autonomia-v3");
       lastMode = now;
       char st[16];
       snprintf(st, sizeof(st), "MODE %d", mode_);
@@ -446,6 +499,22 @@ bool App::armStart() {
     return false;
   }
   board_.resetLoad();
+  int fresh[5] = {};
+  const float checkStart = board_.last().t;
+  const float leftStart = board_.last().encLeftMm, rightStart = board_.last().encRightMm;
+  while (board_.last().t - checkStart < 0.25f) {
+    const auto& sensors = board_.tick();
+    if (board_.stopRequested()) return false;
+    const raton::Range* ranges[5] = {&sensors.left,&sensors.front,&sensors.right,&sensors.sideLeft,&sensors.sideRight};
+    for (int i=0;i<5;++i) if (ranges[i]->fresh) ++fresh[i];
+  }
+  if (fresh[1] < 3 || (fresh[0] < 3 && fresh[2] < 3) ||
+      fabsf(board_.last().encLeftMm-leftStart)>2 || fabsf(board_.last().encRightMm-rightStart)>2) {
+    reply("AUTO phase=PARADO reason=AUTOPRUEBA_SENSORES_O_REPOSO");
+    return false;
+  }
+  reply(fresh[3]>=3 && fresh[4]>=3 ? "AUTO phase=LISTO reason=CINCO_CANALES" :
+                                                "AUTO phase=LISTO reason=LATERALES_OPCIONALES_AUSENTES");
   display_.show(kModeNames[mode_], "", "EN MARCHA", "x = parar");
   reply("GIRO_LISTO: iniciando movimiento");
   return true;
@@ -479,16 +548,27 @@ void App::runMode(int mode) {
   snprintf(line, sizeof(line), "START %d", mode);
   reply(line);
   switch (mode) {
+    case AUTO: {
+      if (!armStart()) break;
+      board_.saveEnabled = true;
+      const auto result = mouse_.autonomous();
+      showResult(result, result.autonomousComplete ? "AUTONOMO COMPLETO" : "AUTONOMO PARADO");
+      if (result.autonomousComplete && !mouse_.navigator().sensorFault()) saveLearned();
+      else mouse_.navigator().motion().loadLearned();
+      break;
+    }
     case EXPLORE:
-    case MAP: {
+    {
       if (!armStart()) break;
       // No exigir paredes en la salida: usar los parametros guardados y aprender en marcha.
       reply("INICIANDO_EXPLORACION");
       mouse_.resetMap();
-      board_.saveEnabled = mode == MAP;
-      const raton::MissionResult result = mode == MAP ? mouse_.mapAll() : mouse_.toGoal();
-      showResult(result, mode == MAP ? "MAPEAR" : "DESCONOCIDO");
-      const bool completed = mode == MAP ? result.exploredAll && result.backHome : result.reachedGoal;
+      board_.saveEnabled = false;
+      mouse_.navigator().setAutonomous(true);
+      const raton::MissionResult result = mouse_.toGoal();
+      mouse_.navigator().setAutonomous(false);
+      showResult(result, "COMPETENCIA");
+      const bool completed = result.reachedGoal;
       if (completed && !mouse_.navigator().sensorFault()) saveLearned();
       else mouse_.navigator().motion().loadLearned();
       board_.saveEnabled = true;
@@ -529,13 +609,15 @@ void App::runMode(int mode) {
       // No usar el mapa temporal del modo 1 ni inventar una ruta si falta el mapa aprendido.
       static raton::Maze learned;
       if (!storage::loadMap(learned) || learned.width() != params_.mazeW || learned.height() != params_.mazeH) {
-        reply("SIN_MAPA_GUARDADO: ejecuta el modo 2 primero");
-        display_.show("SIN MAPA", "Usa el modo 2");
+        reply("SIN_MAPA_GUARDADO: ejecuta el modo 1 primero");
+        display_.show("SIN MAPA", "Usa el modo 1");
         break;
       }
       mouse_.maze() = learned;
       if (!armStart()) break;
+      mouse_.navigator().setAutonomous(true);
       const raton::MissionResult result = mouse_.solveLearned();
+      mouse_.navigator().setAutonomous(false);
       showResult(result, "APRENDIDO");
       if (result.reachedGoal && !mouse_.navigator().sensorFault()) saveLearned();
       else mouse_.navigator().motion().loadLearned();
@@ -859,3 +941,4 @@ void App::printMap() {
   }
   reply("MAPA_LISTO");
 }
+

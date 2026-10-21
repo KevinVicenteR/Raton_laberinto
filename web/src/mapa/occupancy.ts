@@ -1,10 +1,17 @@
-import type { RobotSample } from '../telemetria/types';
+import type { RobotSample, SensorReadings } from '../telemetria/types';
+import { currentReading, SENSOR_DEFS } from '../telemetria/sensorData';
 export interface Occupancy {
   grid: Map<string, number>;
   last: RobotSample | null;
 }
 export const emptyOccupancy = (): Occupancy => ({ grid: new Map(), last: null });
-export function updateOccupancy(previous: Occupancy, s: RobotSample, range = 300): Occupancy {
+export function updateOccupancy(
+  previous: Occupancy,
+  s: RobotSample,
+  range = 600,
+  readings: SensorReadings = {},
+  geometry: Record<string, number> = {},
+): Occupancy {
   if (
     !s.hasPose ||
     (previous.last &&
@@ -37,26 +44,31 @@ export function updateOccupancy(previous: Occupancy, s: RobotSample, range = 300
     }
     if (hit) bump(x + dx * len, y + dy * len, 1);
   };
-  const [L, F, R] = s.raw ?? [s.I, s.F, s.D];
-  for (const da of [-half, 0, half]) {
-    ray(
-      s.x + fx * 40,
-      s.y + fy * 40,
-      fx * Math.cos(da) + lx * Math.sin(da),
-      fy * Math.cos(da) + ly * Math.sin(da),
-      F,
-    );
-    for (const [sign, v] of [
-      [1, L],
-      [-1, R],
-    ]) {
-      const b = angle * sign + da;
+  for (const sensor of SENSOR_DEFS) {
+    const side = sensor.key === 'LI' || sensor.key === 'LD';
+    const fallback = sensor.key === 'I' ? s.I : sensor.key === 'D' ? s.D : sensor.key === 'F' ? s.F : -1;
+    const dist = currentReading(readings, sensor.key, s.t)?.mm ?? fallback;
+    const sign = sensor.angle < 0 ? -1 : 1;
+    const ahead =
+      geometry[sensor.key === 'F' ? 'frontAheadMm' : side ? 'sideAheadMm' : 'diagAheadMm'] ?? sensor.ahead;
+    const left =
+      sensor.key === 'F'
+        ? 0
+        : sign * (geometry[side ? 'sideLateralMm' : 'diagLateralMm'] ?? Math.abs(sensor.left));
+    const mount = side
+      ? (sign * Math.PI) / 2
+      : sensor.key === 'F'
+        ? 0
+        : sign * (geometry.diagMountDeg === undefined ? angle : (geometry.diagMountDeg * Math.PI) / 180);
+    const fov = geometry.sensorFovDeg === undefined ? half : (geometry.sensorFovDeg * Math.PI) / 360;
+    for (const da of [-fov, 0, fov]) {
+      const b = mount + da;
       ray(
-        s.x + fx * 30 + lx * 30 * sign,
-        s.y + fy * 30 + ly * 30 * sign,
+        s.x + fx * ahead + lx * left,
+        s.y + fy * ahead + ly * left,
         fx * Math.cos(b) + lx * Math.sin(b),
         fy * Math.cos(b) + ly * Math.sin(b),
-        v,
+        dist,
       );
     }
   }

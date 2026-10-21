@@ -26,6 +26,10 @@ jobs:
         run: |
           cmake -S . -B build-rel -DCMAKE_BUILD_TYPE=Release && cmake --build build-rel --parallel --target raton_sim
           build-rel/raton_sim --bench 20
+      - name: Autonomia completa con cinco sensores
+        run: |
+          cmake --build build-rel --parallel --target raton_autonomy_tests
+          build-rel/raton_autonomy_tests --bench 8
 
   firmware:
     name: Firmware (PlatformIO)
@@ -66,3 +70,4 @@ jobs:
       - run: npm run typecheck
       - run: npm test
       - run: npm run build
+

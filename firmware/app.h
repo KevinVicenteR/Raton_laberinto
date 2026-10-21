@@ -20,7 +20,7 @@ class App {
   void service();
 
  private:
-  enum Mode { EXPLORE = 1, MAP, RACE, kModes = RACE, kCalibrate = 20, kSensors = 21, kSensorTest = 22 };
+  enum Mode { AUTO = 1, EXPLORE = 2, RACE = 3, kModes = RACE, kCalibrate = 20, kSensors = 21, kSensorTest = 22 };
   void fail(const char* msg);
   int menu();
   bool armStart();
@@ -28,6 +28,10 @@ class App {
   void feed(int c);
   void command(char* line);
   void reply(const char* line);
+  void streamSync();
+  int syncPhase_=-1, syncParam_=0, syncCell_=0;
+  uint32_t syncHistory_=0,syncAt_=0;
+  raton::Maze syncMap_;
   void sensorsMode();
   void sensorTest();
   bool startupFailed_ = false;
@@ -50,7 +54,7 @@ class App {
   Display display_;
   Board board_;
   raton::Mouse mouse_;
-  int mode_ = EXPLORE;
+  int mode_ = AUTO;
   int requestedMode_ = 0;
   bool startRequested_ = false;
   bool busy_ = false;
@@ -59,3 +63,4 @@ class App {
   uint16_t lastSeq_ = 0;
   bool seqValid_ = false;
 };
+

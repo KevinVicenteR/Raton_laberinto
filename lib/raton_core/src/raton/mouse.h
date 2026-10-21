@@ -10,6 +10,7 @@
 namespace raton {
 
 struct MissionResult {
+  bool autonomousComplete = false;
   bool reachedGoal = false;
   float goalTime = -1;     // s desde la salida hasta entrar en la meta
   float totalTime = 0;     // s de toda la mision
@@ -39,6 +40,8 @@ class Mouse {
   MissionResult mapAll();
   // Modo 3: solo aristas conocidas, sin exploracion optimista. Termina en la meta.
   MissionResult solveLearned();
+  // One start, one deadline, no teleport/reinitialization between phases.
+  MissionResult autonomous();
   // Calibra los tres sensores parado en el centro de una celda con pared a la izquierda y a la derecha:
   // el frontal mide cada pared de frente y cada lateral se pone perpendicular a su pared. Corrige
   // out.*OffsetMm (y el frontal solo si se conoce la celda). Devuelve el ancho del pasillo, -1 si no puede,
@@ -61,3 +64,4 @@ class Mouse {
 };
 
 }  // namespace raton
+

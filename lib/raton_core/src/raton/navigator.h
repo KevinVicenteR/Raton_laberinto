@@ -15,6 +15,7 @@
 #pragma once
 
 #include "raton/lateral.h"
+#include "raton/autonomy.h"
 #include "raton/side_sensors.h"
 #include "raton/maze.h"
 #include "raton/motion.h"
@@ -39,6 +40,9 @@ class Brain {
   }
   // Se llama en cada ciclo; devolver true aborta la navegacion (tiempo agotado, etc.).
   virtual bool shouldAbort() { return false; }
+  virtual bool diagonalPair(int x, int y, Dir h, Dir& next) {
+    (void)x; (void)y; (void)h; (void)next; return false;
+  }
 };
 
 enum class NavResult { Arrived, NoPath, Aborted, Failed };
@@ -74,6 +78,10 @@ class Navigator {
   float rangeBias() const;
 
   bool sensorFault() const { return rangeFault_ || motion_.sensorFault(); }
+  void setAutonomous(bool on) { autonomous_ = on; }
+  bool repairRanges();
+  bool resumeAfterStorage();
+  void snapshot() { lastReport_=-1e9f; lastHealthReport_=-1e9f; report(); if(autonomous_)diagnose(); }
 
   int x() const { return cx_; }
   int y() const { return cy_; }
@@ -145,6 +153,22 @@ class Navigator {
   bool recover(Brain& brain);
   void checkStall();
   void computeSmoothGeometry();
+  bool safeCurve(int x, int y, Dir incoming, Dir outgoing) const;
+  bool diagonal(Dir next, Brain& brain);
+  void diagnose();
+  bool autonomous_ = false;
+  bool trajectory_ = false;
+  float steerCommand_ = 0, lastHealthReport_ = -1;
+  float mapResumeAt_ = 0;
+  int continuousRecenter(float y, Brain& brain);
+  int repairAttempts_ = 0;
+  RangeWatch health_[5];
+  OscillationWatch oscillation_;
+  ProgressWatch progress_;
+  float dampingUntil_=0;
+  int oscillationCount_=0, collisionCount_=0;
+  uint8_t confirmedCells_[Maze::kMax*Maze::kMax/8]={};
+  float lastExternalProgress_=0;
   bool wallAheadOpenConfirmed() const;
   bool checkFrontAfterPivot();
   float frontStopReading() const;
@@ -231,6 +255,8 @@ class Navigator {
   float halfCorr_ = 71.5f;   // medio pasillo
   bool smooth_ = false;
   float vmax_ = 300.0f;
+  float requestedVmax_ = 300.0f;
 };
 
 }  // namespace raton
+

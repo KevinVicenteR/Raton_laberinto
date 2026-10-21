@@ -21,7 +21,7 @@ export function parse(line: string): Diagnostic | null {
     .trim()
     .replace(/^\d+(?:\.\d+)?\t/, '');
   const head = line.split(/\s+/, 1)[0];
-  if (!['OBS', 'MOTION'].includes(head)) return null;
+  if (!['OBS', 'MOTION', 'AUTO', 'HEALTH', 'POSE'].includes(head)) return null;
   const fields: Record<string, Field> = {};
   for (const match of line.matchAll(/([a-zA-Z_]+)=([^\s]+)/g)) {
     const parts = match[2].split(',');
@@ -37,11 +37,20 @@ export function parse(line: string): Diagnostic | null {
     if (Array.isArray(value) && value.some((v) => !Number.isFinite(v))) return null;
   }
   for (const key of ['raw', 'filtered', 'age', 'conf', 'enc']) {
-    if (key in fields && (!Array.isArray(fields[key]) || fields[key].length !== (key === 'enc' ? 2 : 3)))
+    if (
+      key in fields &&
+      (!Array.isArray(fields[key]) ||
+        fields[key].length !== (key === 'enc' ? 2 : head === 'HEALTH' && key === 'age' ? 5 : 3))
+    )
       return null;
   }
   for (const [key, value] of Object.entries(fields)) {
-    if (key !== 'phase' && key !== 'pick' && !Array.isArray(value) && typeof value !== 'number') return null;
+    if (
+      !['phase', 'pick', ...(head === 'AUTO' || head === 'HEALTH' ? ['reason'] : [])].includes(key) &&
+      !Array.isArray(value) &&
+      typeof value !== 'number'
+    )
+      return null;
   }
   return { ...fields, kind: head };
 }

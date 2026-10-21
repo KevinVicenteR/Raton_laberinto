@@ -1,6 +1,7 @@
 #include "hw/lasers.h"
 
 #include "config.h"
+#include <Wire.h>
 
 namespace {
 const int kXshut[Lasers::COUNT] = {pins::XSHUT_LEFT, pins::XSHUT_FRONT, pins::XSHUT_RIGHT,
@@ -56,6 +57,29 @@ bool Lasers::poll(int i, int& mm) {
   return true;
 }
 
+bool Lasers::recover(int i) {
+  if (i < 0 || i >= COUNT || !configured(i)) return false;
+  ok_[i] = false;
+  pinMode(kXshut[i], OUTPUT); digitalWrite(kXshut[i], LOW);
+  delay(3);
+  // An unexpected device at the default address could cause address assignment
+  // to affect two modules. Leave this module isolated instead of risking the bus.
+  Wire.beginTransmission(0x29);
+  if (Wire.endTransmission() == 0) return false;
+  pinMode(kXshut[i], INPUT); delay(10);
+  auto& sensor = s_[i];
+  sensor.setTimeout(30);
+  if (!sensor.init()) {
+    pinMode(kXshut[i],OUTPUT); digitalWrite(kXshut[i],LOW); return false;
+  }
+  sensor.setAddress(kAddr[i]);
+  sensor.setSignalRateLimit(0.25f);
+  sensor.setMeasurementTimingBudget(20000);
+  sensor.startContinuous(0);
+  ok_[i] = true;
+  return true;
+}
+
 int Lasers::read(int i) {
   const uint32_t t0 = millis();
   int mm = -1;
@@ -64,3 +88,4 @@ int Lasers::read(int i) {
   }
   return -1;
 }
+

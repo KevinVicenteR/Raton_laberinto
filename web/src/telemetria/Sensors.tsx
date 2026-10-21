@@ -6,11 +6,13 @@ export function Sensors({
   readings,
   now,
   sideControl,
+  geometry = {},
 }: {
   last: RobotSample | null;
   readings: SensorReadings;
   now: number;
   sideControl?: boolean;
+  geometry?: Record<string, number>;
 }) {
   return (
     <section className="panel">
@@ -41,7 +43,7 @@ export function Sensors({
         {sideControl === undefined ? 'sin confirmar' : sideControl ? 'activado' : 'desactivado'}. Las lecturas
         se muestran aunque el centrado esté desactivado.
       </p>
-      <Radar last={last} readings={readings} now={now} />
+      <Radar last={last} readings={readings} now={now} geometry={geometry} />
       <p className="status">Vista esquemática: frontal, dos diagonales a 45° y dos laterales a 90°.</p>
       <p>
         Velocidad: {last?.v ?? '—'} mm/s · Rumbo: {last?.r ?? '—'}° · Pasillo: {last?.p ?? '—'} mm
@@ -59,10 +61,12 @@ export function Radar({
   last,
   readings,
   now,
+  geometry = {},
 }: {
   last: RobotSample | null;
   readings: SensorReadings;
   now: number;
+  geometry?: Record<string, number>;
 }) {
   const cx = 200,
     cy = 210;
@@ -92,10 +96,18 @@ export function Radar({
         const reading = currentReading(readings, b.key, now);
         const dist = reading?.mm ?? -1;
         const r = (dist < 0 ? 180 : Math.max(1, Math.min(dist, 360))) * SCALE;
-        const [ox, oy] = toScreen(b.ahead, b.left);
-        const [ax, ay] = dir(b.angle + HALF_FOV),
-          [bx, by] = dir(b.angle - HALF_FOV),
-          [mx, my] = dir(b.angle);
+        const side = b.key === 'LI' || b.key === 'LD';
+        const sign = b.angle < 0 ? -1 : 1;
+        const ahead =
+          geometry[b.key === 'F' ? 'frontAheadMm' : side ? 'sideAheadMm' : 'diagAheadMm'] ?? b.ahead;
+        const left =
+          b.key === 'F' ? 0 : sign * (geometry[side ? 'sideLateralMm' : 'diagLateralMm'] ?? Math.abs(b.left));
+        const angle = side || b.key === 'F' ? b.angle : sign * (geometry.diagMountDeg ?? 45);
+        const half = (geometry.sensorFovDeg ?? HALF_FOV * 2) / 2;
+        const [ox, oy] = toScreen(ahead, left);
+        const [ax, ay] = dir(angle + half),
+          [bx, by] = dir(angle - half),
+          [mx, my] = dir(angle);
         return (
           <g key={b.key}>
             <path
@@ -137,10 +149,10 @@ export function Chart({ frames, now }: { frames: SensorFrame[]; now: number }) {
         ))}
       </div>
       <svg viewBox="0 0 600 260" role="img" aria-label="Gráfica temporal de los cinco sensores">
-        {[0, 100, 200, 300, 400].map((v) => (
+        {[0, 100, 200, 300, 400, 500, 600].map((v) => (
           <g key={v}>
-            <line x1="35" x2="590" y1={230 - v * 0.5} y2={230 - v * 0.5} stroke="var(--grid)" />
-            <text x="0" y={235 - v * 0.5} fill="var(--muted)" fontSize="12">
+            <line x1="35" x2="590" y1={230 - v / 3} y2={230 - v / 3} stroke="var(--grid)" />
+            <text x="0" y={235 - v / 3} fill="var(--muted)" fontSize="12">
               {v}
             </text>
           </g>

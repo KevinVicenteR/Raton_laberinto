@@ -5,6 +5,7 @@
 #include "config.h"
 #include "raton/frame.h"
 #include "raton/line_queue.h"
+#include "raton/event_journal.h"
 
 namespace telemetry {
 
@@ -22,6 +23,7 @@ class Telemetry {
   BLECharacteristic rx{"6E400002-B5A3-F393-E0A9-E50E24DCCA9E", BLEWrite | BLEWriteWithoutResponse, 20};
   BLECharacteristic tx{"6E400003-B5A3-F393-E0A9-E50E24DCCA9E", BLENotify, 20};
   bool ready = false;
+  raton::EventJournal journal;
   uint32_t dropped = 0;
   uint16_t seq = 0;  // numero de la siguiente linea enviada (protocolo de frame.h)
 
@@ -103,6 +105,12 @@ class Telemetry {
   }
 
   void println(const char* raw, bool important) {
+    // Retain mission events even without a subscriber. Periodic samples are not
+    // retained; the reconnection snapshot supplies the latest state and full map.
+    if(important && (strncmp(raw,"AUTO ",5)==0 || strncmp(raw,"ATASCO",6)==0 ||
+        strncmp(raw,"FALLO",5)==0 || strncmp(raw,"RECUPER",7)==0 ||
+        strncmp(raw,"START ",6)==0 || strncmp(raw,"META",4)==0 ||
+        strncmp(raw,"MAPA_GUARDADO",13)==0 || strncmp(raw,"PARADO",6)==0))journal.push(raw,millis());
     if (!ready || !BLE.connected()) return;
     const int len = static_cast<int>(strlen(raw));
     if (len + 1 > 190) {
@@ -122,6 +130,9 @@ class Telemetry {
 
   uint32_t droppedLines() { return dropped; }
   int pendingPriorityBytes() { return priority.used(); }
+  bool connected() { return ready && BLE.connected() && tx.subscribed(); }
+  bool journalNext(uint32_t after,char* line,size_t cap,uint32_t& id){return journal.next(after,line,cap,id);}
+  uint32_t journalOverwritten(){return journal.overwritten();}
 
   void flush(uint32_t ms) {
     const uint32_t t0 = millis();
@@ -152,7 +163,11 @@ void println(const char* raw, bool important) { Telemetry::instance().println(ra
 void println(const char* raw) { Telemetry::instance().println(raw); }
 uint32_t droppedLines() { return Telemetry::instance().droppedLines(); }
 int pendingPriorityBytes() { return Telemetry::instance().pendingPriorityBytes(); }
+bool connected(){return Telemetry::instance().connected();}
+bool journalNext(uint32_t after,char* line,size_t cap,uint32_t& id){return Telemetry::instance().journalNext(after,line,cap,id);}
+uint32_t journalOverwritten(){return Telemetry::instance().journalOverwritten();}
 void flush(uint32_t ms) { Telemetry::instance().flush(ms); }
 int read() { return Telemetry::instance().read(); }
 
 }  // namespace telemetry
+

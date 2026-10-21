@@ -4,6 +4,10 @@ import { emptyOccupancy, updateOccupancy, type Occupancy } from '../mapa/occupan
 import type { Cell, RobotSample, SensorReadings, SensorFrame } from './types';
 import { parseSensorLine } from './sensorData';
 export interface TelemetryState {
+  firmwareV3: boolean;
+  syncing: boolean;
+  historyOverwritten: number;
+  historyLines: string[];
   last: RobotSample | null;
   sensorReadings: SensorReadings;
   sensorHistory: SensorFrame[];
@@ -23,6 +27,10 @@ export interface TelemetryState {
   raceEnd: number | null;
 }
 export const initialState = (): TelemetryState => ({
+  firmwareV3: false,
+  syncing: false,
+  historyOverwritten: 0,
+  historyLines: [],
   last: null,
   sensorReadings: {},
   sensorHistory: [],
@@ -57,10 +65,48 @@ export function telemetryReducer(state: TelemetryState, action: Action): Telemet
   if (action.type === 'reset') return initialState();
   if (action.type === 'clearMap') return { ...state, occupancy: emptyOccupancy(), trail: [] };
   const { line, t } = action;
+  if (line === 'FIRMWARE autonomia-v3') return { ...state, firmwareV3: true };
+  if (line === 'SYNC_BEGIN') return { ...state, syncing: true, cells: {} };
+  if (line.startsWith('SYNC_DONE'))
+    return { ...state, syncing: false, historyOverwritten: Number(/overwritten=(\d+)/.exec(line)?.[1] ?? 0) };
+  if (line.startsWith('HISTORY ')) {
+    if (state.historyLines.includes(line)) return state;
+    return {
+      ...state,
+      historyLines: [...state.historyLines, line].slice(-64),
+      events: [...state.events, line].slice(-1500),
+    };
+  }
+  const synced = /^SYNC_CELL x=(\d+) y=(\d+) w=(\d+)$/.exec(line);
+  if (synced) {
+    const key = synced[1] + ',' + synced[2];
+    return state.cells[key] === undefined
+      ? { ...state, cells: { ...state.cells, [key]: +synced[3] } }
+      : state;
+  }
   if (isRemovedMessage(line)) return state;
-  let next: TelemetryState = { ...state, record: [...state.record, `${(t / 1000).toFixed(3)}\t${line}`] };
+  let next: TelemetryState = {
+    ...state,
+    record: [...state.record, `${(t / 1000).toFixed(3)}\t${line}`].slice(-100000),
+  };
   const diagnostic = parse(line);
-  if (diagnostic) return { ...next, diagnostics: { ...state.diagnostics, [diagnostic.kind]: diagnostic } };
+  if (diagnostic)
+    return {
+      ...next,
+      diagnostics: { ...state.diagnostics, [diagnostic.kind]: diagnostic },
+      decision:
+        diagnostic.kind === 'AUTO'
+          ? String(diagnostic.phase) + ' · ' + String(diagnostic.reason ?? '')
+          : state.decision,
+      events:
+        diagnostic.kind === 'AUTO'
+          ? [...state.events, `${(t / 1000).toFixed(2)} s · ${line}`].slice(-1500)
+          : state.events,
+      raceEnd:
+        diagnostic.kind === 'AUTO' && ['COMPLETO', 'PARADO'].includes(String(diagnostic.phase))
+          ? t
+          : state.raceEnd,
+    };
   const cell = /^CELL x=(\d+) y=(\d+) w=(\d+)(?: d=(\d))?/.exec(line);
   if (cell)
     return {
@@ -80,6 +126,7 @@ export function telemetryReducer(state: TelemetryState, action: Action): Telemet
       sensorHistory: [],
       sideControl: undefined,
       boardParams: {},
+      firmwareV3: false,
     };
   if (line === 'MAPA_BORRADO') next = { ...next, cells: {}, learnRobot: [20, 20] };
   if (line === 'MAPA_NUEVO') next = { ...next, cells: {}, learnRobot: [20, 20] };
@@ -124,7 +171,13 @@ export function telemetryReducer(state: TelemetryState, action: Action): Telemet
       last: sample,
       samples: [...state.samples, sample].filter((s) => t - s.t <= 20000),
       trail: sample.hasPose ? [...state.trail, sample].slice(-20000) : state.trail,
-      occupancy: updateOccupancy(state.occupancy, sample, action.range),
+      occupancy: updateOccupancy(
+        state.occupancy,
+        sample,
+        action.range,
+        next.sensorReadings,
+        state.boardParams,
+      ),
     };
   return { ...next, events: [...state.events, `${(t / 1000).toFixed(2)} s · ${line}`].slice(-1500) };
 }

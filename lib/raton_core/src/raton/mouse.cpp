@@ -366,7 +366,7 @@ MissionResult Mouse::solveLearned() {
   bestRoute(maze_, p_.startX, p_.startY, static_cast<Dir>(p_.startDir & 3), goals, false, 0, route);
   if (!route.ok) {
     io_.setMotors(0, 0);
-    io_.report("SIN_RUTA_APRENDIDA: ejecuta el modo 2", true);
+    io_.report("SIN_RUTA_APRENDIDA: ejecuta el modo 1 autonomo", true);
     return r;
   }
   nav_.begin(p_.startX, p_.startY, static_cast<Dir>(p_.startDir & 3));
@@ -414,3 +414,4 @@ MissionResult Mouse::race(bool returnHome) {
 }
 
 }  // namespace raton
+

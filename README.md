@@ -1,5 +1,11 @@
 # Ratón de laberinto — arquitectura v2
 
+> Rama experimental `autonomia-v3`: el menú actual es **1 Autónomo completo**,
+> **2 Competencia** y **3 Camino más corto**. Firmware y web comparten esos
+> números. Consulte [la guía experimental](docs/autonomia-v3.md) para diagnóstico
+> en marcha, recuperación, mapas 2D/3D, sincronización Bluetooth y validación.
+> Los resultados históricos inferiores no certifican estas mejoras experimentales.
+
 Firmware, núcleo portable y simulador de un micromouse para la categoría **Robot ratón** del Concurso de
 Robótica SECIHTI Yucatán 2026:
 - Laberinto de ~1.5 × 3 m, suelo negro.
@@ -10,7 +16,7 @@ Robótica SECIHTI Yucatán 2026:
 
 Hardware:
 - **Placa:** Arduino Nano 33 BLE Sense Rev2 (nRF52840 a 64 MHz, IMU BMI270).
-- **Distancia:** 3 × VL53L0X, uno al frente y dos a 45° (no hay sensores a 90°).
+- **Distancia:** 5 × VL53L0X: frontal, dos diagonales a 45° y dos laterales a 90°.
 - **Motores:** DRV8833 con N20 1:100 con encoders.
 - **Pantalla:** OLED SSD1306 opcional.
 
@@ -123,15 +129,15 @@ inesperada, la web intenta recuperar el enlace automáticamente.
 
 | Modo | Qué hace |
 |---|---|
-| 1 Resolver desconocido | Parte de un mapa vacío y busca la meta. Conserva el mapa guardado en flash. |
-| 2 Mapear y guardar | Explora todo lo alcanzable, vuelve a la salida, guarda el mapa y calcula la ruta más corta en número de celdas. |
-| 3 Resolver aprendido | Carga el mapa guardado y busca la ruta más corta por pasos conocidos hasta la meta. Si falta mapa o ruta, informa y permanece parado. |
+| 1 Autónomo completo | Busca la meta, completa el mapa, vuelve, guarda y resuelve con diagnóstico y recuperación. |
+| 2 Competencia | Prioriza llegar a la meta y conserva el mapa guardado anterior. |
+| 3 Camino más corto | Usa exclusivamente pasos confirmados del mapa persistido por el modo autónomo. |
 
 Envía **`1`, `2` o `3`** para arrancar directamente (también sin salto de línea). Se mantienen `s1`–`s3` para arrancar y `m1`–`m3` para seleccionar. `x` detiene, incluso durante la preparación del arranque. `sensores` muestra lecturas sin mover el ratón; `x` vuelve al menú. `erase` borra el mapa; no es un cuarto modo.
 
 Configura `cellMm`, tamaño, salida y meta para la pista real. Coloca el ratón en la salida con el rumbo configurado antes de cada intento. Los tres modos usan esa geometría; no miden automáticamente una pista de tamaño desconocido.
 
-La calibración contra paredes es opcional mediante `calsonda`: ya no bloquea el arranque normal cuando no hay paredes visibles. Una lectura nueva fuera de alcance no se considera sensor desconectado. Se conserva la parada ante pérdida real del frontal, ambos laterales o giroscopio. El modo 2 guarda únicamente al completar la exploración y regresar; el modo 3 recalcula la ruta desde el mapa persistido.
+La calibración contra paredes es opcional mediante `calsonda`. Una lectura nueva fuera de alcance no se considera desconexión. El modo autónomo guarda tras completar el mapeo y regresar; el modo 3 recalcula desde el mapa persistido. La recuperación láser y sus límites están en la guía experimental.
 
 ## Estructura
 
@@ -158,3 +164,4 @@ centrar y confirmar paredes/huecos antes de planificar. Si faltan o dejan de res
 los sensores originales. Ver [montaje, activacion y pruebas](docs/calibracion.md#dos-laterales-opcionales-a-90-grados).
 
 Prueba fisica inmovil: enviar `pruebasensores` para obtener ocho segundos de lecturas y un resumen por sensor.
+

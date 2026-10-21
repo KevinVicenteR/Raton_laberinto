@@ -87,7 +87,7 @@ export function sensorPath(frames: SensorFrame[], key: SensorKey, end: number) {
       pen = false;
       continue;
     }
-    path += `${pen ? 'L' : 'M'}${35 + 555 * (1 - (end - frame.t) / 20000)},${230 - Math.min(400, reading.mm) * 0.5} `;
+    path += `${pen ? 'L' : 'M'}${35 + 555 * (1 - (end - frame.t) / 20000)},${230 - Math.min(600, reading.mm) / 3} `;
     pen = true;
   }
   return path;

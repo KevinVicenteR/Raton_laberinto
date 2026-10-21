@@ -38,6 +38,9 @@ add_executable(raton_tests tests/test_main.cpp)
 target_link_libraries(raton_tests PRIVATE raton_simlib)
 target_compile_definitions(raton_tests PRIVATE RATON_MAZES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/mazes")
 add_test(NAME nucleo COMMAND raton_tests)
+add_executable(raton_autonomy_tests tests/test_autonomy.cpp)
+target_link_libraries(raton_autonomy_tests PRIVATE raton_simlib)
+add_test(NAME autonomia COMMAND raton_autonomy_tests)
 
 # Comprobacion del firmware en el PC: compila todos los .cpp de firmware/ contra cabeceras minimas de
 # Arduino/mbed (tests/stubs). No se enlaza ni se ejecuta; detecta errores de tipos y sintaxis sin la placa.
@@ -45,3 +48,4 @@ file(GLOB_RECURSE RATON_FW_SOURCES CONFIGURE_DEPENDS firmware/*.cpp)
 add_library(firmware_check OBJECT ${RATON_FW_SOURCES})
 target_include_directories(firmware_check PRIVATE firmware tests/stubs lib/raton_core/src)
 target_compile_options(firmware_check PRIVATE -Wno-unused-parameter)
+

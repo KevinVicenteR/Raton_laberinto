@@ -271,3 +271,22 @@ laterales activos: mapear ambos extremos laterales, volver, guardar y resolver e
 El cambio no modifica las ganancias, calibración, temporización ni decisiones del control probado.
 
 Validación: 6939 comprobaciones del núcleo, 0 fallos, incluyendo las dos misiones de cruces.
+
+## Rama experimental de autonomía v3
+
+Trabajo autorizado por Kevin sobre `experimental/autonomia-v3`, base `ea7bd38`.
+El menú experimental ahora es 1 Autónomo completo, 2 Competencia y 3 Camino
+más corto. No fusionar en `arquitectura_v2` como parte de esta entrega.
+La especificación y los límites están en [autonomia-v3.md](autonomia-v3.md).
+
+Se añaden diagnóstico y contraste espacial durante navegación, detección de
+oscilación, recuperación láser acotada, objetivos de exploración estables,
+trayectorias condicionadas por geometría y un flujo completo sin reinicializar
+la pose entre fases. La web simplificada muestra mapas 2D/3D y cinco canales;
+reconecta al robot autorizado y solicita `sync` durante la marcha. El diario
+retiene 32 eventos en RAM y comunica pérdidas; no es un registro flash completo.
+
+No afirmar posición exacta, reparación de averías físicas ni éxito garantizado.
+Las visitas del mapa son estimadas; POSE publica contraste externo e incertidumbre.
+No habilitar geometría/fusión lateral sin medir el montaje real.
+

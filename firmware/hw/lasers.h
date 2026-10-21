@@ -11,6 +11,7 @@ class Lasers {
   enum Id { LEFT = 0, FRONT = 1, RIGHT = 2, SIDE_LEFT = 3, SIDE_RIGHT = 4, COUNT = 5 };
   // Requiere Wire.begin(). Devuelve false si algun sensor original no responde; los nuevos son opcionales.
   bool begin();
+  bool recover(int i);
   bool ok(int i) const { return i >= 0 && i < COUNT && ok_[i]; }
   int pollCount() const { return ok_[SIDE_LEFT] || ok_[SIDE_RIGHT] ? COUNT : 3; }
   // Si el sensor i tiene medida nueva la lee en mm (-1 = no valida) y devuelve true.
@@ -22,3 +23,4 @@ class Lasers {
   VL53L0X s_[COUNT];
   bool ok_[COUNT] = {};
 };
+

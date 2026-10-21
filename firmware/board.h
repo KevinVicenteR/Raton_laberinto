@@ -18,6 +18,7 @@ class Board : public raton::Platform {
   void report(const char* line, bool important) override;
   bool stopRequested() override { return stop_; }
   bool saveMap(const raton::Maze& maze) override;
+  bool recoverRange(int sensor) override;
 
   void requestStop() { stop_ = true; }
   // false en la practica: no se sobrescribe el mapa de la competencia guardado en flash.
@@ -51,3 +52,4 @@ class Board : public raton::Platform {
   float maxLoad_ = 0;
   uint32_t lastReturn_ = 0;
 };
+

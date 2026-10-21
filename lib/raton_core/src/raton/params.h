@@ -132,7 +132,12 @@ struct Params {
   float sideLateralMm = 30.0f; // distancia del centro a cada lente (montaje simetrico)
   int sideLeftOffsetMm = 0, sideRightOffsetMm = 0;
 
+  // Confirm only after measuring the chassis and sensor geometry. Does not enable
+  // lateral fusion by itself. Advanced trajectories remain clearance-gated.
+  int autoGeometryConfirmed = 0;
+
 
 };
 
 }  // namespace raton
+

@@ -1,11 +1,11 @@
 import { useState } from 'react';
 import type { Cell } from '../telemetria/types';
 // Modos del firmware (arquitectura v2): el numero es el que se envia con m<n> y s<n>.
-export const modes = ['Resolver laberinto desconocido', 'Mapear, guardar y buscar ruta más corta', 'Resolver laberinto aprendido'];
+export const modes = ['Autónomo completo', 'Competencia', 'Camino más corto'];
 export const modeHelp = [
-  'Busca la meta desde cero sin reemplazar el mapa guardado.',
-  'Explora todo lo alcanzable, vuelve a la salida, guarda el mapa y calcula la ruta más corta.',
-  'Llega a la meta por caminos conocidos del mapa guardado. Requiere completar antes el modo 2.',
+  'Diagnostica mientras resuelve, mapea todo, regresa, guarda y resuelve el mapa aprendido.',
+  'Prioriza llegar a la meta con diagnóstico y recuperación en marcha.',
+  'Usa solo caminos confirmados del mapa guardado por el modo autónomo.',
 ];
 export function useRobotCommands(send: (cmd: string) => Promise<boolean>) {
   const [mode, setMode] = useState(() => {
@@ -30,9 +30,9 @@ export function useRobotCommands(send: (cmd: string) => Promise<boolean>) {
     eraseMap: () => send('erase'),
     loadMap: () => send('map'),
     train: () => {
-      setMode(2);
-      localStorage.setItem('raton-mode', '2');
-      return send('s2');
+      setMode(1);
+      localStorage.setItem('raton-mode', '1');
+      return send('s1');
     },
     // Resolver hasta la celda elegida usando el mapa aprendido.
     route: (goal: Cell) => {

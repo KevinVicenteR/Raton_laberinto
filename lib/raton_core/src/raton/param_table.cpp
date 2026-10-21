@@ -35,6 +35,7 @@ const Entry kTable[] = {
     PF(learnedCellMm, 0, 432), PF(learnedCellRefMm, 0, 400), PF(learnedWheelDiamMm, 0, 80), PF(learnedCountsPerRev, 0, 100000), PI(precisionMode, 0, 1),
     PI(sideEnabled, 0, 1), PF(sideAheadMm, -80, 80), PF(sideLateralMm, 0, 70),
     PI(sideLeftOffsetMm, -60, 60), PI(sideRightOffsetMm, -60, 60),
+    PI(autoGeometryConfirmed, 0, 1),
 };
 
 const int kCount = sizeof(kTable) / sizeof(kTable[0]);
@@ -62,7 +63,13 @@ bool setParam(Params& p, const char* name, float value) {
   if (!(value >= e.info.min && value <= e.info.max)) return false;
   if (e.f) p.*(e.f) = value;
   else p.*(e.i) = static_cast<int>(value < 0 ? value - 0.5f : value + 0.5f);
+  if(strcmp(name,"autoGeometryConfirmed")!=0 &&
+      (strncmp(name,"body",4)==0 || strncmp(name,"side",4)==0 ||
+       strncmp(name,"diag",4)==0 || strcmp(name,"cellMm")==0 ||
+       strcmp(name,"wallMm")==0 || strcmp(name,"trackMm")==0 ||
+       strcmp(name,"wheelDiamMm")==0 || strcmp(name,"frontAheadMm")==0)) p.autoGeometryConfirmed=0;
   return true;
 }
 
 }  // namespace raton
+
