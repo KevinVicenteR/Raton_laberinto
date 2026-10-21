@@ -138,3 +138,9 @@ stubs como validación de la placa. Web: 50 pruebas, TypeScript y build pasan.
 Falta cargar y medir el robot físico, verificar las cinco posiciones de montaje
 y repetir el banco amplio de 161 casos para aprobar rendimiento. Permanecen las
 limitaciones físicas y el caso extremo de sensores bajos 1046 del traspaso base.
+
+CI del primer commit experimental: [ejecución 39691380787](https://github.com/KevinVicenteR/Raton_laberinto/actions/runs/39691380787).
+Los tres trabajos terminaron sin runner asignado ni pasos ejecutados; no hay
+logs de compilación disponibles. Por tanto esa ejecución no valida ni rechaza
+el código: queda pendiente ejecutar las pruebas nativas y de placa finales
+en un entorno que permita iniciar los ejecutables y los trabajos de CI.
