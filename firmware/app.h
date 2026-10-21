@@ -20,7 +20,7 @@ class App {
   void service();
 
  private:
-  enum Mode { EXPLORE = 1, RACE, PRACTICE, SENSORS, MOTOR_CAL, WHEELS, ERASE, kModes = ERASE, kCalibrate = 20 };
+  enum Mode { EXPLORE = 1, MAP, RACE, kModes = RACE, kCalibrate = 20 };
   void fail(const char* msg);
   int menu();
   bool armStart();

@@ -42,7 +42,8 @@ bool Lasers::poll(int i, int& mm) {
   // Estado de la medida (bits 6..3): 11 = valida. Senal debil, sigma alta o fase = lectura no fiable.
   const uint8_t status = (s.readReg(VL53L0X::RESULT_RANGE_STATUS) >> 3) & 0x0F;
   const uint16_t v = s.readRangeContinuousMillimeters();  // ya lista: no espera; borra la interrupcion
-  mm = (s.timeoutOccurred() || status != 11 || v >= 8000) ? -1 : static_cast<int>(v);
+  if (s.timeoutOccurred()) return false;  // fallo de transporte: no es una lectura de espacio libre
+  mm = (status != 11 || v >= 8000) ? -1 : static_cast<int>(v);
   return true;
 }
 

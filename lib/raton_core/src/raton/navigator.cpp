@@ -117,6 +117,9 @@ void Navigator::begin(int x, int y, Dir h) {
   s_ = io_.tick();
   t_ = s_.t;
   motion_.reset(s_);
+  faultReported_ = false;
+  rangeFault_ = false;
+  for (int i = 0; i < 3; ++i) { rangeSeen_[i] = t_; rangeLost_[i] = false; }
   centerOdo_ = 0;
   gridAngle_ = 0;
   lateral_.reset(0, 100.0f, 4e-4f);
@@ -165,15 +168,52 @@ float Navigator::frontStopReading() const {
   return 0.5f * cell_ - 0.5f * p_.wallMm - p_.frontAheadMm;
 }
 
+void Navigator::filterSensors() {
+  Range* rr[3] = {&s_.left, &s_.front, &s_.right};
+  for (int i = 0; i < 3; ++i) {
+    if (rr[i]->fresh) {
+      rangeSeen_[i] = t_;
+      if (rangeLost_[i]) beam_[i] = Beam();
+      rangeLost_[i] = false;
+    }
+    if (t_ - rangeSeen_[i] > 0.15f) {
+      if (!rangeLost_[i]) {
+        char line[40];
+        snprintf(line, sizeof(line), "LASER_SIN_RESPUESTA sensor=%d", i);
+        io_.report(line, true);
+      }
+      rangeLost_[i] = true;
+      if (i == 1 || (rangeLost_[0] && rangeLost_[2])) rangeFault_ = true;
+      beam_[i] = Beam();
+      // Sin dato no es espacio libre: nunca generar un voto con esta muestra.
+      rr[i]->mm = -1;
+      rr[i]->fresh = false;
+    }
+  }
+}
+
 void Navigator::setMotorsFromMotion() {
   float l, r;
+  if (rangeFault_) {
+    io_.setMotors(0, 0);
+    if (!faultReported_) {
+      io_.report("FALLO_LASER parada enclavada", true);
+      faultReported_ = true;
+    }
+    return;
+  }
   motion_.update(s_, l, r);
   io_.setMotors(l, r);
+  if (motion_.sensorFault() && !faultReported_) {
+    io_.report("FALLO_IMU parada enclavada", true);
+    faultReported_ = true;
+  }
 }
 
 void Navigator::step() {
   s_ = io_.tick();
   t_ = s_.t;
+  filterSensors();
   setMotorsFromMotion();
 }
 
@@ -187,6 +227,7 @@ float Navigator::rangeBias() const {
 void Navigator::tick() {
   s_ = io_.tick();
   t_ = s_.t;
+  filterSensors();
   const int bias = p_.rangeBiasFromCell ? static_cast<int>(floorf(rangeBias() + 0.5f)) : 0;
   if (bias != 0) {
     Range* rr[3] = {&s_.left, &s_.front, &s_.right};
@@ -194,6 +235,7 @@ void Navigator::tick() {
       if (rr[i]->mm >= 0) rr[i]->mm += bias;
   }
   setMotorsFromMotion();
+  if (sensorFault()) return;
   const bool straight = !motion_.turning();
   if (straight) {
     while (cellPos() > 0.5f * cell_) enterNextCell();
@@ -772,7 +814,7 @@ bool Navigator::waitStopped(float timeout, float speedTol) {
   const float t0 = t_;
   while (t_ - t0 < timeout) {
     tick();
-    if (io_.stopRequested()) return false;
+    if (stopped()) return false;
     if (motion_.arrived() && !motion_.turning() && fabsf(motion_.measuredSpeed()) < speedTol &&
         fabsf(motion_.measuredRate()) < 30.0f)
       return true;
@@ -792,7 +834,7 @@ bool Navigator::pivot(int q) {
   stalled_ = false;
   while (t_ - t0 < 2.0f) {
     tick();
-    if (io_.stopRequested()) return false;
+    if (stopped()) return false;
     if (stalled_) break;
     if (!motion_.turning() && fabsf(motion_.angle() - target) < 3.0f && fabsf(motion_.measuredRate()) < 40.0f)
       break;
@@ -878,7 +920,7 @@ bool Navigator::checkFrontAfterPivot() {
 Navigator::Depart Navigator::depart(Brain& brain, float vmax) {
   // Quieto en el centro de (cx, cy): decide, gira en el sitio y comprueba con el frontal.
   for (int tries = 0; tries < 6; ++tries) {
-    if (io_.stopRequested() || brain.shouldAbort()) return Depart::Fail;
+    if (stopped() || brain.shouldAbort()) return Depart::Fail;
     const int dir = brain.decide(cx_, cy_, h_);
     if (dir < 0) return Depart::Stop;
     const Act a = actionFor(dir);
@@ -1005,7 +1047,7 @@ void Navigator::sweep(float deg, float rate, SweepLog& log) {
   const float t0 = t_, limit = 0.5f + 2.0f * fabsf(deg - aimAngle()) / rate;
   while (t_ - t0 < limit) {
     step();
-    if (io_.stopRequested()) return;
+    if (stopped()) return;
     // La lectura llega sensorLatencyS tarde: el angulo al que se tomo es el de entonces.
     const float a = aimAngle() - motion_.measuredRate() * p_.sensorLatencyS;
     const Range* rr[3] = {&s_.left, &s_.front, &s_.right};
@@ -1026,6 +1068,7 @@ void Navigator::sample(int n, int& left, int& front, int& right) {
   const float t0 = t_;
   while ((got[0] < n || got[1] < n || got[2] < n) && t_ - t0 < 0.03f * n + 0.1f) {
     step();
+    if (stopped()) break;
     const Range* rr[3] = {&s_.left, &s_.front, &s_.right};
     for (int i = 0; i < 3; ++i) {
       if (!rr[i]->fresh) continue;
@@ -1061,7 +1104,7 @@ NavResult Navigator::run(Brain& brain, float vmax, bool smoothTurns) {
   Depart dep = depart(brain, vmax);
   while (dep == Depart::Go) {
     tick();
-    if (io_.stopRequested() || brain.shouldAbort()) {
+    if (stopped() || brain.shouldAbort()) {
       dep = Depart::Fail;
       break;
     }
@@ -1151,8 +1194,9 @@ NavResult Navigator::run(Brain& brain, float vmax, bool smoothTurns) {
   io_.setMotors(0, 0);
   decided_ = false;
   act_ = Act::None;
+  if (sensorFault()) return NavResult::Failed;
   if (dep == Depart::Stop) return NavResult::Arrived;
-  if (io_.stopRequested() || brain.shouldAbort()) return NavResult::Aborted;
+  if (stopped() || brain.shouldAbort()) return NavResult::Aborted;
   return NavResult::NoPath;
 }
 

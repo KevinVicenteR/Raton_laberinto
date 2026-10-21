@@ -1,3 +1,5 @@
+> Actualización 2026-10-21: el menú tiene únicamente 1 Resolver desconocido, 2 Mapear/guardar/ruta mínima, 3 Resolver aprendido. Los números arrancan directamente; `s1`–`s3` y `m1`–`m3` siguen disponibles. La calibración de paredes es opcional (`calsonda`) y no forma parte del arranque. Las referencias posteriores a los siete modos o práctica corresponden al diseño anterior. Véase README para el funcionamiento actual.
+
 # Traspaso: estado del trabajo y cómo seguir
 
 Documento para quien continúe (persona, Codex u otro agente). Resume qué se pidió, qué está hecho, cómo se
@@ -20,7 +22,7 @@ mide y qué falta. **Hablar siempre en español con el usuario.**
 
 ```bash
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build -j4
-build/raton_tests                      # 142 comprobaciones, deben dar 0 fallos (~10 s)
+build/raton_tests                      # 324 comprobaciones, deben dar 0 fallos (~10 s)
 scripts/banco.sh 80                    # 81 casos de competencia con errores de nivel 2 (~2,5 min, 4 núcleos)
 SIM_H=25 scripts/banco.sh 80 --set sensorHeightMm=25   # sensores bajos
 SIM_MOTOR=0.8 scripts/banco.sh 80      # motores un 20 % más lentos (batería baja)
@@ -131,3 +133,47 @@ Descartado (en 161 casos):
    dé las medidas; comprobar que las curvas y los giros caben.
 5. Casos que aún fallan: con láseres a 25 mm el caso 1046 choca en la carrera; mirar con `SIM_CONTACTLOG`.
 6. Actualizar la tabla de resultados del README con un banco completo (`build/raton_sim --bench 160`, ~10 min).
+
+
+## Continuación: fallos de sensores (20 de octubre de 2026)
+
+Implementado sobre `bb60027`:
+
+- Inyección reproducible en el simulador: `SIM_FAIL_LEFT`, `SIM_FAIL_FRONT`, `SIM_FAIL_RIGHT` y
+  `SIM_FAIL_GYRO` indican el segundo desde el arranque en que dejan de llegar muestras. Valor negativo
+  desactiva. `SIM_FREEZE_GYRO=1` junto con `SIM_FAIL_GYRO` simula muestras nuevas con ángulo congelado.
+  Los fallos no cambian la física ni los sensores restantes.
+- Un láser sin muestras durante 150 ms se excluye: se borra la lectura retenida y la memoria de proximidad,
+  sin tratar la desconexión como espacio libre. Un lateral puede volver a incorporarse al recibir muestras.
+  Los timeouts de transporte del VL53L0X ya no se publican como lecturas fuera de alcance.
+- Con un lateral ausente continúa usando los otros sensores. Sin el frontal o sin ambos laterales, pone
+  ambos motores a cero y termina la misión. Intentar continuar sin frontal produjo demasiados contactos.
+- La IMU sin muestras durante 100 ms, un ángulo no finito, o una salida prácticamente congelada durante
+  más de 200 ms pese a más de 20° medidos por encoders enclavan la parada. Una muestra recuperada no
+  vuelve a activar los motores; hace falta iniciar explícitamente una nueva misión (`begin/reset`).
+- La parada se propaga a los giros, barridos, muestreo y navegación. Una misión terminada por fallo no
+  guarda el mapa parcial ni intenta regresar a casa; la calibración interrumpida no aplica sus resultados.
+
+Ejemplos (el resultado `FALLO` es esperado si el robot se detiene por pérdida de IMU o frontal):
+
+```bash
+SIM_FAIL_LEFT=10 build/raton_sim --random 1000 --perturb 2 --seed 77 --simseed 5
+SIM_FAIL_FRONT=10 build/raton_sim --random 1000 --perturb 2 --seed 77 --simseed 5
+SIM_FAIL_GYRO=10 SIM_FREEZE_GYRO=1 build/raton_sim --random 1000 --perturb 2 --seed 77 --simseed 5
+```
+
+Verificación: práctica 70/70; CTest, 324 comprobaciones sin fallos; compilación CMake de `firmware_check` con stubs.
+Banco de competencia nivel 2: 161/161, 155 sin roce, 2 paredes mal; meta 63,4 s, exploración 117,3 s,
+carrera 16,0 s. Caso 1000 con fallo lateral izquierdo/derecho a los 10 s: termina exploración y carrera,
+sin contactos ni paredes mal. Pérdida del frontal: parada a los 10,150 s, sin contactos; IMU congelada:
+parada a los 10,346 s, sin contactos. Esto no demuestra tolerancia a cualquier avería ni equivale a
+pruebas físicas en el robot.
+
+Pendientes que NO se consideran resueltos: autoprueba física de motores y encoders; láser que publica
+una distancia falsa constante con muestras nuevas; continuidad segura sin frontal; curvas de exploración,
+rutas diagonales, recentrado en S y los casos extremos 1046/1069. No se activaron las optimizaciones
+que el traspaso anterior documenta como descartadas. Para el chasis real siguen faltando medidas.
+
+Compilación para la placa con PlatformIO: no completada en este entorno; la instalación quedó en
+`platformio/toolchain-gccarmnoneeabi`. La comprobación con stubs no sustituye `pio run` ni una prueba física.
+Publicación pendiente: Git no tiene credenciales de escritura y el conector devolvió 403.

@@ -45,12 +45,15 @@ Errores del nivel 2: celda ±6 mm, pared ±4, ruedas ±2 %, eje ±4 %, motores, 
 
 | Prueba (laberintos de 19 × 10) | Antes (con el cono real) | Ahora |
 |---|---|---|
-| 161 casos con errores: cumplen el reglamento | 119 | **158–159** |
-| … sin ningún roce | 90 | **~146** |
-| … paredes mal en el mapa final (total) | 694 | **~30** |
+| 161 casos con errores: cumplen el reglamento | 119 | **161/161** |
+| … sin ningún roce | 90 | **155** |
+| … paredes mal en el mapa final (total) | 694 | **2** |
 | 81 casos sin errores | — | **81/81 sin roce** |
-| Pistas de práctica de 170–300 mm completas | 18 de 28 | **67 de 70** |
+| Pistas de práctica de 170–300 mm completas | 18 de 28 | **70 de 70** |
 | Laberinto del reglamento | | meta explorando ~50 s, carrera ~12 s, 0 roces |
+
+Banco de nivel 2 verificado con `scripts/banco.sh 160`: meta media 63,4 s, exploración 117,3 s y carrera
+16,0 s. Inyección de averías y política de parada: [traspaso](docs/traspaso.md#continuación-fallos-de-sensores-20-de-octubre-de-2026).
 
 El simulador es un modelo: la pista real tiene diferencias. Por eso hay que **calibrar en la pista**
 ([docs/calibracion.md](docs/calibracion.md)) antes de competir.
@@ -58,7 +61,7 @@ El simulador es un modelo: la pista real tiene diferencias. Por eso hay que **ca
 ## Uso rápido
 
 ```bash
-scripts/run.sh pruebas              # compila y pasa las pruebas (unas 110 comprobaciones + misiones)
+scripts/run.sh pruebas              # compila y pasa las pruebas (324 comprobaciones, incluidas misiones)
 scripts/run.sh sim                  # laberinto del reglamento con detalle y mapa final
 scripts/run.sh sim --random 7 --perturb 2   # aleatorio con errores fisicos
 scripts/run.sh bateria 20           # bateria completa
@@ -73,21 +76,15 @@ scripts/run.sh subir                # compila y sube el firmware (PlatformIO)
 
 | Modo | Qué hace |
 |---|---|
-| 1 Explorar (competencia) | Geometría de la competencia (`cellMm`, tamaño, salida y meta guardados). Calibra solo los sensores en la salida, va a la meta, busca la ruta más corta, vuelve a la salida y guarda el mapa y lo aprendido en flash |
-| 2 Carrera (competencia) | Ruta más rápida con el mapa guardado (curvas suaves, rectas a 650 mm/s) |
-| 3 Práctica (cualquier medida) | Cualquier pista: calibra los laterales y mide el pasillo en la salida (gira a cada lado), afina el paso de celda en marcha, explora todo recordando por dónde pasó y vuelve a la salida. No toca la geometría ni el mapa de la competencia |
-| 4 Sensores | Lecturas en pantalla y Bluetooth |
-| 5 Cal. motor | Mide kV, kS y τ de los motores en un pasillo recto |
-| 6 Ruedas | Prueba de sentido de motores y encoders (ratón levantado) |
-| 7 Borrar mapa | Olvida el mapa guardado |
+| 1 Resolver desconocido | Parte de un mapa vacío y busca la meta. Conserva el mapa guardado en flash. |
+| 2 Mapear y guardar | Explora todo lo alcanzable, vuelve a la salida, guarda el mapa y calcula la ruta más corta en número de celdas. |
+| 3 Resolver aprendido | Carga el mapa guardado y busca la ruta más corta por pasos conocidos hasta la meta. Si falta mapa o ruta, informa y permanece parado. |
 
-**Estrategia de competencia:**
-- **1ª etapa** (4 oportunidades, 10 min): modo 1. Al llegar a la meta ya cuenta. Si lo dejan seguir, vuelve solo y deja el mapa guardado.
-- **2ª etapa** (2 oportunidades, mejor tiempo): modo 2 con ese mapa.
+Envía **`1`, `2` o `3`** para arrancar directamente (también sin salto de línea). Se mantienen `s1`–`s3` para arrancar y `m1`–`m3` para seleccionar. `x` detiene, incluso durante la preparación del arranque. `erase` borra el mapa; no es un cuarto modo.
 
-Si el laberinto real no es el del ejemplo, configura tamaño, salida y meta antes (ver calibración).
+Configura `cellMm`, tamaño, salida y meta para la pista real. Coloca el ratón en la salida con el rumbo configurado antes de cada intento. Los tres modos usan esa geometría; no miden automáticamente una pista de tamaño desconocido.
 
-**Modo práctica (3):** pon el ratón en el centro de una celda con pared a la izquierda y a la derecha y la salida libre delante. El mapa es de 32 × 32 con la salida en el centro, así que la pista puede extenderse hasta 15 celdas hacia cada lado. Sin meta: explora hasta conocer todo lo alcanzable (no vuelve a pasar por donde ya conoce salvo para llegar a lo que falta) y regresa. Al arrancar gira a cada lado para calibrar los laterales y medir el pasillo; el frontal tiene que venir calibrado de antes (`calsonda` en la pista de la competencia + `save`).
+La calibración contra paredes es opcional mediante `calsonda`: ya no bloquea el arranque normal cuando no hay paredes visibles. Una lectura nueva fuera de alcance no se considera sensor desconectado. Se conserva la parada ante pérdida real del frontal, ambos laterales o giroscopio. El modo 2 guarda únicamente al completar la exploración y regresar; el modo 3 recalcula la ruta desde el mapa persistido.
 
 ## Estructura
 

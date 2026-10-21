@@ -10,6 +10,8 @@
 #include "raton/lateral.h"
 #include "raton/line_queue.h"
 #include "raton/maze.h"
+#include "raton/navigator.h"
+#include "raton/mouse.h"
 #include "raton/maze_text.h"
 #include "raton/param_table.h"
 #include "raton/params.h"
@@ -237,6 +239,152 @@ void testSonda() {
 
 // El raton completo en el simulador: laberinto del reglamento y aleatorios, con fisica ideal y con
 // errores (pista de otra medida, ruedas distintas, sensores y giroscopio descalibrados).
+// Fallos de transporte y salida congelada: salida cero enclavada, sin depender del timeout global.
+void testSensorFaults() {
+  Params p;
+  Sensors s;
+  Motion motion(p);
+  motion.reset(s);
+  motion.cruise(200);
+  float l = 0, r = 0;
+  for (int k = 1; k <= 60; ++k) {
+    s.t = k * p.dt;
+    motion.update(s, l, r);
+  }
+  CHECK(motion.sensorFault());
+  CHECK(l == 0 && r == 0);
+  s.gyroFresh = true;
+  s.t += p.dt;
+  motion.update(s, l, r);
+  CHECK(motion.sensorFault() && l == 0 && r == 0);
+  motion.reset(s);
+  motion.turnTo(90, p.rotSpeed, p.rotAccel);
+  for (int k = 0; k < 130; ++k) {
+    s.t += p.dt;
+    s.encRightMm += 0.3f;
+    s.encLeftMm -= 0.3f;
+    motion.update(s, l, r);  // gyroFresh pero angulo congelado
+  }
+  CHECK(motion.sensorFault() && l == 0 && r == 0);
+  motion.reset(s);
+  s.gyroDeg = NAN;
+  motion.update(s, l, r);
+  CHECK(motion.sensorFault() && l == 0 && r == 0);
+
+  Maze truth;
+  CHECK(sim::loadMazeFile(std::string(RATON_MAZES_DIR) + "/reglamento_2026.txt", truth));
+  // Fuera de alcance no es una averia: llegan muestras nuevas sin pared visible.
+  {
+    class NoWalls : public sim::SimPlatform {
+     public:
+      using sim::SimPlatform::SimPlatform;
+      const Sensors& tick() override {
+        sample_ = sim::SimPlatform::tick();
+        sample_.left.mm = sample_.front.mm = sample_.right.mm = -1;
+        return sample_;
+      }
+     private:
+      Sensors sample_;
+    };
+    const auto ph = sim::perturbed(p, 0, 1);
+    sim::World world(truth, ph);
+    NoWalls io(world, p, ph, 1);
+    io.place(p.startX, p.startY, p.startDir);
+    Maze map;
+    map.reset(p.mazeW, p.mazeH, true);
+    Navigator nav(io, p, map);
+    nav.begin(p.startX, p.startY, static_cast<Dir>(p.startDir));
+    for (int k = 0; k < 250; ++k) nav.step();
+    CHECK(!nav.sensorFault());
+  }
+  // Cada laser se corta por separado; los otros siguen publicando.
+  for (int failed = 0; failed < 3; ++failed) {
+    sim::Physical ph = sim::perturbed(p, 0, 1);
+    ph.laserFailAt[failed] = 0.1f;
+    sim::World world(truth, ph);
+    sim::SimPlatform io(world, p, ph, 1);
+    io.place(p.startX, p.startY, p.startDir);
+    Maze map;
+    Navigator nav(io, p, map);
+    nav.begin(p.startX, p.startY, static_cast<Dir>(p.startDir));
+    bool others[3] = {};
+    for (int k = 0; k < 200; ++k) {
+      nav.step();
+      const Sensors& v = nav.sensors();
+      const Range rr[3] = {v.left, v.front, v.right};
+      if (v.t > 0.3f) {
+        CHECK(!rr[failed].fresh && rr[failed].mm == -1);
+        for (int i = 0; i < 3; ++i) others[i] = others[i] || rr[i].fresh;
+      }
+    }
+    CHECK(!nav.motion().sensorFault());
+    CHECK(nav.sensorFault() == (failed == 1));
+    CHECK(others[(failed + 1) % 3] && others[(failed + 2) % 3]);
+  }
+  // Una mision interrumpida por IMU/frontal no guarda un mapa parcial.
+  for (int which = 0; which < 2; ++which) {
+    sim::Physical ph = sim::perturbed(p, 0, 1);
+    if (which == 0) ph.gyroFailAt = 0.1f;
+    else ph.laserFailAt[1] = 0.1f;
+    sim::World world(truth, ph);
+    sim::SimPlatform io(world, p, ph, 1);
+    io.place(p.startX, p.startY, p.startDir);
+    Mouse mouse(io, p);
+    const MissionResult result = mouse.explore(true, true);
+    CHECK(!result.reachedGoal && !result.backHome);
+    CHECK(!io.saved);
+    CHECK(io.time() < 1.0f);
+    CHECK(mouse.navigator().sensorFault());
+  }
+  // IMU rota durante calibracion: el barrido retorna sin consumir el limite del simulador.
+  for (int frozen = 0; frozen < 2; ++frozen) {
+    sim::Physical ph = sim::perturbed(p, 0, 1);
+    ph.gyroFailAt = 0.1f;
+    ph.gyroFrozen = frozen;
+    sim::World world(truth, ph);
+    sim::SimPlatform io(world, p, ph, 1);
+    io.place(p.startX, p.startY, p.startDir);
+    Maze map;
+    Navigator nav(io, p, map);
+    nav.begin(p.startX, p.startY, static_cast<Dir>(p.startDir));
+    Navigator::SweepLog log;
+    nav.sweep(110, 120, log);
+    CHECK(nav.motion().sensorFault());
+    CHECK(nav.now() < 1.0f);
+  }
+}
+
+void testThreeModes() {
+  Params p;
+  p.mazeW = 4; p.mazeH = 4;
+  p.startX = 0; p.startY = 0; p.startDir = NORTH;
+  p.goalX = 2; p.goalY = 2; p.goalW = 1; p.goalH = 1;
+  Maze truth;
+  sim::randomMaze(4, 4, 2, 918, truth);
+  sim::makeStartCell(truth, 0, 0, NORTH, 918);
+  const auto ph = sim::perturbed(p, 0, 1);
+  sim::World world(truth, ph);
+  sim::SimPlatform io(world, p, ph, 1);
+  io.place(0, 0, NORTH);
+  Mouse mouse(io, p);
+  const auto mapped = mouse.mapAll();
+  CHECK(mapped.exploredAll && mapped.backHome);
+  CHECK(io.saved);
+  CHECK(mapped.proven);
+  io.place(0, 0, NORTH);
+  const auto solved = mouse.solveLearned();
+  CHECK(solved.reachedGoal);
+  mouse.resetMap();
+  io.place(0, 0, NORTH);
+  const float before = io.time();
+  const auto missing = mouse.solveLearned();
+  CHECK(!missing.reachedGoal);
+  CHECK(io.time() == before); // sin ruta conocida no comienza a moverse
+  const auto unknown = mouse.toGoal(); // arranque sin calibracion contra paredes
+  CHECK(unknown.reachedGoal);
+  CHECK(!mouse.navigator().sensorFault());
+}
+
 void testMissions() {
   Params p;
   Maze truth;
@@ -287,6 +435,8 @@ int main() {
   testLateralFilter();
   testFrames();
   testSonda();
+  testSensorFaults();
+  testThreeModes();
   testMissions();
   testPractice();
   printf("%d comprobaciones, %d fallos\n", checks, failures);

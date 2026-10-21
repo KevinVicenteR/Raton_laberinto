@@ -1,23 +1,11 @@
 import { useState } from 'react';
 import type { Cell } from '../telemetria/types';
 // Modos del firmware (arquitectura v2): el numero es el que se envia con m<n> y s<n>.
-export const modes = [
-  'Explorar (competencia)',
-  'Carrera (competencia)',
-  'Práctica (cualquier medida)',
-  'Sensores',
-  'Calibrar motores',
-  'Prueba de ruedas',
-  'Borrar mapa',
-];
+export const modes = ['Resolver laberinto desconocido', 'Mapear, guardar y buscar ruta más corta', 'Resolver laberinto aprendido'];
 export const modeHelp = [
-  'Pista de la competencia (celda cellMm, meta guardada): calibra los sensores en la salida, meta, ruta más corta, vuelta y guarda el mapa',
-  'Pista de la competencia: ruta más rápida con el mapa guardado (curvas suaves)',
-  'Cualquier pista: calibra y mide el pasillo en la salida, explora todo sin repetir y vuelve. No toca la competencia',
-  'Lecturas de los láseres y el giroscopio',
-  'Opcional (el ratón ya aprende sus motores solo): en el suelo, pasillo recto de 2 celdas, mide kV, kS y τ',
-  'Ratón LEVANTADO: cada rueda adelante y atrás',
-  'Olvida el mapa guardado en flash',
+  'Busca la meta desde cero sin reemplazar el mapa guardado.',
+  'Explora todo lo alcanzable, vuelve a la salida, guarda el mapa y calcula la ruta más corta.',
+  'Llega a la meta por caminos conocidos del mapa guardado. Requiere completar antes el modo 2.',
 ];
 export function useRobotCommands(send: (cmd: string) => Promise<boolean>) {
   const [mode, setMode] = useState(() => {
@@ -42,13 +30,15 @@ export function useRobotCommands(send: (cmd: string) => Promise<boolean>) {
     eraseMap: () => send('erase'),
     loadMap: () => send('map'),
     train: () => {
-      setMode(1);
-      return send('s1');
-    },
-    // La celda elegida en el mapa aprendido (salida en 20,20) como meta, y carrera.
-    route: (goal: Cell) => {
       setMode(2);
-      return sequence([`GW${goal.join(',')}`, 's2']);
+      localStorage.setItem('raton-mode', '2');
+      return send('s2');
+    },
+    // Resolver hasta la celda elegida usando el mapa aprendido.
+    route: (goal: Cell) => {
+      setMode(3);
+      localStorage.setItem('raton-mode', '3');
+      return sequence([`GW${goal.join(',')}`, 's3']);
     },
     sequence,
   };

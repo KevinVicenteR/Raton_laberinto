@@ -54,7 +54,7 @@ MissionResult Mouse::explore(bool searchAfterGoal, bool returnHome) {
     nr = nav_.run(explorer_, p_.searchSpeed, p_.smoothTurnsSearch);
   }
   if (nr != NavResult::Arrived || !maze_.isGoal(nav_.x(), nav_.y())) {
-    if (nr == NavResult::Aborted) {
+    if (nr == NavResult::Aborted || nr == NavResult::Failed) {
       io_.report("PARADO", true);
       return finish(r, t0);
     }
@@ -70,7 +70,7 @@ MissionResult Mouse::explore(bool searchAfterGoal, bool returnHome) {
       io_.report("QUEDA_POR_EXPLORAR", true);
       explorer_.setPhase(Explorer::Phase::ExploreAll);
       nr = nav_.run(explorer_, p_.searchSpeed, p_.smoothTurnsSearch);
-      if (nr == NavResult::Aborted) {
+      if (nr == NavResult::Aborted || nr == NavResult::Failed) {
         io_.report("PARADO", true);
         return finish(r, t0);
       }
@@ -80,6 +80,7 @@ MissionResult Mouse::explore(bool searchAfterGoal, bool returnHome) {
         goHome(r);
       }
     }
+    if (nav_.sensorFault()) return finish(r, t0);
     if (io_.saveMap(maze_)) io_.report("MAPA_GUARDADO", true);
     return finish(r, t0);
   }
@@ -95,9 +96,10 @@ MissionResult Mouse::explore(bool searchAfterGoal, bool returnHome) {
     explorer_.setPhase(Explorer::Phase::Search);
     explorer_.setTimeLimit(nav_.now() + p_.exploreBudgetS);
     nr = nav_.run(explorer_, p_.searchSpeed, p_.smoothTurnsSearch);
-    if (nr == NavResult::Aborted) return finish(r, t0);
+    if (nr == NavResult::Aborted || nr == NavResult::Failed) return finish(r, t0);
   }
   if (returnHome) goHome(r);
+  if (nav_.sensorFault()) return finish(r, t0);
   if (io_.saveMap(maze_)) io_.report("MAPA_GUARDADO", true);
   return finish(r, t0);
 }
@@ -204,6 +206,7 @@ float Mouse::calibrateSensors(Params& out, bool cellKnown) {
   nav_.sweep(0.0f, rate, log);
   nav_.sweep(-110.0f, rate, log);
   nav_.sweep(0.0f, rate, log);
+  if (nav_.sensorFault() || io_.stopRequested()) return -1;
 #ifdef RATON_DEBUG
   if (getenv("SWEEPDBG"))
     for (int k = 0; k < 3; ++k)
@@ -299,6 +302,82 @@ float Mouse::measureCell(Params& out) {
   return out.cellMm;
 }
 
+MissionResult Mouse::mapAll() {
+  MissionResult r;
+  maze_.setGoal(p_.goalX, p_.goalY, p_.goalW, p_.goalH);
+  nav_.begin(p_.startX, p_.startY, static_cast<Dir>(p_.startDir & 3));
+  const float t0 = nav_.now();
+  explorer_.setHardDeadline(t0 + 595.0f);
+  explorer_.setFullMapping(true);
+  explorer_.setPhase(Explorer::Phase::ExploreAll);
+  io_.report("INICIO_MAPA", true);
+  const NavResult nr = nav_.run(explorer_, p_.searchSpeed, false);
+  explorer_.setFullMapping(false);
+  if (nr != NavResult::Arrived || nav_.sensorFault()) return finish(r, t0);
+  r.exploredAll = explorer_.exploredAll();
+  goHome(r);
+  if (nav_.sensorFault() || io_.stopRequested()) return finish(r, t0);
+  CellSet goals;
+  goalSet(maze_, goals);
+  static Route known, optimistic;
+  bestRoute(maze_, p_.startX, p_.startY, static_cast<Dir>(p_.startDir & 3), goals, false, 0, known);
+  bestRoute(maze_, p_.startX, p_.startY, static_cast<Dir>(p_.startDir & 3), goals, true, 0, optimistic);
+  if (known.ok) {
+    char line[64];
+    snprintf(line, sizeof(line), "RUTA_MAS_CORTA celdas=%d", known.length);
+    io_.report(line, true);
+  } else io_.report("SIN_RUTA_CONOCIDA_A_META", true);
+  if (r.exploredAll && r.backHome) {
+    io_.report(io_.saveMap(maze_) ? "MAPA_GUARDADO" : "ERROR_GUARDAR_MAPA", true);
+  }
+  r = finish(r, t0);
+  r.proven = known.ok && optimistic.ok && known.length == optimistic.length;
+  return r;
+}
+
+MissionResult Mouse::solveLearned() {
+  // Cada decision recalcula la ruta minima sin atravesar paredes desconocidas.
+  class LearnedBrain : public Brain {
+   public:
+    LearnedBrain(Maze& m, Navigator& nav) : m_(m), nav_(nav), deadline_(nav.now() + 595.0f) {}
+    bool shouldAbort() override { return nav_.now() >= deadline_; }
+    int decide(int x, int y, Dir h) override {
+      if (m_.isGoal(x, y)) return -1;
+      CellSet goals;
+      goalSet(m_, goals);
+      bestRoute(m_, x, y, h, goals, false, 0, route_);
+      return route_.ok && route_.length ? route_.steps[0] : -1;
+    }
+   private:
+    Maze& m_;
+    Navigator& nav_;
+    float deadline_;
+    Route route_;
+  };
+  static Route route;
+  MissionResult r;
+  maze_.setGoal(p_.goalX, p_.goalY, p_.goalW, p_.goalH);
+  CellSet goals;
+  goalSet(maze_, goals);
+  bestRoute(maze_, p_.startX, p_.startY, static_cast<Dir>(p_.startDir & 3), goals, false, 0, route);
+  if (!route.ok) {
+    io_.setMotors(0, 0);
+    io_.report("SIN_RUTA_APRENDIDA: ejecuta el modo 2", true);
+    return r;
+  }
+  nav_.begin(p_.startX, p_.startY, static_cast<Dir>(p_.startDir & 3));
+  const float t0 = nav_.now();
+  LearnedBrain brain(maze_, nav_);
+  io_.report("INICIO_MAPA", true);
+  const NavResult nr = nav_.run(brain, p_.runSpeed, p_.smoothTurnsRun);
+  if (nr == NavResult::Arrived && maze_.isGoal(nav_.x(), nav_.y())) {
+    r.reachedGoal = true;
+    r.goalTime = nav_.now() - t0;
+    io_.report("META", true);
+  } else io_.report("PARADO: ruta aprendida interrumpida", true);
+  return finish(r, t0);
+}
+
 MissionResult Mouse::race(bool returnHome) {
   MissionResult r;
   maze_.setGoal(p_.goalX, p_.goalY, p_.goalW, p_.goalH);
@@ -309,7 +388,7 @@ MissionResult Mouse::race(bool returnHome) {
   explorer_.setPhase(Explorer::Phase::Run);
   NavResult nr = nav_.run(explorer_, p_.runSpeed, p_.smoothTurnsRun);
   if (!(nr == NavResult::Arrived && maze_.isGoal(nav_.x(), nav_.y())))
-    io_.report(nr == NavResult::Aborted ? "PARADO" : "SIN_META: no encuentra camino a la meta", true);
+    io_.report((nr == NavResult::Aborted || nr == NavResult::Failed) ? "PARADO" : "SIN_META: no encuentra camino a la meta", true);
   if (nr == NavResult::Arrived && maze_.isGoal(nav_.x(), nav_.y())) {
     r.reachedGoal = true;
     r.goalTime = nav_.now() - t0;

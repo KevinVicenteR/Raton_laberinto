@@ -59,6 +59,10 @@ struct Physical {
   float dropout = 0.02f;
   float outlier = 0.004f;
   int offsetF = 0, offsetL = 0, offsetR = 0;  // error de cada sensor (mm)
+  // Inyeccion reproducible: -1 desactiva, segundos desde el arranque.
+  float laserFailAt[3] = {-1, -1, -1};  // izq, frente, der: no llegan muestras
+  float gyroFailAt = -1;
+  bool gyroFrozen = false;  // true: publica el mismo angulo; false: no publica
   float startX = 0, startY = 0, startDeg = 0;  // error de colocacion en la salida
 };
 

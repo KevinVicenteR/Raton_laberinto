@@ -20,16 +20,8 @@ void serviceTrampoline() {
   if (gApp) gApp->service();
 }
 
-const char* const kModeNames[] = {"",          "1 EXPLORAR",  "2 CARRERA", "3 PRACTICA",
-                                  "4 SENSORES", "5 CAL MOTOR", "6 RUEDAS",  "7 BORRAR MAPA"};
-const char* const kModeHelp[] = {"",
-                                 "competencia: meta+ruta",
-                                 "competencia: ruta guardada",
-                                 "pista cualquiera",
-                                 "ver lecturas",
-                                 "pasillo recto 2 celdas",
-                                 "raton levantado",
-                                 "olvida el mapa"};
+const char* const kModeNames[] = {"", "1 DESCONOCIDO", "2 MAPEAR Y GUARDAR", "3 APRENDIDO"};
+const char* const kModeHelp[] = {"", "buscar meta desde cero", "mapa y ruta mas corta", "resolver mapa guardado"};
 
 // printf de la placa sin coma flotante: valor con 4 decimales significativos a mano.
 const char* fmt(float v, char* buf, int size) {
@@ -99,7 +91,8 @@ void App::setup() {
   snprintf(line, sizeof(line), "SENSORES izq=%s frente=%s der=%s", lasers_.ok(0) ? "ok" : "FALLA",
            lasers_.ok(1) ? "ok" : "FALLA", lasers_.ok(2) ? "ok" : "FALLA");
   reply(line);
-  if (!ok) fail(!lasers_.ok(0) ? "Laser izquierdo" : (!lasers_.ok(1) ? "Laser frontal" : "Laser derecho"));
+  if (!lasers_.ok(1)) fail("Laser frontal");
+  if (!lasers_.ok(0) && !lasers_.ok(2)) fail("Ambos laterales");
   ok = false;
   for (int i = 0; i < 5 && !ok; ++i) {
     ok = imu_.begin();
@@ -140,6 +133,11 @@ void App::feed(int c) {
   if ((c == 'x' || c == 'X') && lineLen_ == 0) {
     board_.requestStop();
     motors_.set(0, 0);
+    return;
+  }
+  if (lineLen_ == 0 && c >= '1' && c <= '3') {
+    char digit[2] = {static_cast<char>(c), 0};
+    command(digit);
     return;
   }
   if (c == '\n' || c == '\r') {
@@ -188,14 +186,21 @@ void App::command(char* cmd) {
     reply("OCUPADO (x = parar)");
     return;
   }
-  if (cmd[0] == 's' && (cmd[1] == 0 || (cmd[1] >= '1' && cmd[1] <= '7' && cmd[2] == 0))) {
+  if (cmd[0] >= '1' && cmd[0] <= '3' && cmd[1] == 0) {
+    mode_ = cmd[0] - '0';
+    startRequested_ = true;
+    snprintf(out, sizeof(out), "ARRANCANDO %s", kModeNames[mode_]);
+    reply(out);
+    return;
+  }
+  if (cmd[0] == 's' && (cmd[1] == 0 || (cmd[1] >= '1' && cmd[1] <= '3' && cmd[2] == 0))) {
     if (cmd[1]) mode_ = cmd[1] - '0';
     startRequested_ = true;
     snprintf(out, sizeof(out), "ARRANCANDO %s", kModeNames[mode_]);
     reply(out);
     return;
   }
-  if (cmd[0] == 'm' && cmd[1] >= '1' && cmd[1] <= '7' && cmd[2] == 0) {
+  if (cmd[0] == 'm' && cmd[1] >= '1' && cmd[1] <= '3' && cmd[2] == 0) {
     mode_ = cmd[1] - '0';
     snprintf(out, sizeof(out), "MODE %d", mode_);  // la web marca el modo cuando la placa lo confirma
     reply(out);
@@ -321,7 +326,7 @@ void App::command(char* cmd) {
   }
   snprintf(out, sizeof(out), "? orden desconocida: %s", cmd);
   reply(out);
-  reply("ordenes: s s<n> x m<n> G<x>,<y> set <p> <v> get <p> params save defaults map erase calsonda calfront calside <mm> estado R");
+  reply("ordenes: 1 2 3 s s<1-3> x m<n> G<x>,<y> set <p> <v> get <p> params save defaults map erase calsonda calfront calside <mm> estado R");
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -382,10 +387,14 @@ bool App::armStart() {
   // Manos fuera, raton quieto: calibrar el giroscopio y arrancar.
   display_.show(kModeNames[mode_], "", "No tocar...");
   const uint32_t t0 = millis();
-  while (millis() - t0 < 700) board_.tick();
+  while (millis() - t0 < 700) {
+    board_.tick();
+    if (board_.stopRequested()) return false;
+  }
   display_.show(kModeNames[mode_], "", "Calibrando giro");
   imu_.calibrate(500);
-  board_.clearStop();
+  service();
+  if (board_.stopRequested()) return false;
   board_.resetLoad();
   display_.show(kModeNames[mode_], "", "EN MARCHA", "x = parar");
   return true;
@@ -419,23 +428,20 @@ void App::runMode(int mode) {
   snprintf(line, sizeof(line), "START %d", mode);
   reply(line);
   switch (mode) {
-    case EXPLORE: {
-      armStart();
-      // Antes de salir: calibrar los sensores con las paredes de la salida (y comprobar que la pista es la de
-      // la geometria guardada). Se guarda sola: la carrera y la practica la usan despues.
-      const float corridor = mouse_.calibrateSensors(params_, true);
-      if (corridor == -2) {
-        display_.show("PISTA DISTINTA", "usa el modo 3", "o set cellMm");
-        delay(1500);
-        break;
-      }
-      if (corridor > 0) storage::saveParams(params_);
-      showResult(mouse_.explore(true, true), "EXPLORAR");
-      saveLearned();
+    case EXPLORE:
+    case MAP: {
+      if (!armStart()) break;
+      // No exigir paredes en la salida: usar los parametros guardados y aprender en marcha.
+      mouse_.resetMap();
+      board_.saveEnabled = mode == MAP;
+      const raton::MissionResult result = mode == MAP ? mouse_.mapAll() : mouse_.toGoal();
+      showResult(result, mode == MAP ? "MAPEAR" : "DESCONOCIDO");
+      if (!mouse_.navigator().sensorFault()) saveLearned();
+      board_.saveEnabled = true;
       break;
     }
     case kCalibrate: {
-      armStart();
+      if (!armStart()) break;
       const float corridor = mouse_.calibrateSensors(params_, true);
       const bool saved = corridor > 0 && storage::saveParams(params_);
       char out[80];
@@ -446,32 +452,20 @@ void App::runMode(int mode) {
       delay(800);
       break;
     }
-    case RACE:
-      armStart();
-      showResult(mouse_.race(true), "CARRERA");
-      saveLearned();
+    case RACE: {
+      // No usar el mapa temporal del modo 1 ni inventar una ruta si falta el mapa aprendido.
+      static raton::Maze learned;
+      if (!storage::loadMap(learned) || learned.width() != params_.mazeW || learned.height() != params_.mazeH) {
+        reply("SIN_MAPA_GUARDADO: ejecuta el modo 2 primero");
+        display_.show("SIN MAPA", "Usa el modo 2");
+        break;
+      }
+      mouse_.maze() = learned;
+      if (!armStart()) break;
+      showResult(mouse_.solveLearned(), "APRENDIDO");
+      if (!mouse_.navigator().sensorFault()) saveLearned();
       break;
-    case PRACTICE:
-      practiceRun();
-      saveLearned();
-      break;
-    case SENSORS:
-      sensorsMode();
-      break;
-    case MOTOR_CAL:
-      armStart();
-      motorCalibration();
-      break;
-    case WHEELS:
-      wheelTest();
-      break;
-    case ERASE:
-      storage::eraseMap();
-      mouse_.resetMap();
-      reply("MAPA_BORRADO");
-      display_.show("MAPA BORRADO");
-      delay(800);
-      break;
+    }
   }
   motors_.set(0, 0);
   busy_ = false;

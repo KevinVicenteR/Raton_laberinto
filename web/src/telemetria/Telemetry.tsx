@@ -230,7 +230,7 @@ export function Telemetry() {
             ))}
           </div>
           <p className="status">
-            Elegir modo envía m1–m7 si está conectado. ARRANCAR envía s y el modo seleccionado.
+            Elegir modo envía m1–m3 si está conectado. ARRANCAR envía s y el modo seleccionado.
           </p>
           {(commands.mode <= 3 || Object.keys(state.cells).length > 0) && (
             <>
@@ -243,13 +243,13 @@ export function Telemetry() {
                     void run(commands.train);
                   }}
                 >
-                  Explorar y guardar
+                  Mapear y guardar
                 </button>
                 <button
                   disabled={!canSend || busy || !learnGoal || !Object.keys(state.cells).length}
                   onClick={() => learnGoal && void run(() => commands.route(learnGoal))}
                 >
-                  Carrera a la celda elegida
+                  Resolver hasta la celda elegida
                 </button>
               </div>
               <button disabled={!canSend || busy || active} onClick={() => void run(commands.loadMap)}>
@@ -259,8 +259,8 @@ export function Telemetry() {
                 Borrar mapa guardado
               </button>
               <p className="status">
-                Explorar guarda el mapa en la placa al llegar a la meta y al volver (MAPA_GUARDADO). Toca una
-                celda del mapa y pulsa Carrera para ir a ella. Coloca el ratón en la salida mirando al norte
+                El modo 2 guarda el mapa al completar la exploración y volver a la salida (MAPA_GUARDADO). Toca una
+                celda del mapa y pulsa Resolver para ir a ella. Coloca el ratón en la salida mirando al norte
                 antes de arrancar.
               </p>
               <LearnedMap

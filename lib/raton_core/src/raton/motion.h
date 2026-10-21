@@ -32,6 +32,7 @@ class Motion {
   // Girar hasta el angulo absoluto target con velocidad angular maxima y aceleracion dadas.
   void turnTo(float target, float rate, float accel);
   bool turning() const { return !rotDone_; }
+  bool sensorFault() const { return sensorFault_; }
   // Correccion de rumbo de las paredes (grados) sumada al rumbo objetivo cuando no se gira.
   void setSteer(float deg) { steer_ = deg; }
   float headingTarget() const { return angleTarget_; }
@@ -63,6 +64,9 @@ class Motion {
   void measure(const Sensors& s);
 
   const Params& p_;
+  // Fallo enclavado hasta reset: no reanudar al reaparecer una muestra.
+  bool sensorFault_ = false;
+  float lastGyroT_ = 0, gyroProgressT_ = 0, gyroProgress_ = 0, encProgress_ = 0;
   // Medidas
   float encL0_ = 0, encR0_ = 0;
   float pos_ = 0, lastPos_ = 0, vMeas_ = 0;

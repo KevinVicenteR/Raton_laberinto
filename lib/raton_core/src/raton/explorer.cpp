@@ -183,7 +183,7 @@ int Explorer::decide(int x, int y, Dir h) {
         // Hay meta y vuelve a haber camino posible (una pared mal leida se corrigio): ir a por ella.
         CellSet goals;
         goalSet(maze_, goals);
-        if (goals.count > 0) {
+        if (!fullMapping_ && goals.count > 0) {
           flood(maze_, goals, true, dist_);
           if (dist_[maze_.index(x, y)] != kInf) {
             io_.report("META_ALCANZABLE", true);

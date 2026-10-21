@@ -35,6 +35,10 @@ class Mouse {
   MissionResult race(bool returnHome = true);
   // Solo ir a la meta y parar (la primera pasada de una prueba).
   MissionResult toGoal() { return explore(false, false); }
+  // Modo 2: todas las celdas alcanzables, vuelta, ruta minima en celdas y mapa en flash.
+  MissionResult mapAll();
+  // Modo 3: solo aristas conocidas, sin exploracion optimista. Termina en la meta.
+  MissionResult solveLearned();
   // Calibra los tres sensores parado en el centro de una celda con pared a la izquierda y a la derecha:
   // el frontal mide cada pared de frente y cada lateral se pone perpendicular a su pared. Corrige
   // out.*OffsetMm (y el frontal solo si se conoce la celda). Devuelve el ancho del pasillo, -1 si no puede,

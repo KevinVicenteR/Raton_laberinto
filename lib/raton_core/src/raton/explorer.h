@@ -30,6 +30,7 @@ class Explorer : public Brain {
 
   void setPhase(Phase phase);
   Phase phase() const { return phase_; }
+  void setFullMapping(bool on) { fullMapping_ = on; }
   void setTimeLimit(float t) { deadline_ = t; }
 
   int decide(int x, int y, Dir h) override;
@@ -75,6 +76,7 @@ class Explorer : public Brain {
   bool forgotAll_ = false;
   int wallResets_ = 0;
   bool exploredAll_ = false;
+  bool fullMapping_ = false;
 };
 
 }  // namespace raton

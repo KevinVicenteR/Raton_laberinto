@@ -30,6 +30,10 @@ float profileStep(float v, float rem, float vmax, float vEnd, float accel, float
 }  // namespace
 
 void Motion::reset(const Sensors& s) {
+  sensorFault_ = false;
+  lastGyroT_ = gyroProgressT_ = s.t;
+  gyroProgress_ = s.gyroDeg;
+  encProgress_ = 0;
   encL0_ = s.encLeftMm;
   encR0_ = s.encRightMm;
   gyroAtSample_ = 0;
@@ -99,6 +103,24 @@ void Motion::hold(const Sensors& s) {
 }
 
 void Motion::update(const Sensors& s, float& dutyL, float& dutyR) {
+  // Una IMU sin muestras no debe quedar sustituida indefinidamente por encoders.
+  // Detecta tambien una salida congelada que sigue marcando muestras como nuevas.
+  const float encAngle = ((s.encRightMm - encR0_) - (s.encLeftMm - encL0_)) / p_.trackMm * kDeg;
+  if (s.gyroFresh && isfinite(s.gyroDeg)) {
+    lastGyroT_ = s.t;
+    if (fabsf(s.gyroDeg - gyroProgress_) > 0.1f) {
+      gyroProgress_ = s.gyroDeg;
+      gyroProgressT_ = s.t;
+      encProgress_ = encAngle;
+    } else if (s.t - gyroProgressT_ > 0.2f && fabsf(encAngle - encProgress_) > 20.0f) {
+      sensorFault_ = true;
+    }
+  }
+  if (!isfinite(s.gyroDeg) || s.t - lastGyroT_ > 0.1f) sensorFault_ = true;
+  if (sensorFault_) {
+    dutyL = dutyR = 0;
+    return;
+  }
   measure(s);
   const float dt = p_.dt;
 

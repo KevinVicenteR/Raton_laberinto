@@ -70,6 +70,8 @@ class Navigator {
   void setOffsetsCell(float c) { offsetsCell_ = c; }
   float rangeBias() const;
 
+  bool sensorFault() const { return rangeFault_ || motion_.sensorFault(); }
+
   int x() const { return cx_; }
   int y() const { return cy_; }
   Dir heading() const { return h_; }
@@ -98,6 +100,8 @@ class Navigator {
 
   void tick();
   void setMotorsFromMotion();
+  void filterSensors();
+  bool stopped() { return sensorFault() || io_.stopRequested(); }
   void report();
   float cellPos() const { return motion_.position() - centerOdo_; }
   float gridAngle() const { return gridAngle_; }
@@ -145,6 +149,10 @@ class Navigator {
   Motion motion_;
   Sensors s_;
   float t_ = 0;
+  float rangeSeen_[3] = {};
+  bool rangeLost_[3] = {};
+  bool faultReported_ = false;
+  bool rangeFault_ = false;
 
   int cx_ = 0, cy_ = 0;
   Dir h_ = NORTH;

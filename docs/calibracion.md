@@ -1,3 +1,5 @@
+> Actualización 2026-10-21: el menú tiene únicamente 1 Resolver desconocido, 2 Mapear/guardar/ruta mínima, 3 Resolver aprendido. Los números arrancan directamente; `s1`–`s3` y `m1`–`m3` siguen disponibles. La calibración de paredes es opcional (`calsonda`) y no forma parte del arranque. Las referencias posteriores a los siete modos o práctica corresponden al diseño anterior. Véase README para el funcionamiento actual.
+
 # Calibración
 
 ## Lo que hace solo (no hay que tocar nada)

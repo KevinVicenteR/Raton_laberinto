@@ -339,9 +339,10 @@ const raton::Sensors& SimPlatform::tick() {
     bias_ += ph_.gyroDriftDps * sqrtf(0.005f) * n(rng_);
     const float wTrue = (br_ - bl_) / ph_.trackMm * kDeg;
     const float rate = wTrue * ph_.gyroScale + bias_ + ph_.gyroNoiseDps * n(rng_);
-    s_.gyroDeg += rate * (t_ - lastGyroRead_);
+    const bool failed = ph_.gyroFailAt >= 0 && t_ >= ph_.gyroFailAt;
+    if (!failed) s_.gyroDeg += rate * (t_ - lastGyroRead_);
     lastGyroRead_ = t_;
-    s_.gyroFresh = true;
+    s_.gyroFresh = !failed || ph_.gyroFrozen;
   }
   // Laseres por turnos.
   raton::Range* rr[3] = {&s_.left, &s_.front, &s_.right};
@@ -356,8 +357,10 @@ const raton::Sensors& SimPlatform::tick() {
     int v = laserValue_[i];
     if (v >= 0) v += offs[i];
     if (v > p_.sensorMaxMm) v = -1;
-    rr[i]->mm = v;
-    rr[i]->fresh = true;
+    if (!(ph_.laserFailAt[i] >= 0 && t_ >= ph_.laserFailAt[i])) {
+      rr[i]->mm = v;
+      rr[i]->fresh = true;
+    }
   }
   // Zona real (regla de los 30 s).
   const int cx = cellX(), cy = cellY();

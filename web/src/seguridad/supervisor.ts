@@ -25,7 +25,7 @@ const median = (v: number[]) => [...v].sort((a, b) => a - b)[Math.floor(v.length
 export function supervise(
   prev: Supervisor,
   s: RobotSample,
-  mode: number,
+  _mode: number,
   enabled: boolean,
   learn: boolean,
   userSpeed: number,
@@ -86,11 +86,7 @@ export function supervise(
       state.history[i - 1].state !== h.state,
   ).length;
   if (Math.max(...recent.map((h) => Math.hypot(h.x - cx, h.y - cy))) < 150 && turning >= 3) {
-    state.message =
-      mode === 3 || mode === 4 || mode === 6
-        ? 'Muchos giros sin avanzar (solo aviso)'
-        : 'Bucle: pasa a pared derecha';
-    if (mode !== 3 && mode !== 4 && mode !== 6) commands.push('x', 'm1', 's1');
+    state.message = 'Muchos giros sin avanzar (solo aviso)';
     state.lastAction = s.t;
   } else if (hits >= 3 && state.speed > 50) {
     state.speed = Math.max(50, Math.round(state.speed * 0.8));

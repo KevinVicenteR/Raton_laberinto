@@ -39,15 +39,15 @@ describe('Supervisor y mapa de ocupación', () => {
     expect(commands).not.toContain('m1');
     expect(state.message).toContain('solo aviso');
   });
-  it('en otros modos sale del bucle con parada y pared derecha', () => {
+  it.each([1, 2, 3])('no reinicia ni cambia el modo %i durante un bucle', (mode) => {
     let state = initialSupervisor();
     const commands: string[] = [];
     for (let i = 0; i < 30; i++) {
-      const result = supervise(state, sample(5000 + i * 100, i % 2 ? 'GIRO' : 'RECTA'), 5, true, false, 100);
+      const result = supervise(state, sample(5000 + i * 100, i % 2 ? 'GIRO' : 'RECTA'), mode, true, false, 100);
       state = result.state;
       commands.push(...result.commands);
     }
-    expect(commands).toEqual(['x', 'm1', 's1']);
+    expect(commands).toEqual([]);
   });
   it('sin lectura no se demuestra ni pared ni espacio libre', () => {
     const s = { ...sample(0), I: -1, F: -1, D: -1 };

@@ -35,6 +35,11 @@ Physical perturbed(const raton::Params& p, int level, uint32_t seed) {
   ph.bodyRearMm = p.bodyRearMm;
   ph.bodyWidthMm = p.bodyWidthMm;
   ph.rectBody = !(p.bodyFrontMm == 45.0f && p.bodyRearMm == 45.0f && p.bodyWidthMm == 90.0f);
+  const char* faults[3] = {"SIM_FAIL_LEFT", "SIM_FAIL_FRONT", "SIM_FAIL_RIGHT"};
+  for (int i = 0; i < 3; ++i)
+    if (const char* v = getenv(faults[i])) ph.laserFailAt[i] = static_cast<float>(atof(v));
+  if (const char* v = getenv("SIM_FAIL_GYRO")) ph.gyroFailAt = static_cast<float>(atof(v));
+  ph.gyroFrozen = getenv("SIM_FREEZE_GYRO") != nullptr;
   if (level <= 0) return ph;
   std::mt19937 rng(seed * 7919u + 13u);
   std::uniform_real_distribution<float> u(-1, 1);
