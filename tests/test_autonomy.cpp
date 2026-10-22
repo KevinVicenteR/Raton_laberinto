@@ -3,6 +3,7 @@
 #include "sim.h"
 #include "run_case.h"
 #include "raton/event_journal.h"
+#include "raton/startup_check.h"
 #include <stdio.h>
 #include <string.h>
 using namespace raton;
@@ -80,7 +81,7 @@ class ObservedPlatform : public sim::SimPlatform {
   }
 };
 
-static void mission(bool cross,bool geometry=false) {
+static void mission(bool cross,bool geometry=false,bool cautious=false) {
   Params p; p.sideEnabled=1;
   p.mazeW=p.mazeH=5; p.startX=2;p.startY=0;p.goalX=4;p.goalY=2;
   if(geometry){p.cellMm=300;p.autoGeometryConfirmed=1;}
@@ -90,7 +91,7 @@ static void mission(bool cross,bool geometry=false) {
   for(int x=0;x<4;++x)truth.set(x,2,EAST,Wall::Open);
   auto ph=sim::perturbed(p,0,1);ph.sideSensors=true;
   sim::World world(truth,ph);ObservedPlatform io(world,p,ph,1);io.pauseOnSave=true;io.place(2,0,NORTH);
-  Mouse mouse(io,p);auto r=mouse.autonomous();
+  Mouse mouse(io,p);mouse.navigator().setCautious(cautious);auto r=mouse.autonomous();
   if(!r.autonomousComplete) for(const auto& e:io.events) if(e.text.find("NAV ")!=0)printf("%.2f %s\n",e.t,e.text.c_str());
   CHECK(r.autonomousComplete);CHECK(r.exploredAll);CHECK(r.backHome);CHECK(io.saved);
   CHECK(mouse.maze().visited(0,2)&&mouse.maze().visited(4,2));
@@ -173,9 +174,69 @@ static int benchmark(int n) {
   printf("AUTO_BENCH %d/%d completed\n",n-failed,n);return failed?1:0;
 }
 
+class StartupPlatform : public Platform {
+ public:
+  Sensors s;
+  float clock=10.6f;
+  bool missingFront=false,missingLeft=false,missingRight=false,move=false,returnHome=false,cancel=false;
+  bool invalidEncoder=false,noClock=false,invalidClock=false;
+  int ticks=0;
+  bool movingOutput=false;
+  void setMotors(float l,float r) override {movingOutput=movingOutput||l!=0||r!=0;}
+  bool stopRequested() override{return cancel && ticks>=10;}
+  void report(const char*,bool) override{}
+  const Sensors& tick() override {
+    ++ticks;if(!noClock)clock+=0.002f;s.t=invalidClock?NAN:clock;
+    s.left.fresh=s.front.fresh=s.right.fresh=s.sideLeft.fresh=s.sideRight.fresh=false;
+    if(ticks%10==0){
+      s.left=Range{-1,!missingLeft};s.front=Range{-1,!missingFront};s.right=Range{-1,!missingRight};
+    }
+    // Out-of-range samples are fresh transport responses, not disconnections.
+    s.encLeftMm=invalidEncoder?NAN:move && (!returnHome || ticks<70)?3:0;
+    return s;
+  }
+};
+
+static void startupRegression(){
+  StartupPlatform io;
+  io.s.t=10.0f; // sample cached before a 600 ms blocking calibration
+  const auto good=checkStartup(io);
+  CHECK(good.failure()==nullptr);CHECK(good.elapsed>=0.25f);CHECK(io.ticks>=125);
+  CHECK(good.samples[1]>=10);CHECK(!io.movingOutput);
+  StartupPlatform front;front.missingFront=true;
+  CHECK(strcmp(checkStartup(front).failure(),"FRONTAL_SIN_MUESTRAS")==0);
+  StartupPlatform lateral;lateral.missingLeft=true;
+  CHECK(checkStartup(lateral).failure()==nullptr);
+  lateral.missingRight=true;
+  CHECK(strcmp(checkStartup(lateral).failure(),"DIAGONALES_SIN_MUESTRAS")==0);
+  // Movement after baseline, then return to it, must still be reported.
+  struct Moved : StartupPlatform {
+    const Sensors& tick() override {
+      StartupPlatform::tick();s.encLeftMm=ticks>20 && ticks<70?3:0;return s;
+    }
+  } moved;
+  CHECK(strcmp(checkStartup(moved).failure(),"ROBOT_EN_MOVIMIENTO")==0);
+  StartupPlatform partial;partial.missingFront=true;
+  CHECK(checkStartup(partial).action()==StartupCheck::Action::Cautious);
+  StartupPlatform invalid;invalid.invalidEncoder=true;
+  CHECK(checkStartup(invalid).action()==StartupCheck::Action::Cancel);
+  StartupPlatform normal;
+  CHECK(checkStartup(normal).action()==StartupCheck::Action::Normal);
+  StartupPlatform nan;nan.invalidEncoder=true;
+  CHECK(strcmp(checkStartup(nan).failure(),"ENCODER_NO_FINITO")==0);
+  StartupPlatform cancelled;cancelled.cancel=true;
+  CHECK(checkStartup(cancelled).cancelled);CHECK(!cancelled.movingOutput);
+  StartupPlatform stoppedClock;stoppedClock.noClock=true;
+  CHECK(checkStartup(stoppedClock).invalidClock);
+  StartupPlatform brokenClock;brokenClock.invalidClock=true;
+  CHECK(checkStartup(brokenClock).invalidClock);
+}
+
 int main(int argc,char** argv) {
   if(argc>1 && !strcmp(argv[1],"--bench"))return benchmark(argc>2?atoi(argv[2]):8);
   policies();mission(false);mission(true);mission(true,true);fatalFault();
+  mission(false,false,true);
+  startupRegression();
   communicationRepair(true);communicationRepair(false);diagonalMission();
   printf("Autonomia: %d comprobaciones, %d fallos\n",checks,failures);
   return failures?1:0;

@@ -5,7 +5,7 @@ export const modes = ['Autónomo completo', 'Competencia', 'Camino más corto'];
 export const modeHelp = [
   'Diagnostica mientras resuelve, mapea todo, regresa, guarda y resuelve el mapa aprendido.',
   'Prioriza llegar a la meta con diagnóstico y recuperación en marcha.',
-  'Usa solo caminos confirmados del mapa guardado por el modo autónomo.',
+  'Usa caminos confirmados. Si falta el mapa guardado, lo construye y resuelve automáticamente.',
 ];
 export function useRobotCommands(send: (cmd: string) => Promise<boolean>) {
   const [mode, setMode] = useState(() => {

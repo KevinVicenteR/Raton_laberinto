@@ -79,6 +79,7 @@ class Navigator {
 
   bool sensorFault() const { return rangeFault_ || motion_.sensorFault(); }
   void setAutonomous(bool on) { autonomous_ = on; }
+  void setCautious(bool on) { cautious_=on; }
   bool repairRanges();
   bool resumeAfterStorage();
   void snapshot() { lastReport_=-1e9f; lastHealthReport_=-1e9f; report(); if(autonomous_)diagnose(); }
@@ -157,6 +158,7 @@ class Navigator {
   bool diagonal(Dir next, Brain& brain);
   void diagnose();
   bool autonomous_ = false;
+  bool cautious_ = false;
   bool trajectory_ = false;
   float steerCommand_ = 0, lastHealthReport_ = -1;
   float mapResumeAt_ = 0;

@@ -9,7 +9,7 @@ Rama `experimental/autonomia-v3`, basada en `ea7bd38`. No se fusiona en
 |---|---|---|
 | `1` / `s1` | Autónomo completo | Diagnóstico, búsqueda de meta, mapeo de todas las ramas alcanzables, regreso, guardado y resolución aprendida. |
 | `2` / `s2` | Competencia | Busca la meta sin exigir explorar todas las ramas; conserva el mapa persistido anterior. |
-| `3` / `s3` | Camino más corto | Recalcula la ruta mínima en celdas sobre aristas confirmadas del mapa guardado. Sin mapa/ruta permanece parado. |
+| `3` / `s3` | Camino más corto | Recalcula la ruta mínima sobre aristas confirmadas. Si no hay mapa guardado válido, inicia automáticamente mapeo completo y resolución. |
 
 `m1`–`m3` seleccionan; `x` detiene. Elegir modo, conectar y resincronizar nunca
 arrancan motores. El arranque requiere una orden o el gesto físico existente.
@@ -38,7 +38,7 @@ que no se han medido. Los offsets absolutos necesitan referencias conocidas.
    ante incertidumbre o sensores degradados; 120 tras recuperación. Se respetan
    los topes del perfil físico y del motor. La detección de oscilación reduce
    temporalmente ganancia y velocidad, sin guardar ese ajuste provisional.
-4. **Diagnóstico continuo:** valida reposo y presencia de muestras al arrancar;
+4. **Diagnóstico continuo:** comprueba reposo y presencia de muestras al arrancar;
    vigila IMU, sentido de encoders, antigüedad y lecturas constantes que
    contradicen una predicción cambiante con paredes confirmadas. Una distancia
    constante junto a una pared no constituye por sí sola una avería.
@@ -144,3 +144,31 @@ Los tres trabajos terminaron sin runner asignado ni pasos ejecutados; no hay
 logs de compilación disponibles. Por tanto esa ejecución no valida ni rechaza
 el código: queda pendiente ejecutar las pruebas nativas y de placa finales
 en un entorno que permita iniciar los ejecutables y los trabajos de CI.
+
+## Corrección de arranque y autoprueba no bloqueante
+
+El registro físico de Kevin muestra `CALIBRANDO_GIRO` seguido aproximadamente
+630 ms después por `AUTOPRUEBA_SENSORES_O_REPOSO`, incluso con motores funcionales.
+Se encontró un fallo en la ventana: tomaba `Board::last()` anterior a una
+calibración de IMU de 600 ms como comienzo de una prueba de 250 ms. El primer
+tick posterior ya agotaba esa ventana, normalmente sin reunir tres muestras.
+
+Ahora se captura una lectura nueva DESPUÉS de calibrar y se cuenta una ventana
+completa. `AUTOPRUEBA` publica duración, muestras DI/F/DD/LI/LD y movimiento
+de encoders. Las muestras nuevas fuera de alcance cuentan como respuesta del
+sensor; no se confunden con desconexión.
+
+Por petición de Kevin, en los tres modos de navegación las pruebas incompletas,
+el movimiento detectado en esa ventana o una calibración inestable generan
+advertencia y **arranque degradado**, no cancelación automática. Se reutiliza
+el sesgo anterior si no se pudo calibrar, se limita a 120 mm/s y 180 °/s,
+se deshabilitan curvas/diagonales y se evita guardar el aprendizaje del intento.
+El control en marcha mantiene su diagnóstico y recuperación. `x`, reloj inválido
+y encoders no finitos siguen cancelando: no constituyen simples advertencias.
+La calibración explícita contra paredes conserva su validación estricta.
+
+Las pruebas nativas vuelven a poder ejecutarse en este entorno: pasan el núcleo
+y las regresiones de autonomía/arranque. La compilación ARM para Nano continúa
+bloqueada por el ejecutable del toolchain instalado, no por un error C++ mostrado.
+Solo hay puertos serie Bluetooth enumerados; no se ha cargado esta corrección
+en la placa física.

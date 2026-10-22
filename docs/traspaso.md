@@ -290,3 +290,19 @@ No afirmar posición exacta, reparación de averías físicas ni éxito garantiz
 Las visitas del mapa son estimadas; POSE publica contraste externo e incertidumbre.
 No habilitar geometría/fusión lateral sin medir el montaje real.
 
+### Corrección de autoprueba tras calibrar y arranque degradado
+
+El usuario reportó que los tres modos se cancelaban con
+`AUTOPRUEBA_SENSORES_O_REPOSO` y solo funcionaba `T`. Se corrigió el uso de
+una muestra `Board::last()` anterior a los 600 ms de calibración como comienzo
+de la ventana de 250 ms. La función compartida `checkStartup()` toma una nueva
+base y tiene regresiones de ese intervalo, muestras ausentes, datos no finitos,
+movimiento con retorno a origen y cancelación.
+
+La autoprueba es informativa para incidencias recuperables: se arranca con
+límites de 120 mm/s y 180 °/s y se conserva el aprendizaje guardado anterior.
+La calibración inestable puede reutilizar el sesgo anterior. `x`, reloj inválido
+y encoders no finitos mantienen cancelación. No se eliminan los vigilantes de
+averías críticas durante navegación. Modo 3 sin mapa válido inicia mapeo y
+resolución; no se inventa una ruta aprendida.
+

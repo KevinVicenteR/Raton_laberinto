@@ -11,6 +11,7 @@
 #include "raton/frame.h"
 #include "raton/maze_text.h"
 #include "raton/param_table.h"
+#include "raton/startup_check.h"
 #include "storage.h"
 
 namespace {
@@ -427,6 +428,7 @@ int App::menu() {
     if (startRequested_) {
       const int m = requestedMode_ ? requestedMode_ : mode_;
       requestedMode_ = 0;
+      startRequested_ = false;
       return m;
     }
     const int f = s.front.mm;
@@ -464,7 +466,10 @@ int App::menu() {
   }
 }
 
-bool App::armStart() {
+bool App::armStart(bool allowDegraded) {
+  startupDegraded_=false;
+  mouse_.navigator().setCautious(false);
+  board_.setMotors(0,0);
   // Manos fuera, raton quieto: calibrar el giroscopio y arrancar.
   display_.show(kModeNames[mode_], "", "No tocar...");
   reply("PREPARANDO: deja el raton quieto");
@@ -489,9 +494,10 @@ bool App::armStart() {
   }
   if (!ready) {
     board_.setMotors(0, 0);
-    reply(board_.stopRequested() ? "ARRANQUE_CANCELADO" :
-          "CAL_NO_ESTABLE: arranque cancelado; deja quieto y vuelve a iniciar");
-    return false;
+    if(board_.stopRequested()){reply("ARRANQUE_CANCELADO");return false;}
+    if(!allowDegraded){reply("CAL_NO_ESTABLE: calibracion no aplicada");return false;}
+    startupDegraded_=true;
+    reply("AUTO phase=DEGRADADO reason=CAL_NO_ESTABLE_USAR_SESGO_ANTERIOR");
   }
   service();
   if (board_.stopRequested()) {
@@ -499,21 +505,24 @@ bool App::armStart() {
     return false;
   }
   board_.resetLoad();
-  int fresh[5] = {};
-  const float checkStart = board_.last().t;
-  const float leftStart = board_.last().encLeftMm, rightStart = board_.last().encRightMm;
-  while (board_.last().t - checkStart < 0.25f) {
-    const auto& sensors = board_.tick();
-    if (board_.stopRequested()) return false;
-    const raton::Range* ranges[5] = {&sensors.left,&sensors.front,&sensors.right,&sensors.sideLeft,&sensors.sideRight};
-    for (int i=0;i<5;++i) if (ranges[i]->fresh) ++fresh[i];
+  const auto check=raton::checkStartup(board_);
+  char diagnosis[160];
+  snprintf(diagnosis,sizeof(diagnosis),
+      "AUTOPRUEBA ms=%d DI=%d F=%d DD=%d LI=%d LD=%d enc_um=%d,%d",
+      int(check.elapsed*1000),check.samples[0],check.samples[1],check.samples[2],
+      check.samples[3],check.samples[4],int(check.driftLeft*1000),int(check.driftRight*1000));
+  reply(diagnosis);
+  if(const char* reason=check.failure()) {
+    board_.setMotors(0,0);
+    const bool proceed=allowDegraded && check.action()==raton::StartupCheck::Action::Cautious;
+    snprintf(diagnosis,sizeof(diagnosis),"AUTO phase=%s reason=%s",proceed?"DEGRADADO":"PARADO",reason);
+    reply(diagnosis);
+    if(!proceed)return false;
+    startupDegraded_=true;
   }
-  if (fresh[1] < 3 || (fresh[0] < 3 && fresh[2] < 3) ||
-      fabsf(board_.last().encLeftMm-leftStart)>2 || fabsf(board_.last().encRightMm-rightStart)>2) {
-    reply("AUTO phase=PARADO reason=AUTOPRUEBA_SENSORES_O_REPOSO");
-    return false;
-  }
-  reply(fresh[3]>=3 && fresh[4]>=3 ? "AUTO phase=LISTO reason=CINCO_CANALES" :
+  mouse_.navigator().setCautious(startupDegraded_);
+  if(startupDegraded_)reply("ARRANQUE_DEGRADADO: v<=120; continuar y diagnosticar sin guardar aprendizaje");
+  reply(check.samples[3]>=3 && check.samples[4]>=3 ? "AUTO phase=LISTO reason=CINCO_CANALES" :
                                                 "AUTO phase=LISTO reason=LATERALES_OPCIONALES_AUSENTES");
   display_.show(kModeNames[mode_], "", "EN MARCHA", "x = parar");
   reply("GIRO_LISTO: iniciando movimiento");
@@ -542,6 +551,15 @@ void App::showResult(const raton::MissionResult& r, const char* title) {
   reply(line);
 }
 
+void App::runAutonomousMission() {
+  if (!armStart()) return;
+  board_.saveEnabled = true;
+  const auto result = mouse_.autonomous();
+  showResult(result, result.autonomousComplete ? "AUTONOMO COMPLETO" : "AUTONOMO PARADO");
+  if (result.autonomousComplete && !mouse_.navigator().sensorFault() && !startupDegraded_) saveLearned();
+  else mouse_.navigator().motion().loadLearned();
+}
+
 void App::runMode(int mode) {
   busy_ = true;
   char line[32];
@@ -549,12 +567,7 @@ void App::runMode(int mode) {
   reply(line);
   switch (mode) {
     case AUTO: {
-      if (!armStart()) break;
-      board_.saveEnabled = true;
-      const auto result = mouse_.autonomous();
-      showResult(result, result.autonomousComplete ? "AUTONOMO COMPLETO" : "AUTONOMO PARADO");
-      if (result.autonomousComplete && !mouse_.navigator().sensorFault()) saveLearned();
-      else mouse_.navigator().motion().loadLearned();
+      runAutonomousMission();
       break;
     }
     case EXPLORE:
@@ -569,7 +582,7 @@ void App::runMode(int mode) {
       mouse_.navigator().setAutonomous(false);
       showResult(result, "COMPETENCIA");
       const bool completed = result.reachedGoal;
-      if (completed && !mouse_.navigator().sensorFault()) saveLearned();
+      if (completed && !mouse_.navigator().sensorFault() && !startupDegraded_) saveLearned();
       else mouse_.navigator().motion().loadLearned();
       board_.saveEnabled = true;
       break;
@@ -582,7 +595,7 @@ void App::runMode(int mode) {
       break;
     case kCalibrate: {
       const raton::Params before = params_;
-      if (!armStart()) { pendingCorridor_ = 0; break; }
+      if (!armStart(false)) { pendingCorridor_ = 0; break; }
       static raton::Maze beforeMap;
       beforeMap = mouse_.maze();
       if (pendingCorridor_ > 0) params_.cellMm = pendingCorridor_ + params_.wallMm;
@@ -609,8 +622,8 @@ void App::runMode(int mode) {
       // No usar el mapa temporal del modo 1 ni inventar una ruta si falta el mapa aprendido.
       static raton::Maze learned;
       if (!storage::loadMap(learned) || learned.width() != params_.mazeW || learned.height() != params_.mazeH) {
-        reply("SIN_MAPA_GUARDADO: ejecuta el modo 1 primero");
-        display_.show("SIN MAPA", "Usa el modo 1");
+        reply("AUTO phase=ADAPTANDO reason=SIN_MAPA_MAPEAR_Y_RESOLVER");
+        runAutonomousMission();
         break;
       }
       mouse_.maze() = learned;
@@ -619,7 +632,7 @@ void App::runMode(int mode) {
       const raton::MissionResult result = mouse_.solveLearned();
       mouse_.navigator().setAutonomous(false);
       showResult(result, "APRENDIDO");
-      if (result.reachedGoal && !mouse_.navigator().sensorFault()) saveLearned();
+      if (result.reachedGoal && !mouse_.navigator().sensorFault() && !startupDegraded_) saveLearned();
       else mouse_.navigator().motion().loadLearned();
       break;
     }

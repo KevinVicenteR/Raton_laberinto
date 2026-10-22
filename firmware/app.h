@@ -23,8 +23,9 @@ class App {
   enum Mode { AUTO = 1, EXPLORE = 2, RACE = 3, kModes = RACE, kCalibrate = 20, kSensors = 21, kSensorTest = 22 };
   void fail(const char* msg);
   int menu();
-  bool armStart();
+  bool armStart(bool allowDegraded=true);
   void runMode(int mode);
+  void runAutonomousMission();
   void feed(int c);
   void command(char* line);
   void reply(const char* line);
@@ -35,6 +36,7 @@ class App {
   void sensorsMode();
   void sensorTest();
   bool startupFailed_ = false;
+  bool startupDegraded_ = false;
   bool sensorTestRunning_ = false;
   float pendingCorridor_ = 0;
   void practiceRun();

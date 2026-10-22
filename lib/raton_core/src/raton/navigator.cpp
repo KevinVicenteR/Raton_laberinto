@@ -962,7 +962,7 @@ float Navigator::cruiseSpeed(int nx, int ny) const {
   if (autonomous_) {
     const bool known = maze_.visited(nx, ny) && maze_.fullyKnown(nx, ny) &&
                        maze_.votes(cx_, cy_, h_) <= -3;
-    const float requested = known && p_.knownSpeed > vmax_ ? p_.knownSpeed : vmax_;
+    const float requested = cautious_ ? 120.0f : known && p_.knownSpeed > vmax_ ? p_.knownSpeed : vmax_;
     return autonomySpeed(t_<dampingUntil_ && requested>150 ? 150 : requested, known, sqrtf(lateral_.varY()), headingError(),
         3 - rangeLost_[0] - rangeLost_[1] - rangeLost_[2], recoverCount_ > 0);
   }
@@ -1002,7 +1002,8 @@ bool Navigator::pivot(int q) {
   if (q == 2 || q == -2) q = (s_.right.mm >= 0 && (s_.left.mm < 0 || s_.right.mm > s_.left.mm)) ? -2 : 2;
   learnGyroScale();
   const float target = gridAngle_ + 90.0f * q;
-  motion_.turnTo(target, p_.rotSpeed, p_.rotAccel);
+  motion_.turnTo(target, cautious_ && p_.rotSpeed>180 ? 180 : p_.rotSpeed,
+                 cautious_ && p_.rotAccel>900 ? 900 : p_.rotAccel);
   const float t0 = t_;
   stalled_ = false;
   while (t_ - t0 < 2.0f) {
@@ -1108,7 +1109,7 @@ Navigator::Depart Navigator::depart(Brain& brain, float vmax) {
     if (stopped() || brain.shouldAbort()) return Depart::Fail;
     const int dir = brain.decide(cx_, cy_, h_);
     if (dir < 0) return Depart::Stop;
-    if (autonomous_ && dir == static_cast<int>(h_) && p_.autoGeometryConfirmed) {
+    if (autonomous_ && !cautious_ && dir == static_cast<int>(h_) && p_.autoGeometryConfirmed) {
       Dir next;
       if (brain.diagonalPair(cx_, cy_, h_, next) &&
           diagonalClear(maze_, p_, cell_, cx_, cy_, h_, next, sqrtf(lateral_.varY()))) {
@@ -1314,12 +1315,13 @@ float Navigator::actCenterOdo() const {
 }
 
 NavResult Navigator::run(Brain& brain, float vmax, bool smoothTurns) {
+  if(cautious_ && vmax>120)vmax=120;
   vmax_ = vmax;
   requestedVmax_ = vmax;
   if (p_.precisionMode) io_.report(autonomous_ && p_.autoGeometryConfirmed ?
       "PERFIL_PRECISION: v<=300 giro<=360 curvas condicionadas" :
       "PERFIL_PRECISION: v<=300 giro<=360 sin curvas", true);
-  smooth_ = smoothTurns && (!p_.precisionMode || (autonomous_ && p_.autoGeometryConfirmed));
+  smooth_ = !cautious_ && smoothTurns && (!p_.precisionMode || (autonomous_ && p_.autoGeometryConfirmed));
   stalled_ = false;
   blocked_ = false;
   decided_ = false;
@@ -1365,7 +1367,7 @@ NavResult Navigator::run(Brain& brain, float vmax, bool smoothTurns) {
     }
     // A learned route can become diagonal at an intermediate cell, not only at
     // departure. Check once per cell, before committing to its outgoing turn.
-    if (autonomous_ && p_.autoGeometryConfirmed && currentCell != diagonalChecked &&
+    if (autonomous_ && !cautious_ && p_.autoGeometryConfirmed && currentCell != diagonalChecked &&
         cellPos() >= -10 && cellPos() <= 10 && !blocked_ && !arcStarted_) {
       diagonalChecked = currentCell;
       Dir next;
