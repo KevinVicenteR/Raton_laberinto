@@ -232,11 +232,58 @@ static void startupRegression(){
   CHECK(checkStartup(brokenClock).invalidClock);
 }
 
+// The obstruction lasts longer than the former three-attempt budget.
+class PersistentJam : public ObservedPlatform {
+ public:
+  using ObservedPlatform::ObservedPlatform;
+  float releaseAt=12, lastLeft=0, lastRight=0;
+  void setMotors(float l,float r) override {
+    lastLeft=l;lastRight=r;
+    ObservedPlatform::setMotors(time()<releaseAt?0:l,time()<releaseAt?0:r);
+  }
+};
+
+static void persistentRecovery(int mode,bool locked=false) {
+  Params p;p.mazeW=p.mazeH=3;p.startX=1;p.startY=0;p.goalX=1;p.goalY=2;
+  Maze truth;truth.reset(3,3,true);
+  for(int y=0;y<3;++y)for(int x=0;x<3;++x)for(int d=0;d<4;++d)
+    truth.set(x,y,Dir(d),Wall::Closed);
+  truth.set(1,0,NORTH,Wall::Open);truth.set(1,1,NORTH,Wall::Open);
+  auto ph=sim::perturbed(p,0,1);sim::World world(truth,ph);
+  PersistentJam io(world,p,ph,1);io.place(1,0,NORTH);
+  io.releaseAt=locked?1000:12;
+  io.timeLimit=locked?610:90;
+  Mouse mouse(io,p);mouse.navigator().setAutonomous(true);
+  MissionResult r;
+  if(mode==1)r=mouse.autonomous();
+  else if(mode==2)r=mouse.toGoal();
+  else {mouse.maze()=truth;r=mouse.solveLearned();}
+  CHECK(r.recoveries>3);CHECK(!mouse.navigator().sensorFault());
+  CHECK(!event(io,"RECUPERACION_AGOTADA"));
+  CHECK(event(io,"reason=REINTENTO_PERSISTENTE"));
+  CHECK(io.lastLeft==0 && io.lastRight==0);
+  CHECK(io.contacts()==0);
+  // A mechanical obstruction must not become a fictitious permanent wall.
+  CHECK(mouse.maze().wall(1,0,NORTH)!=Wall::Closed);
+  if(locked){
+    CHECK(!r.reachedGoal);CHECK(io.time()>io.timeLimit);CHECK(r.totalTime>609.9f && r.totalTime<613);
+    CHECK(!io.saved);CHECK(io.cellX()==1 && io.cellY()==0);
+  } else {
+    CHECK(r.reachedGoal);CHECK(io.cellX()==1 && io.cellY()==2);
+    if(mode==1)CHECK(r.autonomousComplete);
+    CHECK(r.totalTime>12 && r.totalTime<90);
+  }
+  printf("Atasco persistente modo=%d bloqueo=%d recuperaciones=%d t=%.2f meta=%d\n",
+         mode,locked,r.recoveries,r.totalTime,r.reachedGoal);
+}
+
 int main(int argc,char** argv) {
   if(argc>1 && !strcmp(argv[1],"--bench"))return benchmark(argc>2?atoi(argv[2]):8);
   policies();mission(false);mission(true);mission(true,true);fatalFault();
   mission(false,false,true);
   startupRegression();
+  persistentRecovery(1);persistentRecovery(2);persistentRecovery(3);
+  persistentRecovery(2,true);
   communicationRepair(true);communicationRepair(false);diagonalMission();
   printf("Autonomia: %d comprobaciones, %d fallos\n",checks,failures);
   return failures?1:0;

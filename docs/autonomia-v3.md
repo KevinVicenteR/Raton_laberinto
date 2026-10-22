@@ -172,3 +172,42 @@ y las regresiones de autonomía/arranque. La compilación ARM para Nano continú
 bloqueada por el ejecutable del toolchain instalado, no por un error C++ mostrado.
 Solo hay puertos serie Bluetooth enumerados; no se ha cargado esta corrección
 en la placa física.
+
+## Recuperación persistente de atascos (22 de octubre)
+
+Por petición de Kevin, los tres modos de la aplicación mantienen la recuperación
+de bloqueo mecánico sin límite de intentos ni vencimiento de misión de 595 s.
+Se alternan retrocesos de 0,5 / 1 / 1,5 veces backoffMm, limitados por el espacio
+trasero disponible, enderezado, recentrado y nueva decisión de ruta. Entre
+intentos se intercalan descansos sin carga de 0,2 o 0,6 s, atendiendo sensores,
+telemetría y la orden x. No se incrementa indefinidamente la potencia ni se
+borra la pose para simular un rescate. Los contadores no desbordan.
+
+Un atasco repetido sin evidencia de pared ya no cierra esa salida en el mapa
+autónomo. Terminar la maniobra se comunica como RECUPERACION_MANIOBRA_TERMINADA:
+el diagnóstico de progreso sigue comprobando el avance al reanudar; no basta
+con declarar que se movieron las ruedas. El controlador antiguo conserva su
+límite para usos externos que no activen setAutonomous(true).
+
+La persistencia no garantiza escapar de una inmovilización física irreversible.
+La parada explícita x y las protecciones por información crítica inutilizable
+(IMU/encoders no válidos o pérdida crítica de rangos no recuperable) siguen
+vigentes. Esta petición elimina también el límite temporal de competencia en
+los modos de la aplicación; el cronómetro informa, pero no cancela el intento.
+
+Se añaden regresiones físicas simuladas para los tres modos con bloqueo durante
+12 s (superior a tres intentos), llegada posterior a la meta, ausencia de
+contactos y conservación del pasillo en el mapa. Otro bloqueo dura más de
+595 s: solo la parada explícita del simulador a 610 s finaliza la recuperación.
+La comprobación de tiempo usa tolerancia de un tick respecto al inicio de misión.
+La carga y verificación en la Nano física siguen pendientes.
+
+Validación de este cambio: CMake compila núcleo, simulador y firmware con stubs;
+el conjunto de núcleo pasa. La primera ejecución de autonomía confirmó llegada
+en los tres modos tras siete recuperaciones y cero contactos. El bloqueo
+permanente mantuvo 333 recuperaciones hasta la parada del simulador a 610 s.
+De 181 comprobaciones, solo falló la comparación estricta del tiempo relativo
+con 610 s (el inicio consume un tick). Se corrigió la aserción para contrastar
+el reloj absoluto y dar tolerancia al relativo. Windows Control de aplicaciones
+bloqueó el nuevo ejecutable antes de poder repetir esa última versión del test.
+No se declara pasada la repetición final ni la compilación ARM/carga física.

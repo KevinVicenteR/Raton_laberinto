@@ -79,6 +79,7 @@ class Navigator {
 
   bool sensorFault() const { return rangeFault_ || motion_.sensorFault(); }
   void setAutonomous(bool on) { autonomous_ = on; }
+  bool persistent() const { return autonomous_; }
   void setCautious(bool on) { cautious_=on; }
   bool repairRanges();
   bool resumeAfterStorage();

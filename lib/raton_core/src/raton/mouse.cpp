@@ -344,7 +344,7 @@ MissionResult Mouse::solveLearned() {
   class LearnedBrain : public Brain {
    public:
     LearnedBrain(Maze& m, Navigator& nav) : m_(m), nav_(nav), deadline_(nav.now() + 595.0f) {}
-    bool shouldAbort() override { return nav_.now() >= deadline_; }
+    bool shouldAbort() override { return !nav_.persistent() && nav_.now() >= deadline_; }
     int decide(int x, int y, Dir h) override {
       if (m_.isGoal(x, y)) return -1;
       CellSet goals;

@@ -1,6 +1,7 @@
 #include "raton/navigator.h"
 
 #include <math.h>
+#include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
 
@@ -1136,7 +1137,7 @@ Navigator::Depart Navigator::depart(Brain& brain, float vmax) {
   snprintf(line, sizeof(line), "NO_SALE x=%d y=%d: el frontal ve pared en todas las salidas (F%d)", cx_, cy_,
            s_.front.mm);
   io_.report(line, true);
-  return Depart::Fail;
+  return autonomous_ ? Depart::Retry : Depart::Fail;
 }
 
 void Navigator::centerOnFront(int k) {
@@ -1169,16 +1170,27 @@ bool Navigator::recover(Brain& brain) {
     explicit RecoveryGuard(bool& flag) : active(flag) { active = true; }
     ~RecoveryGuard() { active = false; }
   } guard(recovering_);
-  ++stalls_;
-  ++recoveries_;
+  if (stalls_ < INT_MAX) ++stalls_;
+  if (recoveries_ < INT_MAX) ++recoveries_;
   char line[64];
   snprintf(line, sizeof(line), "ATASCO x=%d y=%d rumbo=%d/%d", cx_, cy_, static_cast<int>(motion_.angle()), static_cast<int>(gridAngle_));
   io_.report(line, true);
   const int idx = maze_.index(cx_, cy_);
-  recoverCount_ = idx == recoverCellIdx_ ? recoverCount_ + 1 : 1;
+  recoverCount_ = idx == recoverCellIdx_ ? (recoverCount_ < 6000 ? recoverCount_ + 1 : 1) : 1;
   recoverCellIdx_ = idx;
   // 1-2) Parar y retroceder enderezandose a la cuadricula a la vez (un solo movimiento, sin paradas).
   motion_.hold(s_);
+  if (autonomous_ && recoverCount_ > 1) {
+    io_.report("AUTO phase=RECUPERANDO reason=REINTENTO_PERSISTENTE", true);
+    // Brief unloaded rest; continue servicing BLE, sensor health and explicit stop.
+    const float until = t_ + (recoverCount_ % 3 == 0 ? 0.6f : 0.2f);
+    while (t_ < until && !stopped() && !brain.shouldAbort()) {
+      tick();
+      motion_.hold(s_);
+      io_.setMotors(0, 0);
+    }
+    if (stopped() || brain.shouldAbort()) return false;
+  }
   stalled_ = false;
   stallTimer_ = 0;
   pushRefOdo_ = -1e9f;
@@ -1190,7 +1202,10 @@ bool Navigator::recover(Brain& brain) {
     const float rearRoom = cellPos() + 0.5f * (cell_ - p_.wallMm) - rearExtent - 12.0f;
     if (rearRoom < roomBack) roomBack = rearRoom;
   }
-  const float backoff = roomBack > 0 ? (p_.backoffMm < roomBack ? p_.backoffMm : roomBack) : 0;
+  // Vary the reverse stroke without exceeding the available rear clearance.
+  const float scale = autonomous_ ? (recoverCount_ % 3 == 2 ? 0.5f : (recoverCount_ % 3 == 0 ? 1.5f : 1.0f)) : 1.0f;
+  const float desiredBackoff = p_.backoffMm * scale;
+  const float backoff = roomBack > 0 ? (desiredBackoff < roomBack ? desiredBackoff : roomBack) : 0;
   const float back = motion_.position() - backoff;
   motion_.moveTo(back, 150.0f, 0);
   motion_.turnTo(gridAngle_, p_.rotSpeed * 0.5f, p_.rotAccel);
@@ -1242,7 +1257,7 @@ bool Navigator::recover(Brain& brain) {
     centerOdo_ = motion_.position() - pos;
     startStraight();
     maze_.observe(cx_, cy_, h_, true, 3);
-  } else if (recoverCount_ >= 2) {
+  } else if (!autonomous_ && recoverCount_ >= 2) {
     // Varios atascos aqui sin pared visible: tratar la salida de frente como cerrada.
     maze_.observe(cx_, cy_, h_, true, 3);
   }
@@ -1250,7 +1265,7 @@ bool Navigator::recover(Brain& brain) {
   motion_.moveTo(centerOdo_, 150.0f, 0);
   if (!waitStopped(1.2f) || brain.shouldAbort()) return false;
   if (fabsf(motion_.position() - centerOdo_) > 5.0f || fabsf(motion_.angle() - gridAngle_) > 4.0f) return false;
-  io_.report("RECUPERADO: replanificando", true);
+  io_.report(autonomous_ ? "RECUPERACION_MANIOBRA_TERMINADA: comprobar avance al reanudar" : "RECUPERADO: replanificando", true);
   stalled_ = false;
   decided_ = false;
   act_ = Act::None;
@@ -1332,10 +1347,11 @@ NavResult Navigator::run(Brain& brain, float vmax, bool smoothTurns) {
   while (dep == Depart::Go || dep == Depart::Retry) {
     if (dep == Depart::Retry) {
       const int idx = maze_.index(cx_, cy_);
-      retries = idx == retryCell ? retries + 1 : 1;
+      retries = idx == retryCell ? (retries < INT_MAX ? retries + 1 : retries) : 1;
       retryCell = idx;
-      if (retries > 3 || stopped() || brain.shouldAbort()) {
-        io_.report("RECUPERACION_AGOTADA: no logra salir tras tres intentos", true);
+      if ((!autonomous_ && retries > 3) || stopped() || brain.shouldAbort()) {
+        if (!autonomous_ && retries > 3)
+          io_.report("RECUPERACION_AGOTADA: no logra salir tras tres intentos", true);
         dep = Depart::Fail;
         break;
       }
@@ -1461,7 +1477,7 @@ NavResult Navigator::run(Brain& brain, float vmax, bool smoothTurns) {
   io_.setMotors(0, 0);
   decided_ = false;
   act_ = Act::None;
-  if (sensorFault() || retries > 3) return NavResult::Failed;
+  if (sensorFault() || (!autonomous_ && retries > 3)) return NavResult::Failed;
   if (dep == Depart::Stop) return NavResult::Arrived;
   if (stopped() || brain.shouldAbort()) return NavResult::Aborted;
   return NavResult::NoPath;

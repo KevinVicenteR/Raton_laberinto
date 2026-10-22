@@ -1,6 +1,7 @@
 #include "raton/mouse.h"
 #include "raton/planner.h"
 #include <stdio.h>
+#include <limits>
 
 namespace raton {
 MissionResult Mouse::autonomous() {
@@ -22,7 +23,8 @@ MissionResult Mouse::autonomous() {
   io_.report("MAPA_NUEVO",true);
   io_.report("INICIO_MAPA",true);
   nav_.begin(p_.startX,p_.startY,static_cast<Dir>(p_.startDir&3));
-  const float start=nav_.now(), deadline=start+595;
+  // Persistent operation ends on completion, explicit stop or unusable hardware.
+  const float start=nav_.now(), deadline=std::numeric_limits<float>::infinity();
   explorer_.setHardDeadline(deadline);
   auto stage=[&](Explorer::Phase phase,const char* name) {
     char line[96];

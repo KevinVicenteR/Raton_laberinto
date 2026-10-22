@@ -36,7 +36,7 @@ class Explorer : public Brain {
 
   int decide(int x, int y, Dir h) override;
   int straightAfter(int x, int y, Dir d) override;
-  bool shouldAbort() override { return nav_.now() > hardDeadline_; }
+  bool shouldAbort() override { return !nav_.persistent() && nav_.now() > hardDeadline_; }
   void setHardDeadline(float t) { hardDeadline_ = t; }
 
   // Ruta demostrada desde la salida (solo paredes conocidas) tan buena como la optimista.
