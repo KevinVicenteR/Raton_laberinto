@@ -14,6 +14,14 @@ export function updateOccupancy(
 ): Occupancy {
   if (
     !s.hasPose ||
+    s.straight === false ||
+    ![s.x, s.y, s.a].every(Number.isFinite) ||
+    (geometry.mazeW !== undefined &&
+      geometry.mazeH !== undefined &&
+      (s.x < 0 ||
+        s.y < 0 ||
+        s.x > geometry.mazeW * (s.pitch ?? geometry.cellMm ?? 155) ||
+        s.y > geometry.mazeH * (s.pitch ?? geometry.cellMm ?? 155))) ||
     (previous.last &&
       Math.hypot(previous.last.x - s.x, previous.last.y - s.y) < 5 &&
       Math.abs(previous.last.a - s.a) < 4)
@@ -26,8 +34,7 @@ export function updateOccupancy(
     lx = -Math.cos(a),
     ly = -Math.sin(a),
     // Laterales montados a 45 grados; el VL53L0X ve un cono de 25: se marcan tres rayos del cono.
-    angle = (45 * Math.PI) / 180,
-    half = (12.5 * Math.PI) / 180;
+    angle = (45 * Math.PI) / 180;
   const bump = (x: number, y: number, delta: number) => {
     const key = `${Math.round(x / 10)},${Math.round(y / 10)}`;
     grid.set(key, Math.max(-2, Math.min(4, (grid.get(key) ?? 0) + delta)));
@@ -60,8 +67,9 @@ export function updateOccupancy(
       : sensor.key === 'F'
         ? 0
         : sign * (geometry.diagMountDeg === undefined ? angle : (geometry.diagMountDeg * Math.PI) / 180);
-    const fov = geometry.sensorFovDeg === undefined ? half : (geometry.sensorFovDeg * Math.PI) / 360;
-    for (const da of [-fov, 0, fov]) {
+    // A single-zone ToF returns one range for a cone, not three independent hits.
+    // Keep only the central estimate, separate from firmware-confirmed walls.
+    for (const da of [0]) {
       const b = mount + da;
       ray(
         s.x + fx * ahead + lx * left,

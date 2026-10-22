@@ -154,8 +154,72 @@ static void diagonalMission() {
   sim::World world(truth,ph);ObservedPlatform io(world,p,ph,1);io.place(0,0,NORTH);
   Mouse mouse(io,p);const auto r=mouse.autonomous();
   CHECK(r.autonomousComplete);CHECK(io.cellX()==3&&io.cellY()==3);CHECK(io.contacts()==0);
-  CHECK(event(io,"phase=DIAGONAL "));
+  // Equal-cost exploration routes may use safe pivots instead of a diagonal.
+  // Exercise the diagonal explicitly with a completely known open square below.
   printf("Diagonal/curvas abiertas: completo=%d diagonal=%d contactos=%d\n",r.autonomousComplete,event(io,"phase=DIAGONAL "),io.contacts());
+  sim::World knownWorld(truth,ph);ObservedPlatform known(knownWorld,p,ph,1);known.place(0,0,NORTH);
+  Maze map=truth;map.setGoal(1,1,1,1);
+  Navigator nav(known,p,map);nav.setAutonomous(true);nav.begin(0,0,NORTH);
+  class SquareBrain : public Brain {
+   public:
+    int decide(int x,int y,Dir h) override {return x==1 && y==1?-1:int(h);}
+    bool diagonalPair(int x,int y,Dir h,Dir& next) override {
+      if(x!=0 || y!=0 || h!=NORTH)return false;
+      next=EAST;return true;
+    }
+  } brain;
+  CHECK(nav.run(brain,120,false)==NavResult::Arrived);
+  CHECK(event(known,"phase=DIAGONAL "));CHECK(known.cellX()==1 && known.cellY()==1);
+  CHECK(known.contacts()==0);
+}
+
+static float rotationalNoise(bool stable) {
+  Params p;p.learnMotor=0;p.kiRot=0;
+  Sensors s;s.gyroFresh=true;
+  Motion motion(p);motion.setStableControl(stable);motion.reset(s);motion.cruise(180);
+  float jerk=0,previous=0;int n=0;
+  for(int i=1;i<=1500;++i){
+    s.t=i*0.002f;s.encLeftMm=s.encRightMm=180*s.t;
+    s.gyroFresh=i%2==0;
+    if(s.gyroFresh)s.gyroDeg=0.18f*sinf(2*3.14159265f*75*s.t);
+    float l,r;motion.update(s,l,r);const float differential=0.5f*(r-l);
+    if(i>250){jerk+=(differential-previous)*(differential-previous);++n;}
+    previous=differential;
+  }
+  return sqrtf(jerk/n);
+}
+
+static void stableControlRegression() {
+  LateralFilter filter;filter.setRobust(true);filter.reset(0,1,1e-5f);
+  for(int i=0;i<12;++i)filter.update(i%2?70:-70,1);
+  CHECK(fabsf(filter.y())<1);
+  for(int i=0;i<5;++i)filter.update(22,1);
+  CHECK(fabsf(filter.y()-22)<1);
+  const float old=rotationalNoise(false),filtered=rotationalNoise(true);
+  CHECK(filtered<old*0.5f);
+  printf("Ruido de mando diferencial: previo=%.6f filtrado=%.6f\n",old,filtered);
+  Params p;Motion motion(p);Sensors s;s.gyroFresh=true;motion.reset(s);
+  motion.setHeadingReference(2.5f);CHECK(motion.headingTarget()==2.5f);
+  motion.turnTo(90,180,900);motion.setHeadingReference(3);
+  CHECK(motion.headingTarget()==90); // Wall updates cannot rewrite a live pivot.
+}
+
+static void noisyCorridor() {
+  Params p;p.mazeW=p.mazeH=7;p.startX=3;p.startY=0;p.goalX=3;p.goalY=5;
+  p.sideEnabled=1;
+  Maze truth;truth.reset(7,7,true);
+  for(int y=0;y<7;++y)for(int x=0;x<7;++x)for(int d=0;d<4;++d)
+    truth.set(x,y,Dir(d),Wall::Closed);
+  for(int y=0;y<6;++y)truth.set(3,y,NORTH,Wall::Open);
+  auto ph=sim::perturbed(p,0,1);ph.sideSensors=true;ph.motorAsym=0.08f;
+  ph.startX=6;ph.startDeg=1;ph.rangeNoise=0.04f;ph.gyroNoiseDps=0.25f;
+  sim::World world(truth,ph);ObservedPlatform io(world,p,ph,41);io.place(3,0,NORTH);io.timeLimit=60;
+  Mouse mouse(io,p);mouse.navigator().setAutonomous(true);io.watch=&mouse.maze();
+  const auto r=mouse.toGoal();
+  CHECK(r.reachedGoal);CHECK(io.cellX()==3 && io.cellY()==5);
+  CHECK(io.contacts()==0);CHECK(io.offsetMax()<25);CHECK(io.wobbleRms()<5);
+  printf("Pasillo con ruido/asimetria: meta=%d contactos=%d lateralMax=%.2f rumboRMS=%.2f\n",
+         r.reachedGoal,io.contacts(),io.offsetMax(),io.wobbleRms());
 }
 
 static int benchmark(int n) {
@@ -282,6 +346,8 @@ int main(int argc,char** argv) {
   policies();mission(false);mission(true);mission(true,true);fatalFault();
   mission(false,false,true);
   startupRegression();
+  stableControlRegression();
+  noisyCorridor();
   persistentRecovery(1);persistentRecovery(2);persistentRecovery(3);
   persistentRecovery(2,true);
   communicationRepair(true);communicationRepair(false);diagonalMission();

@@ -1,5 +1,6 @@
 import type { Maze, RobotSample } from '../telemetria/types';
 import { wall } from './maze';
+import { spatialPose, spatialSegments } from './spatialPose';
 
 export function LiveMap2D({
   maze,
@@ -13,6 +14,7 @@ export function LiveMap2D({
   last: RobotSample | null;
 }) {
   const p = maze.PITCH;
+  const pose = spatialPose(last, maze);
   return (
     <svg
       className="maze"
@@ -50,14 +52,16 @@ export function LiveMap2D({
           </g>
         );
       })}
-      <polyline
-        points={trail.map((s) => `${s.x},${maze.H * p - s.y}`).join(' ')}
+      <path
+        d={spatialSegments(trail, maze)
+          .map(([a, b]) => `M${a[0]},${maze.H * p - a[1]} L${b[0]},${maze.H * p - b[1]}`)
+          .join(' ')}
         fill="none"
         stroke="var(--left)"
         strokeWidth="5"
       />
-      {last?.hasPose && (
-        <g transform={`translate(${last.x},${maze.H * p - last.y}) rotate(${-last.a})`}>
+      {last && pose && (
+        <g transform={`translate(${pose[0]},${maze.H * p - pose[1]}) rotate(${-last.a})`}>
           <circle r="24" fill="var(--front)" />
           <path d="M0,-32 L-10,-12 L10,-12 Z" fill="var(--text)" />
         </g>

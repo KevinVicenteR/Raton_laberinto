@@ -23,6 +23,7 @@ export function parseRobot(line: string, t: number): RobotSample | null {
     a: +(m[10] ?? 0),
     hasPose: m[8] !== undefined,
     pitch: m[11] === undefined ? undefined : +m[11] / 10,
+    straight: m[13] === undefined ? undefined : m[13] === '1',
     cycle: m[14] === undefined ? undefined : +m[14],
     raw: m[15] === undefined ? undefined : m.slice(15, 18).map(Number),
     confidence: m[18] === undefined ? undefined : m.slice(18, 21).map(Number),

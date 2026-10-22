@@ -43,6 +43,12 @@ void Navigator::diagnose() {
   lastHealthReport_ = t_;
   char line[190];
   snprintf(line, sizeof(line),
+      "CONTROL vref=%d v=%d aref=%d a=%d omega=%d uL=%d uR=%d dt=%d",
+      int(motion_.speed()), int(motion_.measuredSpeed()), int(motion_.idealAngle()*10),
+      int(motion_.angle()*10), int(motion_.measuredRate()*10),
+      int(motion_.dutyLeft()*1000), int(motion_.dutyRight()*1000), int(tickDt_*1000000));
+  io_.report(line, false);
+  snprintf(line, sizeof(line),
       "HEALTH phase=%s reason=%s age=%d,%d,%d,%d,%d sigma=%d,%d heading=%d repairs=%d",
       sensorFault() ? "PARADO" : recovering_ ? "RECUPERACION" : "EN_MARCHA",
       motion_.encoderFault() ? "ENCODER" : motion_.sensorFault() ? "IMU" : rangeFault_ ? "LASER" :

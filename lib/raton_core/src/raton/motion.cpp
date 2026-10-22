@@ -67,8 +67,10 @@ void Motion::reset(const Sensors& s) {
   idealAngle_ = w_ = alpha_ = angleTarget_ = steer_ = 0;
   rotDone_ = true;
   lastErrR_ = 0;
+  rotDerivative_ = 0;
   iF_ = iR_ = 0;
   satF_ = 0;
+  satR_ = 0;
 }
 
 void Motion::measure(const Sensors& s) {
@@ -131,7 +133,9 @@ void Motion::hold(const Sensors& s) {
   w_ = alpha_ = 0;
   rotDone_ = true;
   lastErrF_ = lastErrR_ = 0;
+  rotDerivative_ = 0;
   iF_ = iR_ = 0;
+  satF_ = satR_ = 0;
 }
 
 void Motion::update(const Sensors& s, float& dutyL, float& dutyR) {
@@ -233,7 +237,14 @@ void Motion::update(const Sensors& s, float& dutyL, float& dutyR) {
   if (ideal_ - pos_ > 25.0f) ideal_ = pos_ + 25.0f;
   if (ideal_ - pos_ < -25.0f) ideal_ = pos_ - 25.0f;
   const float dF = (errF - lastErrF_) / dt;
-  const float dR = (errR - lastErrR_) / dt;
+  float dR = (errR - lastErrR_) / dt;
+  if (stableControl_) {
+    // IMU arrivals and encoder quantization must not become 500 Hz torque kicks.
+    // Faster damping in pivots retains their braking response.
+    const float tau = rotDone_ ? 0.025f : 0.012f;
+    rotDerivative_ += dt / (tau + dt) * (dR - rotDerivative_);
+    dR = rotDerivative_;
+  }
   lastErrF_ = errF;
   lastErrR_ = errR;
 
@@ -258,8 +269,10 @@ void Motion::update(const Sensors& s, float& dutyL, float& dutyR) {
   // arrancar) no hay tiron.
   auto ff = [&](float v, float a) { return ffScale_ * (p_.kV * v + p_.kA() * a) + p_.kS * clampf(v / 20.0f, -1.0f, 1.0f); };
   // Integral pequeno con limite: quita el error que deja el rozamiento al final de giros y paradas.
-  iF_ = clampf(iF_ + errF * dt, -0.5f, 0.5f);
-  iR_ = clampf(iR_ + errR * dt, -0.5f, 0.5f);
+  // Conditional integration: stop winding up when saturation opposes this error;
+  // allow integration immediately when the error would release the saturation.
+  if (!stableControl_ || satF_ * errF <= 0) iF_ = clampf(iF_ + errF * dt, -0.5f, 0.5f);
+  if (!stableControl_ || satR_ * errR <= 0) iR_ = clampf(iR_ + errR * dt, -0.5f, 0.5f);
   const float fbF = p_.kpFwd * errF + p_.kdFwd * dF + p_.kiFwd * iF_;
   const float fbR = p_.kpRot * errR + p_.kdRot * dR + p_.kiRot * iR_;
   // Motores aprendidos en marcha: a velocidad de crucero, lo que tiene que poner la realimentacion es lo que
@@ -303,6 +316,7 @@ void Motion::update(const Sensors& s, float& dutyL, float& dutyR) {
   // Saturacion dando prioridad al giro (mantener el rumbo vale mas que la velocidad).
   float common = 0.5f * (l + r);
   float diff = 0.5f * (r - l);
+  satR_ = diff > p_.maxDuty ? 1.0f : diff < -p_.maxDuty ? -1.0f : 0.0f;
   diff = clampf(diff, -p_.maxDuty, p_.maxDuty);
   const float room = p_.maxDuty - fabsf(diff);
   satF_ = common > room ? 1.0f : (common < -room ? -1.0f : 0.0f);
@@ -314,3 +328,4 @@ void Motion::update(const Sensors& s, float& dutyL, float& dutyR) {
 }
 
 }  // namespace raton
+

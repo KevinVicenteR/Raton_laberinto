@@ -7,6 +7,7 @@ import { Parameters } from '../parametros/Parameters';
 import { downloadRecording } from './recording';
 import { LiveMap2D } from '../mapa/LiveMap';
 import { liveMaze } from '../mapa/liveMaze';
+import { spatialPose } from '../mapa/spatialPose';
 const Map3D = lazy(() => import('../mapa/Map3D'));
 export function Telemetry() {
   const live = useTelemetry();
@@ -111,6 +112,12 @@ export function Telemetry() {
             Paredes confirmadas por la placa y posición estimada con sensores, IMU y encoders. Las zonas sin
             observaciones siguen desconocidas.
           </p>
+          {sample?.hasPose && !spatialPose(sample, maze) && (
+            <p role="alert" className="danger">
+              Posición estimada fuera de la pista: x={sample.x} mm, y={sample.y} mm. Se conserva en el
+              registro; no se dibuja como recorrido válido.
+            </p>
+          )}
           {view === '2d' ? (
             <LiveMap2D maze={maze} cells={state.cells} trail={state.trail} last={sample} />
           ) : (

@@ -66,6 +66,7 @@ export interface RobotSample {
   hasPose: boolean;
   // Firmware v2: pose absoluta en el laberinto con este paso de celda (mm). Sin el, pose de registros antiguos.
   pitch?: number;
+  straight?: boolean;
 }
 export interface Maze {
   WALL?: number;

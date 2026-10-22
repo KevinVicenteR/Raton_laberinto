@@ -21,7 +21,7 @@ export function parse(line: string): Diagnostic | null {
     .trim()
     .replace(/^\d+(?:\.\d+)?\t/, '');
   const head = line.split(/\s+/, 1)[0];
-  if (!['OBS', 'MOTION', 'AUTO', 'HEALTH', 'POSE'].includes(head)) return null;
+  if (!['OBS', 'MOTION', 'AUTO', 'HEALTH', 'POSE', 'CONTROL'].includes(head)) return null;
   const fields: Record<string, Field> = {};
   for (const match of line.matchAll(/([a-zA-Z_]+)=([^\s]+)/g)) {
     const parts = match[2].split(',');

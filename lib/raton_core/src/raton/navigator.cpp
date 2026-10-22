@@ -290,10 +290,18 @@ void Navigator::tick() {
   if (sensorFault()) return;
   const bool straight = !motion_.turning();
   if (straight) {
-    if (!recovering_ && !trajectory_) {
-      while (cellPos() > 0.5f * cell_) enterNextCell();
-      sense();
-      steer();
+    if (!recovering_ && !trajectory_ && (!autonomous_ || !arcStarted_)) {
+      while (cellPos() > 0.5f * cell_) {
+        if (autonomous_ && !maze_.inside(cx_ + dx(h_), cy_ + dy(h_))) {
+          // Do not invent cells outside the configured track when odometry drifts.
+          stalled_ = true;
+          motion_.hold(s_);
+          io_.report("AUTO phase=RELOCALIZAR reason=POSE_FUERA_DE_PISTA", true);
+          break;
+        }
+        enterNextCell();
+      }
+      if (!stalled_) { sense(); steer(); }
     } else {
       // Retroceso/S: la pose aun se esta reconstruyendo; no mapear ni dejar que el centrado
       // lateral contradiga el giro que intenta enderezarlo.
@@ -379,7 +387,8 @@ void Navigator::sense() {
   if (fabsf(headingError()) < 20.0f) lateral_.predict(ds, headingError() / kDeg);
   longVar_ += (learnCell_ ? 0.3f : 0.2f) * fabsf(ds);
   lastOdo_ = odo;
-  const float bias = clampf(lateral_.takeBias() * kDeg, -0.5f, 0.5f);
+  const float biasLimit = autonomous_ ? 1.5f * tickDt_ : 0.5f;
+  const float bias = clampf(lateral_.takeBias() * kDeg, -biasLimit, biasLimit);
   gridAngle_ -= bias;
   gridCorr_ += bias;
   latAge_ += tickDt_;
@@ -792,6 +801,8 @@ void Navigator::learnPitch() {
 }
 
 void Navigator::startStraight() {
+  steerCommand_ = 0;
+  oscillation_ = OscillationWatch();
   learnPitch();
   straightCells_ = 0;
   straightCorr_ = 0;
@@ -801,26 +812,36 @@ void Navigator::startStraight() {
 }
 
 void Navigator::steer() {
+  // On the final sample of a pivot the caller has not committed its new grid
+  // heading yet. Do not replace the just-completed 90-degree target with the old one.
+  if (autonomous_ && fabsf(headingError()) < 20) motion_.setHeadingReference(gridAngle_);
   const float psiDeg = headingError();
   if(autonomous_ && oscillation_.observe(psiDeg,t_,fabsf(motion_.speed())>40 && !recovering_)) {
     ++oscillationCount_;dampingUntil_=t_+6;
     io_.report("AUTO phase=AUTOCORRECCION reason=OSCILACION_REDUCIR_GANANCIA_Y_VELOCIDAD",true);
   }
   if (latAge_ < 0.3f && fabsf(motion_.speed()) > 30.0f) {
-    const float target = clampf(-p_.kSteer * lateral_.y(), -p_.steerMaxDeg, p_.steerMaxDeg);
+    const float y = autonomous_ ? (fabsf(lateral_.y()) < 1.5f ? 0 :
+        lateral_.y() - (lateral_.y() > 0 ? 1.5f : -1.5f)) : lateral_.y();
+    const float maxSteer = autonomous_ && p_.steerMaxDeg > 3.5f ? 3.5f : p_.steerMaxDeg;
+    const float target = clampf(-p_.kSteer * y, -maxSteer, maxSteer);
     (void)psiDeg;
     float command = target - p_.steerRateGain * motion_.measuredSpeed() * sinf(psiDeg / kDeg);
     if (autonomous_) {
       const float confidence = clampf(36.0f / (36.0f + lateral_.varY()), 0.25f, 1.0f);
       command *= confidence;
       if(t_<dampingUntil_){command*=0.5f;motion_.setMaxSpeed(150);}
-      steerCommand_ += clampf(command - steerCommand_, -45.0f * tickDt_, 45.0f * tickDt_);
+      // Low pass then limit slew: sensor noise near a junction cannot reverse
+      // wheel torque at every range sample. Preserve the actual turn profile.
+      const float delta = tickDt_ / (0.06f + tickDt_) * (command - steerCommand_);
+      steerCommand_ += clampf(delta, -20.0f * tickDt_, 20.0f * tickDt_);
       command = steerCommand_;
     }
     motion_.setSteer(command);
   } else {
-    steerCommand_ = 0;
-    motion_.setSteer(0);
+    if (autonomous_) steerCommand_ *= 0.1f / (0.1f + tickDt_);
+    else steerCommand_ = 0;
+    motion_.setSteer(steerCommand_);
   }
 }
 
@@ -1342,6 +1363,13 @@ NavResult Navigator::run(Brain& brain, float vmax, bool smoothTurns) {
   decided_ = false;
   act_ = Act::None;
   // Arranca quieto en el centro de una celda.
+  if (autonomous_ && maze_.fullyKnown(cx_, cy_)) {
+    // A loaded map is not a fresh localization measurement. Acquire the known
+    // walls before selecting a curve/diagonal or departing after a saved map.
+    motion_.hold(s_);
+    const float acquire = t_;
+    while (t_ - acquire < 0.16f && !stopped() && !brain.shouldAbort()) tick();
+  }
   Depart dep = depart(brain, vmax);
   int retryCell = -1, retries = 0, diagonalChecked = -1;
   while (dep == Depart::Go || dep == Depart::Retry) {

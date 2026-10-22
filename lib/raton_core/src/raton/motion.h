@@ -41,6 +41,9 @@ class Motion {
   bool gyroDisagreement() const { return gyroDisagreement_; }
   // Correccion de rumbo de las paredes (grados) sumada al rumbo objetivo cuando no se gira.
   void setSteer(float deg) { steer_ = deg; }
+  // Keep the wall-corrected grid and the straight-line heading controller in one frame.
+  void setHeadingReference(float deg) { if (rotDone_) angleTarget_ = deg; }
+  void setStableControl(bool on) { stableControl_ = on; rotDerivative_ = 0; }
   float headingTarget() const { return angleTarget_; }
 
   // Ciclo de control: calcula el duty de cada rueda.
@@ -67,6 +70,8 @@ class Motion {
   void setMotorScale(float k) { ffScale_ = k; }
   float angularRate() const { return w_; }       // consigna (grados/s)
   float measuredRate() const { return wMeas_; }
+  float dutyLeft() const { return sensorFault_ ? 0 : previousDuty_[0]; }
+  float dutyRight() const { return sensorFault_ ? 0 : previousDuty_[1]; }
 
  private:
   void measure(const Sensors& s);
@@ -91,6 +96,9 @@ class Motion {
   float idealAngle_ = 0, w_ = 0, alpha_ = 0, angleTarget_ = 0, rate_ = 0, rotAccel_ = 0, steer_ = 0;
   bool rotDone_ = true;
   float lastErrR_ = 0;
+  bool stableControl_ = false;
+  float rotDerivative_ = 0;
+  float satR_ = 0;
   float iF_ = 0, iR_ = 0;
   float ffScale_ = 1.0f;
   float motorBalance_ = 0, balanceRef_ = 1e9f;
@@ -101,3 +109,4 @@ class Motion {
 };
 
 }  // namespace raton
+

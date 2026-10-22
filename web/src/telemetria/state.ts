@@ -108,12 +108,15 @@ export function telemetryReducer(state: TelemetryState, action: Action): Telemet
           : state.raceEnd,
     };
   const cell = /^CELL x=(\d+) y=(\d+) w=(\d+)(?: d=(\d))?/.exec(line);
-  if (cell)
+  if (cell) {
+    const key = `${cell[1]},${cell[2]}`;
+    const mask = +cell[3] | (cell[4] === '1' ? 16 : 0);
     return {
       ...next,
-      cells: { ...state.cells, [`${cell[1]},${cell[2]}`]: +cell[3] | (cell[4] === '1' ? 16 : 0) },
+      cells: state.cells[key] === mask ? state.cells : { ...state.cells, [key]: mask },
       learnRobot: [+cell[1], +cell[2]],
     };
+  }
   if (line === 'REINICIO')
     next = {
       ...next,

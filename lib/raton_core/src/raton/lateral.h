@@ -11,7 +11,9 @@ namespace raton {
 
 class LateralFilter {
  public:
+  void setRobust(bool on) { robust_ = on; candidateCount_ = 0; }
   void reset(float y, float varY, float varB) {
+    rejects_ = candidateCount_ = 0;
     y_ = y;
     b_ = 0;
     p00_ = varY;
@@ -32,12 +34,15 @@ class LateralFilter {
     const float inn = z - y_;
     if (inn * inn > 9.0f * s + 100.0f) {
       // Varias medidas seguidas que no cuadran: el filtro estaba equivocado, empezar desde la medida.
-      if (++rejects_ < 4) return false;
+      const bool consistent = relocationConsistent(z);
+      if (rejects_ < 4) ++rejects_;
+      if (rejects_ < 4 || !consistent) return false;
       setY(z, r);
       rejects_ = 0;
       return true;
     }
     rejects_ = 0;
+    candidateCount_ = 0;
     const float k0 = p00_ / s, k1 = p01_ / s;
     y_ += k0 * inn;
     b_ += k1 * inn;
@@ -54,7 +59,10 @@ class LateralFilter {
     const float py = p00_ * hy + p01_ * hb, pb = p01_ * hy + p11_ * hb;  // P * H'
     const float s = hy * py + hb * pb + r;
     if (inn * inn > 9.0f * s + 100.0f) {
-      if (++rejects_ < 4 || (hy < 0.5f && hy > -0.5f)) return false;
+      const bool usable = hy >= 0.5f || hy <= -0.5f;
+      const bool consistent = usable && relocationConsistent(y_ + inn / hy);
+      if (rejects_ < 4) ++rejects_;
+      if (rejects_ < 4 || !consistent || !usable) return false;
       // Varias seguidas que no cuadran: el filtro estaba equivocado, empezar desde la medida.
       dy = inn / hy;
       setY(y_ + dy, r / (hy * hy));
@@ -62,6 +70,7 @@ class LateralFilter {
       return true;
     }
     rejects_ = 0;
+    candidateCount_ = 0;
     const float k0 = py / s, k1 = pb / s;
     dy = k0 * inn;
     db = k1 * inn;
@@ -93,9 +102,22 @@ class LateralFilter {
   float qB = 2e-6f;   // rad^2 por mm recorrido (deriva del giroscopio)
 
  private:
+  // Four rejected samples are not evidence of displacement unless their
+  // proposed positions agree. Alternating reflections must not relocate us.
+  bool relocationConsistent(float z) {
+    if (!robust_) return true;
+    const float delta = z - candidate_;
+    if (!candidateCount_ || delta > 6 || delta < -6) { candidate_ = z; candidateCount_ = 1; }
+    else { if (candidateCount_ < 4) ++candidateCount_; candidate_ += delta / candidateCount_; }
+    return candidateCount_ >= 4;
+  }
+  bool robust_ = false;
+  float candidate_ = 0;
+  int candidateCount_ = 0;
   float y_ = 0, b_ = 0;
   int rejects_ = 0;
   float p00_ = 1e4f, p01_ = 0, p11_ = 1e-3f;
 };
 
 }  // namespace raton
+

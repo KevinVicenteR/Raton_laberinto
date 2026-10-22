@@ -7,6 +7,13 @@ import { liveMaze } from '../../mapa/liveMaze';
 import { wall } from '../../mapa/maze';
 
 describe('Autonomía y resincronización', () => {
+  it('no reconstruye las paredes 3D por repetir el mismo CELL', () => {
+    const first = telemetryReducer(initialState(), { type: 'line', line: 'CELL x=20 y=20 w=3', t: 0 });
+    const second = telemetryReducer(first, { type: 'line', line: 'CELL x=20 y=20 w=3', t: 100 });
+    expect(second.cells).toBe(first.cells);
+    const changed = telemetryReducer(second, { type: 'line', line: 'CELL x=20 y=20 w=7', t: 200 });
+    expect(changed.cells).not.toBe(first.cells);
+  });
   it('interpreta incertidumbre espacial, salud y decisiones', () => {
     expect(
       parse('HEALTH phase=EN_MARCHA reason=VIGILANDO age=1,2,3,4,5 sigma=3,4 heading=0 repairs=1')?.age,

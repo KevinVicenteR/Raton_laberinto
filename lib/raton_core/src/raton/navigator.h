@@ -78,7 +78,7 @@ class Navigator {
   float rangeBias() const;
 
   bool sensorFault() const { return rangeFault_ || motion_.sensorFault(); }
-  void setAutonomous(bool on) { autonomous_ = on; }
+  void setAutonomous(bool on) { autonomous_ = on; motion_.setStableControl(on); lateral_.setRobust(on); }
   bool persistent() const { return autonomous_; }
   void setCautious(bool on) { cautious_=on; }
   bool repairRanges();
