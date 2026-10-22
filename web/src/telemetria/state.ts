@@ -4,6 +4,12 @@ import { emptyOccupancy, updateOccupancy, type Occupancy } from '../mapa/occupan
 import type { Cell, RobotSample, SensorReadings, SensorFrame } from './types';
 import { parseSensorLine } from './sensorData';
 export interface TelemetryState {
+  calibrationAvailable: boolean;
+  calibrating: boolean;
+  resetAvailable: boolean;
+  resetPending: boolean;
+  awaitingResetBoot: boolean;
+  resetRevision: number;
   firmwareV3: boolean;
   syncing: boolean;
   historyOverwritten: number;
@@ -27,6 +33,12 @@ export interface TelemetryState {
   raceEnd: number | null;
 }
 export const initialState = (): TelemetryState => ({
+  calibrationAvailable: false,
+  calibrating: false,
+  resetAvailable: false,
+  resetPending: false,
+  awaitingResetBoot: false,
+  resetRevision: 0,
   firmwareV3: false,
   syncing: false,
   historyOverwritten: 0,
@@ -65,10 +77,51 @@ export function telemetryReducer(state: TelemetryState, action: Action): Telemet
   if (action.type === 'reset') return initialState();
   if (action.type === 'clearMap') return { ...state, occupancy: emptyOccupancy(), trail: [] };
   const { line, t } = action;
-  if (line === 'FIRMWARE autonomia-v3') return { ...state, firmwareV3: true };
+  if (line === 'REINICIO_TOTAL_OK')
+    return {
+      ...initialState(),
+      resetRevision: state.resetRevision + 1,
+      awaitingResetBoot: true,
+      events: ['Ajustes, calibraciones y mapas borrados. Reiniciando el robot.'],
+    };
+  if (line === 'REINICIO_TOTAL_SOLICITADO' || line === 'REINICIO_TOTAL_EN_CURSO')
+    return { ...state, resetPending: true, decision: 'Reiniciando ajustes y mapas…' };
+  if (line.startsWith('REINICIO_TOTAL_ERROR_FLASH'))
+    return {
+      ...state,
+      resetPending: false,
+      decision: 'Error al borrar: robot detenido. Reintenta Reiniciar todo.',
+    };
+  if (line === 'FIRMWARE autonomia-v3') return { ...state, firmwareV3: true, awaitingResetBoot: false };
+  if (state.awaitingResetBoot) return state; // No stale NAV/CELL can redraw an erased session.
+  if (line.startsWith('CAPS '))
+    return {
+      ...state,
+      resetAvailable: line.split(' ').includes('RESET_TOTAL'),
+      calibrationAvailable: line.split(' ').includes('CALIB_COMPLETA'),
+    };
+  if (line.startsWith('CAL_STATE ')) return { ...state, calibrating: line === 'CAL_STATE RUNNING' };
+  if (line === 'CAL_COMPLETA_SOLICITADA')
+    return { ...state, calibrating: true, decision: 'Preparando calibración completa…' };
+  if (line.startsWith('CAL_COMPLETA'))
+    return {
+      ...state,
+      decision: line,
+      record: [...state.record, `${(t / 1000).toFixed(3)}\t${line}`].slice(-100000),
+      calibrating:
+        line.startsWith('CAL_COMPLETA_OK') || line.startsWith('CAL_COMPLETA_NO_APLICADA')
+          ? false
+          : state.calibrating,
+      events: [...state.events, `${(t / 1000).toFixed(2)} s · ${line}`].slice(-1500),
+    };
   if (line === 'SYNC_BEGIN') return { ...state, syncing: true, cells: {} };
   if (line.startsWith('SYNC_DONE'))
-    return { ...state, syncing: false, historyOverwritten: Number(/overwritten=(\d+)/.exec(line)?.[1] ?? 0) };
+    return {
+      ...state,
+      syncing: false,
+      resetPending: false,
+      historyOverwritten: Number(/overwritten=(\d+)/.exec(line)?.[1] ?? 0),
+    };
   if (line.startsWith('HISTORY ')) {
     if (state.historyLines.includes(line)) return state;
     return {

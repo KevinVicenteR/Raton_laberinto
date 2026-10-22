@@ -43,7 +43,7 @@ class Motion {
   void setSteer(float deg) { steer_ = deg; }
   // Keep the wall-corrected grid and the straight-line heading controller in one frame.
   void setHeadingReference(float deg) { if (rotDone_) angleTarget_ = deg; }
-  void setStableControl(bool on) { stableControl_ = on; rotDerivative_ = 0; }
+  void setStableControl(bool on) { stableControl_ = on; rotDerivative_ = fwdDerivative_ = 0; }
   float headingTarget() const { return angleTarget_; }
 
   // Ciclo de control: calcula el duty de cada rueda.
@@ -97,7 +97,7 @@ class Motion {
   bool rotDone_ = true;
   float lastErrR_ = 0;
   bool stableControl_ = false;
-  float rotDerivative_ = 0;
+  float rotDerivative_ = 0, fwdDerivative_ = 0;
   float satR_ = 0;
   float iF_ = 0, iR_ = 0;
   float ffScale_ = 1.0f;

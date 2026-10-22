@@ -185,7 +185,7 @@ float sweepMin(const Navigator::SweepLog& log, int sensor, float center, float& 
 }
 }  // namespace
 
-float Mouse::calibrateSensors(Params& out, bool cellKnown) {
+float Mouse::calibrateSensors(Params& out, bool cellKnown, float sweepRate) {
   // Quieto en el centro de una celda mirando a start, con pared a los dos lados:
   //  1) mira a la izquierda: el frontal, perpendicular a esa pared, da la distancia del eje a ella;
   //  2) gira 45 grados atras: ahora el lateral izquierdo es el perpendicular a la misma pared;
@@ -201,11 +201,17 @@ float Mouse::calibrateSensors(Params& out, bool cellKnown) {
   // perpendicular la lectura es casi plana y en el simulador esas estimaciones salian peor que no hacerlas.)
   static Navigator::SweepLog log;
   log = Navigator::SweepLog();
-  const float rate = 120.0f;
+  const float rate = sweepRate;
+  const float m0 = out.diagMountDeg;
+  float front[2], diag[2], ang;
   nav_.sweep(110.0f, rate, log);
   if (nav_.motion().gyroDisagreement() || nav_.sensorFault() || io_.stopRequested()) return -1;
   nav_.sweep(0.0f, rate, log);
   if (nav_.motion().gyroDisagreement() || nav_.sensorFault() || io_.stopRequested()) return -1;
+  // At slow calibration speed one bounded log cannot hold both sides.
+  front[0] = sweepMin(log, 1, 90.0f, ang);
+  diag[0] = sweepMin(log, 0, 90.0f - m0, ang);
+  log = Navigator::SweepLog();
   nav_.sweep(-110.0f, rate, log);
   if (nav_.motion().gyroDisagreement() || nav_.sensorFault() || io_.stopRequested()) return -1;
   nav_.sweep(0.0f, rate, log);
@@ -216,11 +222,7 @@ float Mouse::calibrateSensors(Params& out, bool cellKnown) {
     for (int k = 0; k < 3; ++k)
       for (int i = 0; i < log.n[k]; ++i) printf("BARRIDO s%d %.1f %d\n", k, log.ang[k][i], log.mm[k][i]);
 #endif
-  const float m0 = out.diagMountDeg;
-  float front[2], diag[2], ang;
-  front[0] = sweepMin(log, 1, 90.0f, ang);
   front[1] = sweepMin(log, 1, -90.0f, ang);
-  diag[0] = sweepMin(log, 0, 90.0f - m0, ang);
   diag[1] = sweepMin(log, 2, m0 - 90.0f, ang);
   nav_.face(start);  // terminar alineado con la cuadricula
   // Con el lateral perpendicular a la pared, lo que el sensor esta mas cerca de ella que el eje.

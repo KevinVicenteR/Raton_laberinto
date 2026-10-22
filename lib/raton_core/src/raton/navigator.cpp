@@ -117,6 +117,7 @@ void Navigator::computeSmoothGeometry() {
 void Navigator::begin(int x, int y, Dir h) {
   io_.report("FIRMWARE autonomia-v3", true);
   repairAttempts_ = 0;
+  for (auto& hits : proximityHits_) hits = 0;
   steerCommand_ = 0;
   lastHealthReport_ = -1;
   dampingUntil_=0;oscillationCount_=collisionCount_=0;
@@ -238,6 +239,36 @@ void Navigator::filterSensors() {
   }
 }
 
+bool Navigator::proximityGuard() {
+  if (!autonomous_ || recovering_ || motion_.turning() || trajectory_ ||
+      motion_.speed() < 15 || fabsf(motion_.angularRate()) > 10) {
+    for (auto& hits : proximityHits_) hits = 0;
+    return false;
+  }
+  const Range* ranges[3] = {&s_.front, &s_.sideLeft, &s_.sideRight};
+  const float v = motion_.measuredSpeed() > 0 ? motion_.measuredSpeed() : 0;
+  const float brake = clampf(p_.decel, 100, 2000);
+  const float delay = p_.sensorLatencyS + 0.04f;
+  const float stopping = v * v / (2 * brake) + v * delay;
+  for (int i = 0; i < 3; ++i) {
+    const Range& r = *ranges[i];
+    if (!r.fresh) continue;
+    const float clearance = r.mm + (i == 0 ? p_.frontAheadMm - p_.bodyFrontMm :
+                                                     p_.sideLateralMm - 0.5f * p_.bodyWidthMm);
+    const bool near = r.mm >= 0 && (i == 0 ? clearance < 10 + stopping :
+                                               p_.sideEnabled && clearance < 6);
+    proximityHits_[i] = near ? proximityHits_[i] + 1 : 0;
+    if (proximityHits_[i] < 2) continue;
+    stalled_ = true;
+    motion_.hold(s_);
+    io_.setMotors(0, 0);
+    io_.report(i == 0 ? "AUTO phase=EVITAR_CHOQUE reason=FRENADO_DISTANCIA_REAL" :
+                       "AUTO phase=EVITAR_CHOQUE reason=CUERPO_CERCA_LATERAL", true);
+    return true; // Never turn this emergency observation into a map wall vote.
+  }
+  return false;
+}
+
 void Navigator::setMotorsFromMotion() {
   if (io_.stopRequested()) { io_.setMotors(0, 0); return; }
   float l, r;
@@ -249,6 +280,7 @@ void Navigator::setMotorsFromMotion() {
     }
     return;
   }
+  if (proximityGuard()) return;
   motion_.update(s_, l, r);
   io_.setMotors(l, r);
   if (motion_.sensorFault() && !faultReported_) {

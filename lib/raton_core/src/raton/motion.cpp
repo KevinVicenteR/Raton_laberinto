@@ -67,7 +67,7 @@ void Motion::reset(const Sensors& s) {
   idealAngle_ = w_ = alpha_ = angleTarget_ = steer_ = 0;
   rotDone_ = true;
   lastErrR_ = 0;
-  rotDerivative_ = 0;
+  rotDerivative_ = fwdDerivative_ = 0;
   iF_ = iR_ = 0;
   satF_ = 0;
   satR_ = 0;
@@ -133,7 +133,7 @@ void Motion::hold(const Sensors& s) {
   w_ = alpha_ = 0;
   rotDone_ = true;
   lastErrF_ = lastErrR_ = 0;
-  rotDerivative_ = 0;
+  rotDerivative_ = fwdDerivative_ = 0;
   iF_ = iR_ = 0;
   satF_ = satR_ = 0;
 }
@@ -236,7 +236,7 @@ void Motion::update(const Sensors& s, float& dutyL, float& dutyR) {
   // Sin acumular un error enorme si algo bloquea la rueda: la consigna no se aleja mas de 25 mm.
   if (ideal_ - pos_ > 25.0f) ideal_ = pos_ + 25.0f;
   if (ideal_ - pos_ < -25.0f) ideal_ = pos_ - 25.0f;
-  const float dF = (errF - lastErrF_) / dt;
+  float dF = (errF - lastErrF_) / dt;
   float dR = (errR - lastErrR_) / dt;
   if (stableControl_) {
     // IMU arrivals and encoder quantization must not become 500 Hz torque kicks.
@@ -244,9 +244,19 @@ void Motion::update(const Sensors& s, float& dutyL, float& dutyR) {
     const float tau = rotDone_ ? 0.025f : 0.012f;
     rotDerivative_ += dt / (tau + dt) * (dR - rotDerivative_);
     dR = rotDerivative_;
+    fwdDerivative_ += dt / (0.015f + dt) * (dF - fwdDerivative_);
+    dF = fwdDerivative_;
   }
   lastErrF_ = errF;
   lastErrR_ = errR;
+
+  // Once settled, do not amplify sub-millimetre/IMU noise with static-friction compensation.
+  if (stableControl_ && done_ && rotDone_ && fabsf(v_) < 1 && fabsf(w_) < 1 &&
+      fabsf(errF) < 0.8f && fabsf(errR) < 0.4f && fabsf(vMeas_) < 5 && fabsf(wMeas_) < 3) {
+    iF_ = iR_ = 0;
+    previousDuty_[0] = previousDuty_[1] = dutyL = dutyR = 0;
+    return;
+  }
 
   // ---- Modelo del motor por rueda ----
   const float half = 0.5f * p_.trackMm / kDeg;  // mm de rueda por grado

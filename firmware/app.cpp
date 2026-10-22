@@ -12,6 +12,7 @@
 #include "raton/maze_text.h"
 #include "raton/param_table.h"
 #include "raton/startup_check.h"
+#include "raton/stable_control.h"
 #include "storage.h"
 
 namespace {
@@ -59,6 +60,7 @@ void App::fail(const char* msg) {
   uint32_t last = 0;
   while (true) {
     service();
+    if (resetAllRequested_) resetAll();
     if (millis() - last > 1000) {
       last = millis();
       reply(line);
@@ -142,7 +144,7 @@ void App::streamSync() {
   syncAt_=millis();
   char out[192],num[24];
   if(syncPhase_==0){reply("SYNC_BEGIN");++syncPhase_;return;}
-  if(syncPhase_==1){reply("FIRMWARE autonomia-v3");++syncPhase_;return;}
+  if(syncPhase_==1){reply("FIRMWARE autonomia-v3");reply("CAPS RESET_TOTAL CALIB_COMPLETA");reply(calibrating_ ? "CAL_STATE RUNNING" : "CAL_STATE IDLE");++syncPhase_;return;}
   if(syncPhase_==2){snprintf(out,sizeof(out),"MODE %d",mode_);reply(out);++syncPhase_;return;}
   if(syncPhase_==3){
     if(syncParam_<raton::paramCount()){
@@ -221,6 +223,19 @@ void App::command(char* cmd) {
     board_.requestStop();
     return;
   }
+  if (!strcmp(cmd, "resetall")) {
+    // Only request the reset here: this callback may run inside navigation.
+    // Erase flash after its stack has unwound, with both motors stopped.
+    board_.requestStop();
+    board_.setMotors(0, 0);
+    resetAllRequested_ = true;
+    startRequested_ = false;
+    requestedMode_ = 0;
+    syncPhase_ = -1;
+    reply("REINICIO_TOTAL_SOLICITADO");
+    return;
+  }
+  if (resetAllRequested_) { reply("REINICIO_TOTAL_EN_CURSO"); return; }
   if (!strcmp(cmd, "R")) {
     reply("REINICIO");
     telemetry::flush(300);
@@ -381,6 +396,12 @@ void App::command(char* cmd) {
     reply("DIAGNOSTICO_SENSORES: sin movimiento; x para salir");
     return;
   }
+  if (!strcmp(cmd, "calall")) {
+    requestedMode_ = kCalibrateAll;
+    startRequested_ = true;
+    reply("CAL_COMPLETA_SOLICITADA");
+    return;
+  }
   if (!strcmp(cmd, "calsonda")) {
     pendingCorridor_ = 0;
     // Gira en el sitio: se hace desde el bucle principal, como un modo.
@@ -425,6 +446,7 @@ int App::menu() {
   board_.clearStop();
   while (true) {
     const raton::Sensors& s = board_.tick();
+    if (resetAllRequested_) return 0;
     if (startRequested_) {
       const int m = requestedMode_ ? requestedMode_ : mode_;
       requestedMode_ = 0;
@@ -458,6 +480,7 @@ int App::menu() {
     }
     if (now - lastMode > 2000) {  // la web se puede conectar en cualquier momento
       reply("FIRMWARE autonomia-v3");
+      reply("CAPS RESET_TOTAL CALIB_COMPLETA");
       lastMode = now;
       char st[16];
       snprintf(st, sizeof(st), "MODE %d", mode_);
@@ -468,6 +491,10 @@ int App::menu() {
 
 bool App::armStart(bool allowDegraded) {
   startupDegraded_=false;
+  if(params_.precisionMode) {
+    raton::applyStableProfile(params_);
+    reply("PID_ESTABLE: P avance<=0.009 giro<=0.015 I<=0.006 accel<=900 rot<=240");
+  }
   mouse_.navigator().setCautious(false);
   board_.setMotors(0,0);
   // Manos fuera, raton quieto: calibrar el giroscopio y arrancar.
@@ -520,6 +547,10 @@ bool App::armStart(bool allowDegraded) {
     if(!proceed)return false;
     startupDegraded_=true;
   }
+  if (check.samples[3] >= 3 && check.samples[4] >= 3 && !params_.sideEnabled) {
+    params_.sideEnabled = 1;
+    reply("LATERALES_CONTROL_ACTIVADO: cinco sensores disponibles");
+  }
   mouse_.navigator().setCautious(startupDegraded_);
   if(startupDegraded_)reply("ARRANQUE_DEGRADADO: v<=120; continuar y diagnosticar sin guardar aprendizaje");
   reply(check.samples[3]>=3 && check.samples[4]>=3 ? "AUTO phase=LISTO reason=CINCO_CANALES" :
@@ -531,8 +562,38 @@ bool App::armStart(bool allowDegraded) {
 
 void App::loop() {
   const int mode = menu();
+  if (resetAllRequested_) { resetAll(); return; }
   runMode(mode);
   motors_.coast();
+  if (resetAllRequested_) resetAll();
+}
+
+void App::resetAll() {
+  resetAllRequested_ = false;
+  busy_ = true;
+  board_.requestStop();
+  board_.setMotors(0, 0);
+  startRequested_ = false;
+  requestedMode_ = 0;
+  syncPhase_ = -1;
+  const bool mapErased = storage::eraseMap();
+  const bool paramsErased = storage::eraseParams();
+  if (!mapErased || !paramsErased) {
+    char error[96];
+    snprintf(error, sizeof(error), "REINICIO_TOTAL_ERROR_FLASH mapa=%d parametros=%d", mapErased, paramsErased);
+    reply(error);
+    busy_ = false;
+    return;
+  }
+  params_ = raton::Params();
+  mouse_.resetMap();
+  mouse_.navigator().motion().loadLearned();
+  mouse_.navigator().invalidatePitch();
+  mode_ = AUTO;
+  telemetry::flush(500); // Deliver old frames before the completion marker.
+  reply("REINICIO_TOTAL_OK");
+  telemetry::flush(500);
+  NVIC_SystemReset(); // Clear pose, filters, learned RAM state, journal and encoders.
 }
 
 void App::showResult(const raton::MissionResult& r, const char* title) {
@@ -592,6 +653,9 @@ void App::runMode(int mode) {
       break;
     case kSensorTest:
       sensorTest();
+      break;
+    case kCalibrateAll:
+      calibrateAll();
       break;
     case kCalibrate: {
       const raton::Params before = params_;
@@ -955,3 +1019,28 @@ void App::printMap() {
   reply("MAPA_LISTO");
 }
 
+
+void App::calibrateAll() {
+  calibrating_ = true;
+  const raton::Params before=params_;
+  static raton::Maze beforeMap;
+  beforeMap=mouse_.maze();
+  reply("CAL_COMPLETA: centrar en salida, paredes a ambos lados, pared frontal visible y 1 celda libre; retirar manos");
+  const bool armed=armStart(false);
+  const bool calibrated=armed && mouse_.calibrateAll(params_);
+  board_.setMotors(0,0);
+  const bool saved=calibrated && !board_.stopRequested() && storage::saveParams(params_);
+  mouse_.maze()=beforeMap;
+  if(!saved)params_=before;
+  mouse_.navigator().motion().loadLearned();
+  mouse_.navigator().invalidatePitch();
+  mouse_.navigator().setOffsetsCell(params_.cellMm);
+  if(saved) {
+    mouse_.navigator().begin(params_.startX,params_.startY,static_cast<raton::Dir>(params_.startDir & 3));
+    mouse_.maze()=beforeMap;
+  }
+  calibrating_ = false;
+  reply(saved ? "CAL_COMPLETA_OK: ajustes guardados para los tres modos; regreso verificado" :
+                "CAL_COMPLETA_NO_APLICADA: ajustes y mapa conservados; revisar diagnostico y posicion fisica");
+  display_.show(saved ? "CALIBRADO EN SALIDA" : "CAL NO APLICADA");
+}

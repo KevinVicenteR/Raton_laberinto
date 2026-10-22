@@ -114,6 +114,8 @@ class Navigator {
   void tick();
   void setMotorsFromMotion();
   void filterSensors();
+  bool proximityGuard();
+  int proximityHits_[3] = {};
   bool stopped() { return sensorFault() || io_.stopRequested(); }
   void report();
   float cellPos() const { return motion_.position() - centerOdo_; }

@@ -4,6 +4,7 @@ import { CommandQueue } from '../conexion/CommandQueue';
 import { initialState, telemetryReducer } from './state';
 import { initialSupervisor, supervise } from '../seguridad/supervisor';
 import { parseRobot } from '../telemetria/robot';
+import { resetRobot } from '../conexion/resetRobot';
 
 export function useTelemetry() {
   const [state, dispatch] = useReducer(telemetryReducer, undefined, initialState);
@@ -36,6 +37,17 @@ export function useTelemetry() {
         return;
       }
       const t = performance.now() - start.current;
+      if (line === 'REINICIO_TOTAL_OK') {
+        queue.cancel();
+        settings.current = { mode: 1, supervisor: false, learn: true, speed: 100, range: 600 };
+        supervisor.current = initialSupervisor();
+        localStorage.setItem('raton-mode', '1');
+      }
+      if (line.startsWith('CAL_COMPLETA_OK')) void queue.send('sync');
+      if (line.startsWith('REINICIO_TOTAL_ERROR_FLASH'))
+        setError(
+          'No se pudo completar el borrado en la placa. El robot está detenido; vuelve a intentar Reiniciar todo.',
+        );
       dispatch({ type: 'line', line, t, range: settings.current.range });
       const sample = parseRobot(line, t);
       if (sample?.hasPose) {
@@ -105,6 +117,7 @@ export function useTelemetry() {
     transport,
     queue,
     send,
+    resetAll: () => resetRobot(send, () => queue.cancel()),
     replay,
     settings,
     supervisor,

@@ -23,7 +23,17 @@ export function Telemetry() {
   const clock = now - live.startedAt.current;
   const sample = state.last;
   const compatible = state.firmwareV3;
-  const canSend = live.connected && compatible && !busy;
+  const canSend =
+    live.connected &&
+    compatible &&
+    !busy &&
+    !state.resetPending &&
+    !state.awaitingResetBoot &&
+    !state.calibrating;
+  const resetSelection = commands.resetSelection;
+  useEffect(() => {
+    if (state.resetRevision > 0) resetSelection();
+  }, [state.resetRevision, resetSelection]);
   const maze = useMemo(
     () => liveMaze(state.boardParams, state.cells, sample?.pitch),
     [state.boardParams, state.cells, sample?.pitch],
@@ -59,7 +69,36 @@ export function Telemetry() {
           <button className="stop" disabled={!live.connected} onClick={() => void commands.stop()}>
             PARAR
           </button>
+          <button
+            className="stop"
+            disabled={!live.connected || !compatible || busy || state.resetPending || !state.resetAvailable}
+            onClick={() =>
+              void run(async () => {
+                live.setError('');
+                if (!(await live.resetAll()))
+                  live.setError('No se confirmó la solicitud de reinicio. Comprueba la conexión.');
+              })
+            }
+          >
+            {state.resetPending ? 'REINICIANDO…' : 'REINICIAR TODO'}
+          </button>
         </div>
+        <button
+          className="go"
+          disabled={!canSend || !state.calibrationAvailable}
+          onClick={() => void run(() => live.send('calall'))}
+        >
+          {state.calibrating ? 'CALIBRANDO…' : 'CALIBRACIÓN COMPLETA'}
+        </button>
+        <p className="status">
+          Coloca el robot centrado en la salida de un pasillo de ancho conocido, con paredes a ambos lados,
+          una celda libre delante y una pared frontal visible a menos de 60 cm. Retira las manos: girará,
+          avanzará lentamente y comprobará el regreso antes de guardar.
+        </p>
+        <p className="status">
+          Reiniciar todo detiene el robot, restaura ajustes y calibraciones de fábrica y borra los mapas
+          guardados y la trayectoria.
+        </p>
         <p className="status">
           Vincula “Raton” una vez. Después se intentará reconectar automáticamente; reconectar no inicia ni
           reinicia una misión.
@@ -148,6 +187,7 @@ export function Telemetry() {
           </button>
         </div>
         <Parameters
+          key={state.resetRevision}
           disabled={!canSend}
           sequence={commands.sequence}
           boardParams={state.boardParams}

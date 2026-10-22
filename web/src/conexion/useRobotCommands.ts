@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useCallback, useState } from 'react';
 import type { Cell } from '../telemetria/types';
 // Modos del firmware (arquitectura v2): el numero es el que se envia con m<n> y s<n>.
 export const modes = ['Autónomo completo', 'Competencia', 'Camino más corto'];
@@ -21,9 +21,14 @@ export function useRobotCommands(send: (cmd: string) => Promise<boolean>) {
     for (const cmd of commands) if (!(await send(cmd))) return false;
     return true;
   };
+  const resetSelection = useCallback(() => {
+    setMode(1);
+    localStorage.setItem('raton-mode', '1');
+  }, []);
   return {
     mode,
     select,
+    resetSelection,
     start: () => send(`s${mode}`),
     stop: () => send('x'),
     restart: () => send('R'),

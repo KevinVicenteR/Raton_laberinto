@@ -1,3 +1,5 @@
+> Actualización 2026-10-22: las suites nativas de núcleo y autonomía ya se pudieron ejecutar y pasan. La web pasa 59 pruebas, build y lint. La compilación ARM sigue fallando porque Windows no ejecuta el toolchain; no se ha cargado la versión en la placa. Véase [calibración completa y PID prudente](calibracion_completa.md). Las limitaciones de ejecución descritas al final documentan la revisión anterior.
+
 # Control, navegación y componentes: revisión experimental
 
 Revisión del 21 de octubre de 2026. Aplicable a `experimental/autonomia-v3`.

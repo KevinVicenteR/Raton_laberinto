@@ -5,6 +5,7 @@
 > números. Consulte [la guía experimental](docs/autonomia-v3.md) para diagnóstico
 > en marcha, recuperación, mapas 2D/3D, sincronización Bluetooth y validación.
 > Los resultados históricos inferiores no certifican estas mejoras experimentales.
+> Preparación: [calibración completa, PID prudente y reinicio de valores/mapas](docs/calibracion_completa.md).
 
 Firmware, núcleo portable y simulador de un micromouse para la categoría **Robot ratón** del Concurso de
 Robótica SECIHTI Yucatán 2026:

@@ -20,12 +20,14 @@ class App {
   void service();
 
  private:
-  enum Mode { AUTO = 1, EXPLORE = 2, RACE = 3, kModes = RACE, kCalibrate = 20, kSensors = 21, kSensorTest = 22 };
+  enum Mode { AUTO = 1, EXPLORE = 2, RACE = 3, kModes = RACE, kCalibrate = 20, kSensors = 21, kSensorTest = 22, kCalibrateAll = 23 };
   void fail(const char* msg);
   int menu();
   bool armStart(bool allowDegraded=true);
   void runMode(int mode);
   void runAutonomousMission();
+  void resetAll();
+  bool resetAllRequested_ = false;
   void feed(int c);
   void command(char* line);
   void reply(const char* line);
@@ -42,6 +44,8 @@ class App {
   void practiceRun();
   void saveLearned();
   void motorCalibration();
+  void calibrateAll();
+  bool calibrating_ = false;
   void wheelTest();
   void calibrateFront();
   void calibrateSides(float corridorMm);

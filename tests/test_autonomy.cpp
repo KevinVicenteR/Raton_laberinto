@@ -4,6 +4,7 @@
 #include "run_case.h"
 #include "raton/event_journal.h"
 #include "raton/startup_check.h"
+#include "raton/stable_control.h"
 #include <stdio.h>
 #include <string.h>
 using namespace raton;
@@ -81,8 +82,8 @@ class ObservedPlatform : public sim::SimPlatform {
   }
 };
 
-static void mission(bool cross,bool geometry=false,bool cautious=false) {
-  Params p; p.sideEnabled=1;
+static void mission(bool cross,bool geometry=false,bool cautious=false,bool stable=false) {
+  Params p; if(stable)applyStableProfile(p); p.sideEnabled=1;
   p.mazeW=p.mazeH=5; p.startX=2;p.startY=0;p.goalX=4;p.goalY=2;
   if(geometry){p.cellMm=300;p.autoGeometryConfirmed=1;}
   Maze truth; truth.reset(5,5,true);
@@ -189,6 +190,18 @@ static float rotationalNoise(bool stable) {
   return sqrtf(jerk/n);
 }
 
+static float forwardNoise(bool stable) {
+  Params p;p.learnMotor=0;p.kiFwd=0;
+  Sensors s;s.gyroFresh=true;Motion motion(p);motion.setStableControl(stable);motion.reset(s);motion.cruise(180);
+  float jerk=0,previous=0;int n=0;
+  for(int i=1;i<=1500;++i) {
+    s.t=i*0.002f;s.encLeftMm=s.encRightMm=180*s.t+(i%2?0.15f:-0.15f);
+    float l,r;motion.update(s,l,r);const float common=0.5f*(r+l);
+    if(i>250){jerk+=(common-previous)*(common-previous);++n;}previous=common;
+  }
+  return sqrtf(jerk/n);
+}
+
 static void stableControlRegression() {
   LateralFilter filter;filter.setRobust(true);filter.reset(0,1,1e-5f);
   for(int i=0;i<12;++i)filter.update(i%2?70:-70,1);
@@ -198,14 +211,65 @@ static void stableControlRegression() {
   const float old=rotationalNoise(false),filtered=rotationalNoise(true);
   CHECK(filtered<old*0.5f);
   printf("Ruido de mando diferencial: previo=%.6f filtrado=%.6f\n",old,filtered);
+  const float rawForward=forwardNoise(false),filteredForward=forwardNoise(true);
+  CHECK(filteredForward<rawForward*0.5f);
+  printf("Ruido de mando avance: previo=%.6f filtrado=%.6f\n",rawForward,filteredForward);
+  Params quietParams;Motion quiet(quietParams);quiet.setStableControl(true);Sensors still;still.gyroFresh=true;quiet.reset(still);
+  for(int i=1;i<=200;++i) {
+    still.t=0.002f*i;still.gyroDeg=0.1f*sinf(still.t*20);
+    float l,r;quiet.update(still,l,r);CHECK(l==0 && r==0);
+  }
+  Params profile;profile.kpFwd=0.005f;applyStableProfile(profile);
+  CHECK(profile.kpFwd==0.005f && profile.kiFwd==0.006f && profile.kiRot==0.006f);
+  CHECK(profile.kpRot==0.015f && profile.accel==900 && profile.rotSpeed==240);
   Params p;Motion motion(p);Sensors s;s.gyroFresh=true;motion.reset(s);
   motion.setHeadingReference(2.5f);CHECK(motion.headingTarget()==2.5f);
   motion.turnTo(90,180,900);motion.setHeadingReference(3);
   CHECK(motion.headingTarget()==90); // Wall updates cannot rewrite a live pivot.
 }
 
+static void independentObstacleGuard() {
+  class NearWall : public Platform {
+   public:
+    Sensors s;float left=0,right=0;bool guarded=false;
+    const Sensors& tick() override {
+      s.t+=0.002f;s.gyroFresh=true;
+      s.front=Range{14,true};s.left=s.right=Range{60,true};
+      s.sideLeft=s.sideRight=Range{40,true};return s;
+    }
+    void setMotors(float l,float r) override {left=l;right=r;}
+    void report(const char* text,bool) override {if(strstr(text,"FRENADO_DISTANCIA_REAL"))guarded=true;}
+  } io;
+  Params p;Mouse mouse(io,p);auto& nav=mouse.navigator();nav.setAutonomous(true);
+  nav.begin(p.startX,p.startY,Dir(p.startDir));
+  const auto before=mouse.maze().wall(p.startX,p.startY,Dir(p.startDir));
+  nav.motion().cruise(100);for(int i=0;i<50;++i)nav.step();
+  CHECK(io.guarded);CHECK(io.left==0 && io.right==0);
+  CHECK(mouse.maze().wall(p.startX,p.startY,Dir(p.startDir))==before);
+}
+
+static void calibrationRegression() {
+  Params p;applyStableProfile(p);p.mazeW=p.mazeH=4;p.startX=1;p.startY=0;p.startDir=0;
+  Maze truth;truth.reset(4,4,true);
+  for(int y=0;y<4;++y)for(int x=0;x<4;++x)for(int d=0;d<4;++d)truth.set(x,y,Dir(d),Wall::Closed);
+  truth.set(1,0,NORTH,Wall::Open);truth.set(1,1,NORTH,Wall::Open);
+  auto ph=sim::perturbed(p,0,1);ph.sideSensors=true;ph.rangeNoise=0;ph.rangeNoiseMm=0;
+  ph.dropout=ph.outlier=ph.gyroNoiseDps=ph.gyroBiasDps=ph.gyroDriftDps=0;
+  sim::World world(truth,ph);ObservedPlatform io(world,p,ph,10);io.place(1,0,NORTH);io.timeLimit=45;
+  Mouse mouse(io,p);
+  const bool calibrated=mouse.calibrateAll(p);
+  printf("Calibracion nominal: ok=%d contactos=%d t=%.2f\n",calibrated,io.contacts(),io.time());
+  if(!calibrated)for(const auto& e:io.events)printf("CALTRACE %s\n",e.text.c_str());
+  CHECK(calibrated);CHECK(io.contacts()==0);CHECK(io.cellX()==1 && io.cellY()==0);
+  CHECK(event(io,"CAL_COMPLETA phase=REGRESO_VERIFICADO"));
+  auto missing=ph;missing.sideSensors=false;
+  sim::World world2(truth,missing);ObservedPlatform broken(world2,p,missing,10);broken.place(1,0,NORTH);
+  Mouse mouse2(broken,p);CHECK(!mouse2.calibrateAll(p));CHECK(broken.time()<2);
+  CHECK(!event(broken,"CAL_COMPLETA phase=REGRESO_VERIFICADO"));
+}
+
 static void noisyCorridor() {
-  Params p;p.mazeW=p.mazeH=7;p.startX=3;p.startY=0;p.goalX=3;p.goalY=5;
+  Params p;applyStableProfile(p);p.mazeW=p.mazeH=7;p.startX=3;p.startY=0;p.goalX=3;p.goalY=5;
   p.sideEnabled=1;
   Maze truth;truth.reset(7,7,true);
   for(int y=0;y<7;++y)for(int x=0;x<7;++x)for(int d=0;d<4;++d)
@@ -343,11 +407,13 @@ static void persistentRecovery(int mode,bool locked=false) {
 
 int main(int argc,char** argv) {
   if(argc>1 && !strcmp(argv[1],"--bench"))return benchmark(argc>2?atoi(argv[2]):8);
-  policies();mission(false);mission(true);mission(true,true);fatalFault();
+  policies();mission(false,false,false,true);mission(false);mission(true);mission(true,true);fatalFault();
   mission(false,false,true);
   startupRegression();
   stableControlRegression();
   noisyCorridor();
+  calibrationRegression();
+  independentObstacleGuard();
   persistentRecovery(1);persistentRecovery(2);persistentRecovery(3);
   persistentRecovery(2,true);
   communicationRepair(true);communicationRepair(false);diagonalMission();
